@@ -262,7 +262,8 @@ namespace sogen::android
                     [this](const uint64_t request, const std::vector<std::string>& arguments) { this->start_child(request, arguments); },
                     [this](const uint64_t request) { this->kill_child(request); });
                 processes = std::make_unique<subprocess_process_manager>(config.sandbox_executable, create_child_arguments,
-                                                                         std::make_unique<process_launcher_reference>(*launcher));
+                                                                         std::make_unique<process_launcher_reference>(*launcher),
+                                                                         parent ? parent->request().session : process_session_endpoint{});
             }
             {
                 const std::lock_guard lock{this->mutex_};

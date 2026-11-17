@@ -91,6 +91,8 @@ table ProcessCreateRequest {
     parent_process_id: uint;
     registry_state: [ubyte];
     inherited_objects: [SharedObject];
+    session_port: ushort;
+    session_token: string;
 }
 
 table ProcessStarted {
@@ -302,6 +304,37 @@ table QueryMemoryResponse {
     mapped_file: string;
 }
 
+table SessionProcess {
+    process_id: uint;
+    parent_process_id: uint;
+    native_environment: ulong;
+    compatibility_environment: ulong;
+    exited: bool;
+    exit_code: ulong;
+    exit_kind: ubyte;
+    cycles: ulong;
+}
+
+enum SessionOperation : ubyte { Lookup, Reserve, Publish, Discard, Exit, Refresh, AllocateThread }
+
+table SessionRequest {
+    token: string (required);
+    process_id: uint;
+    update: SessionProcess;
+    operation: SessionOperation;
+    process_ids: [uint];
+    thread_id: uint;
+}
+
+table SessionResponse {
+    process: SessionProcess;
+    process_id: uint;
+    thread_id: uint;
+    processes: [SessionProcess];
+    missing_process_ids: [uint];
+    error: ProcessError;
+}
+
 union MessagePayload {
     Hello,
     ProcessCreateRequest,
@@ -340,6 +373,8 @@ union MessagePayload {
     ThreadTokenResponse,
     CycleTimeRequest,
     CycleTimeResponse,
+    SessionRequest,
+    SessionResponse,
 }
 
 table Message {

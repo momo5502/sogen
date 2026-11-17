@@ -94,7 +94,7 @@ namespace sogen
                 });
             }
 
-            void create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
+            bool create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
             {
                 const auto stack_size =
                     factory.stack_reserve != 0 ? factory.stack_reserve : win_emu.mod_manager.executable->size_of_stack_reserve;
@@ -103,18 +103,23 @@ namespace sogen
                     factory.stack_commit != 0 ? factory.stack_commit : win_emu.mod_manager.executable->size_of_stack_commit;
                 const auto thread_handle = win_emu.process.create_thread(win_emu.memory, factory.start_routine, factory.start_parameter,
                                                                          stack_size, create_flags, false, stack_commit_size);
+                if (thread_handle == 0)
+                {
+                    return false;
+                }
                 factory.worker_threads.push_back(thread_handle);
 
                 // Like ExpWorkerFactoryCreateThread: the new worker stays pending until it calls NtWorkerFactoryWorkerReady.
                 ++factory.pending_worker_count;
                 win_emu.wake_idle_vcpu();
+                return true;
             }
 
-            void ensure_worker_factory_threads(const syscall_context& c, worker_factory& factory)
+            NTSTATUS ensure_worker_factory_threads(const syscall_context& c, worker_factory& factory)
             {
                 if (factory.shutdown || factory.paused != 0 || factory.start_routine == 0)
                 {
-                    return;
+                    return STATUS_SUCCESS;
                 }
 
                 prune_worker_factory_threads(c.win_emu, factory);
@@ -123,8 +128,12 @@ namespace sogen
                 // none by themselves (try_enter_away_mode).
                 while (factory.worker_threads.size() < factory.thread_minimum)
                 {
-                    create_worker_factory_thread(c.win_emu, factory);
+                    if (!create_worker_factory_thread(c.win_emu, factory))
+                    {
+                        return STATUS_INSUFFICIENT_RESOURCES;
+                    }
                 }
+                return STATUS_SUCCESS;
             }
 
             bool has_waiting_worker(windows_emulator& win_emu, const worker_factory& factory)
@@ -193,7 +202,7 @@ namespace sogen
                 if (work_queued && !has_waiting_worker(win_emu, factory))
                 {
                     leave_away_mode(factory);
-                    create_worker_factory_thread(win_emu, factory);
+                    (void)create_worker_factory_thread(win_emu, factory);
                 }
             }
 
@@ -440,7 +449,7 @@ namespace sogen
                     if (raised)
                     {
                         leave_away_mode(*factory);
-                        ensure_worker_factory_threads(c, *factory);
+                        return ensure_worker_factory_threads(c, *factory);
                     }
                     break;
                 }
@@ -469,7 +478,8 @@ namespace sogen
                     if (factory->pending_worker_count == 0 && factory->worker_threads.size() < factory->thread_maximum)
                     {
                         leave_away_mode(*factory);
-                        create_worker_factory_thread(c.win_emu, *factory);
+                        // Windows 10 19041 accepts the maximum even when worker creation fails.
+                        (void)create_worker_factory_thread(c.win_emu, *factory);
                     }
                     break;
                 }

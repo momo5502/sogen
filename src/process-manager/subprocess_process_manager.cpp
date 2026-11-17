@@ -1,30 +1,20 @@
 #include "subprocess_process_manager.hpp"
-
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4244)
-#endif
-
-#include "process_protocol_generated.hxx"
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+#include "process_protocol_utils.hpp"
 
 #include <network/address.hpp>
 #include <network/tcp_server_socket.hpp>
 #include <utils/host_pipe.hpp>
+#include <utils/finally.hpp>
 
 #ifdef poll
 #undef poll
 #endif
 
-#include <array>
 #include <atomic>
+#include <condition_variable>
 #include <chrono>
 #include <cstdio>
 #include <optional>
-#include <random>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -41,127 +31,8 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint32_t maximum_payload_size = 64U << 20;
-        constexpr auto response_timeout = std::chrono::seconds(5);
+        using namespace process_protocol; // NOLINT(google-build-using-namespace)
         constexpr auto exit_notification_timeout = std::chrono::milliseconds(250);
-
-        template <typename T>
-        bool send_message(network::tcp_client_socket& socket, T payload)
-        {
-            ProcessProtocol::MessageT message{};
-            message.payload.Set(std::move(payload));
-
-            flatbuffers::FlatBufferBuilder builder{};
-            ProcessProtocol::FinishSizePrefixedMessageBuffer(builder, ProcessProtocol::Message::Pack(builder, &message));
-            if (builder.GetSize() > maximum_payload_size + sizeof(flatbuffers::uoffset_t))
-            {
-                return false;
-            }
-            return socket.send(builder.GetBufferPointer(), builder.GetSize());
-        }
-
-        std::optional<std::string> receive_exact(network::tcp_client_socket& socket, const size_t size)
-        {
-            std::string data{};
-            data.reserve(size);
-            while (data.size() < size)
-            {
-                auto part = socket.receive(size - data.size());
-                if (!part)
-                {
-                    return std::nullopt;
-                }
-                data.append(*part);
-            }
-            return data;
-        }
-
-        std::optional<std::string> receive_exact_until(network::tcp_client_socket& socket, const size_t size,
-                                                       const std::chrono::steady_clock::time_point deadline)
-        {
-            std::string data{};
-            data.reserve(size);
-            while (data.size() < size)
-            {
-                if (std::chrono::steady_clock::now() >= deadline)
-                {
-                    return std::nullopt;
-                }
-                if (!socket.is_ready(true))
-                {
-                    socket.sleep(std::chrono::milliseconds(10), true);
-                    continue;
-                }
-
-                auto part = socket.receive(size - data.size());
-                if (!part)
-                {
-                    return std::nullopt;
-                }
-                data.append(*part);
-            }
-            return data;
-        }
-
-        std::optional<ProcessProtocol::MessageT> decode_message(std::string data)
-        {
-            flatbuffers::Verifier verifier{reinterpret_cast<const uint8_t*>(data.data()), data.size()};
-            if (!ProcessProtocol::VerifySizePrefixedMessageBuffer(verifier))
-            {
-                return std::nullopt;
-            }
-
-            ProcessProtocol::MessageT message{};
-            ProcessProtocol::GetSizePrefixedMessage(data.data())->UnPackTo(&message);
-            return message;
-        }
-
-        std::optional<ProcessProtocol::MessageT> receive_message(network::tcp_client_socket& socket)
-        {
-            auto size_data = receive_exact(socket, sizeof(flatbuffers::uoffset_t));
-            if (!size_data)
-            {
-                return std::nullopt;
-            }
-
-            const auto size = flatbuffers::ReadScalar<flatbuffers::uoffset_t>(size_data->data());
-            if (size > maximum_payload_size)
-            {
-                return std::nullopt;
-            }
-
-            auto data = receive_exact(socket, size);
-            if (!data)
-            {
-                return std::nullopt;
-            }
-            size_data->append(*data);
-            return decode_message(std::move(*size_data));
-        }
-
-        std::optional<ProcessProtocol::MessageT> receive_message_until(network::tcp_client_socket& socket,
-                                                                       const std::chrono::steady_clock::time_point deadline)
-        {
-            auto size_data = receive_exact_until(socket, sizeof(flatbuffers::uoffset_t), deadline);
-            if (!size_data)
-            {
-                return std::nullopt;
-            }
-
-            const auto size = flatbuffers::ReadScalar<flatbuffers::uoffset_t>(size_data->data());
-            if (size > maximum_payload_size)
-            {
-                return std::nullopt;
-            }
-
-            auto data = receive_exact_until(socket, size, deadline);
-            if (!data)
-            {
-                return std::nullopt;
-            }
-            size_data->append(*data);
-            return decode_message(std::move(*size_data));
-        }
 
         void encode_token(const process_token& token, uint64_t& identity, bool& has_privileges,
                           std::vector<ProcessProtocol::TokenPrivilege>& privileges)
@@ -282,6 +153,8 @@ namespace sogen
             result.debugged = request.debugged;
             result.parent_process_id = request.parent_process_id;
             result.registry_state = request.registry_state;
+            result.session_port = request.session.port;
+            result.session_token = request.session.token;
             std::unordered_map<uint64_t, std::pair<uint16_t, std::string>> exported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
@@ -337,6 +210,7 @@ namespace sogen
             result.debugged = request.debugged;
             result.parent_process_id = request.parent_process_id;
             result.registry_state = std::move(request.registry_state);
+            result.session = {.port = request.session_port, .token = std::move(request.session_token)};
             std::unordered_map<uint64_t, std::shared_ptr<utils::host_pipe>> imported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
@@ -417,38 +291,23 @@ namespace sogen
             return result;
         }
 
-        std::string make_token()
-        {
-            std::random_device random{};
-            constexpr std::array digits{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-            std::string token{};
-            token.reserve(32);
-            for (size_t i = 0; i < 4; ++i)
-            {
-                auto value = random();
-                for (size_t digit = 0; digit < 8; ++digit)
-                {
-                    token.push_back(digits[value & 0xF]);
-                    value >>= 4;
-                }
-            }
-            return token;
-        }
-
     }
 
-    struct subprocess_process_manager::process_entry
+    struct subprocess_process_manager::child_process
     {
+        process_session* session{};
+        std::shared_ptr<session_process> status{};
         std::unique_ptr<host_process> host{};
         network::tcp_client_socket control{};
         std::vector<utils::host_pipe_transfer> pipe_transfers{};
         std::thread output_thread{};
+        std::thread exit_thread{};
         mutable std::mutex control_mutex{};
         mutable std::mutex state_mutex{};
-        mutable std::optional<process_exit> exit{};
         std::optional<uint64_t> termination_code{};
+        std::condition_variable host_finished{};
         std::optional<int> host_exit_status{};
-        bool host_failure{};
+        bool host_exited{};
         std::atomic_bool resumed{};
 
         std::optional<ProcessProtocol::MessageT> receive_response(const ProcessProtocol::MessagePayload expected,
@@ -461,11 +320,41 @@ namespace sogen
             }
             if (message->payload.type == ProcessProtocol::MessagePayload_ProcessExited)
             {
-                const std::scoped_lock lock(this->state_mutex);
                 const auto& exited = *message->payload.AsProcessExited();
-                this->exit = process_exit{.kind = process_exit_kind::exited, .code = exited.exit_code, .cycles = exited.cycles};
+                this->session->mark_exit(this->status->identity().process_id,
+                                         {.kind = process_exit_kind::exited, .code = exited.exit_code, .cycles = exited.cycles});
             }
             return message->payload.type == expected ? std::move(message) : std::nullopt;
+        }
+
+        void monitor_exit()
+        {
+            std::unique_lock state(this->state_mutex);
+            while (!this->host_exited)
+            {
+                state.unlock();
+                if (std::unique_lock control_lock(this->control_mutex, std::try_to_lock);
+                    control_lock.owns_lock() && this->control.is_ready(true))
+                {
+                    (void)this->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
+                                                 std::chrono::steady_clock::now() + exit_notification_timeout);
+                }
+                state.lock();
+                this->host_finished.wait_for(state, std::chrono::milliseconds(10), [this] { return this->host_exited; });
+            }
+            process_exit exit{.kind = process_exit_kind::runtime_failure,
+                              .code = this->host_exit_status ? static_cast<uint32_t>(*this->host_exit_status) : 1u};
+            if (this->termination_code)
+            {
+                exit = {.kind = process_exit_kind::terminated, .code = *this->termination_code};
+            }
+            state.unlock();
+            {
+                const std::scoped_lock control_lock(this->control_mutex);
+                (void)this->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
+                                             std::chrono::steady_clock::now() + exit_notification_timeout);
+            }
+            this->session->mark_exit(this->status->identity().process_id, exit);
         }
 
         void kill() const
@@ -476,14 +365,39 @@ namespace sogen
             }
         }
 
-        ~process_entry()
+        ~child_process()
         {
             this->kill();
-            this->control.close();
             if (this->output_thread.joinable())
             {
                 this->output_thread.join();
             }
+            if (this->exit_thread.joinable())
+            {
+                this->exit_thread.join();
+            }
+            this->control.close();
+        }
+    };
+
+    struct subprocess_process_manager::control_response
+    {
+        std::optional<ProcessProtocol::MessageT> message{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->message.has_value();
+        }
+
+        ProcessProtocol::MessageT* operator->()
+        {
+            return &*this->message;
+        }
+
+        const ProcessProtocol::MessageT* operator->() const
+        {
+            return &*this->message;
         }
     };
 
@@ -833,10 +747,13 @@ namespace sogen
     }
 
     subprocess_process_manager::subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
-                                                           std::unique_ptr<host_process_launcher> launcher)
+                                                           std::unique_ptr<host_process_launcher> launcher,
+                                                           process_session_endpoint session, std::chrono::milliseconds session_timeout,
+                                                           process_session::clock_source session_clock)
         : executable_(std::move(executable)),
           arguments_(std::move(arguments)),
-          launcher_(std::move(launcher))
+          launcher_(std::move(launcher)),
+          session_(std::move(session), std::move(session_clock), session_timeout)
     {
         if (this->executable_.empty() || !this->arguments_ || !this->launcher_)
         {
@@ -846,7 +763,11 @@ namespace sogen
 
     subprocess_process_manager::~subprocess_process_manager()
     {
-        std::vector<std::shared_ptr<process_entry>> processes{};
+        if (this->current_process_id_ && !this->current_process_exited_)
+        {
+            this->session_.mark_exit(this->current_process_id_, {.kind = process_exit_kind::runtime_failure, .code = 1});
+        }
+        std::vector<std::shared_ptr<child_process>> processes{};
         {
             const std::scoped_lock lock(this->mutex_);
             this->stopping_ = true;
@@ -854,7 +775,10 @@ namespace sogen
             for (const auto& [handle, process] : this->processes_)
             {
                 (void)handle;
-                processes.push_back(process);
+                if (const auto* child = std::get_if<std::shared_ptr<child_process>>(&process))
+                {
+                    processes.push_back(*child);
+                }
             }
         }
 
@@ -864,8 +788,81 @@ namespace sogen
         }
     }
 
+    process_session_endpoint subprocess_process_manager::session_endpoint() const
+    {
+        return this->session_.endpoint();
+    }
+
+    void subprocess_process_manager::initialize_current_process(const process_identity identity, const uint32_t initial_thread_id)
+    {
+        if (identity.process_id == 0)
+        {
+            throw std::invalid_argument("The current process must have a nonzero guest PID");
+        }
+        if (this->current_process_id_ == identity.process_id)
+        {
+            return;
+        }
+        if (this->session_.owns_registry())
+        {
+            const auto registered = this->session_.register_process(identity, initial_thread_id);
+            if (!registered)
+            {
+                throw std::runtime_error("Registering the guest process failed");
+            }
+        }
+        this->current_process_id_ = identity.process_id;
+        this->current_process_exited_ = false;
+    }
+
+    std::optional<guest_id_result> subprocess_process_manager::allocate_thread_id(const uint32_t requested_id)
+    {
+        return this->session_.allocate_thread_id(this->current_process_id_, requested_id);
+    }
+
+    void subprocess_process_manager::notify_current_process_exit(const uint64_t exit_code)
+    {
+        if (this->session_.mark_exit(this->current_process_id_, {.kind = process_exit_kind::exited, .code = exit_code}) ==
+            process_error::none)
+        {
+            this->current_process_exited_ = true;
+        }
+    }
+
+    process_open_result subprocess_process_manager::open_process(const uint32_t process_id)
+    {
+        const std::scoped_lock publication(this->publication_mutex_);
+        const auto result = this->session_.lookup(process_id);
+        if (!result)
+        {
+            return {.error = result.error};
+        }
+        const std::scoped_lock lock(this->mutex_);
+        for (const auto& [handle, reference] : this->processes_)
+        {
+            if (const auto* child = std::get_if<std::shared_ptr<child_process>>(&reference);
+                child && (*child)->status->identity().process_id == result.process->identity().process_id)
+            {
+                return {.process = {.handle = managed_process{handle}, .identity = result.process->identity()}};
+            }
+            if (const auto* opened = std::get_if<std::shared_ptr<session_process>>(&reference);
+                opened && (*opened)->identity().process_id == result.process->identity().process_id)
+            {
+                return {.process = {.handle = managed_process{handle}, .identity = result.process->identity()}};
+            }
+        }
+        if (this->stopping_ || this->next_process_ == 0)
+        {
+            return {.error = process_error::unavailable};
+        }
+        const managed_process handle{this->next_process_++};
+        this->processes_.emplace(handle.value, result.process);
+        return {.process = {.handle = handle, .identity = result.process->identity()}};
+    }
+
     process_create_result subprocess_process_manager::create_process(process_create_request request)
     {
+        request.session = this->session_.endpoint();
         managed_process handle{};
         {
             const std::scoped_lock lock(this->mutex_);
@@ -905,29 +902,30 @@ namespace sogen
             command.push_back(std::move(argument));
         }
 
-        const auto entry = std::make_shared<process_entry>();
+        auto reservation = this->session_.reserve_process();
+        if (!reservation)
+        {
+            return {.error = reservation.error};
+        }
+        request.process_id = reservation.process_id;
+        request.thread_id = reservation.thread_id;
+        auto discard_reservation = utils::finally([&] { (void)this->session_.discard_process(request.process_id); });
+        const auto entry = std::make_shared<child_process>();
         auto launched = this->launcher_->launch(command);
         if (!launched.process)
         {
             return {.error = launched.error};
         }
         entry->host = std::move(launched.process);
-        // Windows process and thread ids are multiples of 4, and code relies on it: gdi32 keeps a lock in bit 0 of the
-        // owning process id in its handle table. Process ids take multiples of 8 so the first thread id cannot equal one.
-        request.process_id = entry->host->id() * 8;
-        request.thread_id = request.process_id + 4;
-
+        entry->session = &this->session_;
         entry->output_thread = std::thread([process = entry.get()] {
             const auto status = process->host->run();
-            const std::scoped_lock lock(process->state_mutex);
-            if (status)
             {
+                const std::scoped_lock lock(process->state_mutex);
                 process->host_exit_status = status;
+                process->host_exited = true;
             }
-            else
-            {
-                process->host_failure = true;
-            }
+            process->host_finished.notify_one();
         });
 
         constexpr auto connection_timeout = std::chrono::seconds(30);
@@ -977,6 +975,18 @@ namespace sogen
             entry->kill();
             return {.error = process_error::internal_failure};
         }
+        const auto& process_started = *started->payload.AsProcessStarted();
+        const process_identity identity{.process_id = request.process_id,
+                                        .parent_process_id = request.parent_process_id,
+                                        .native_environment = process_started.native_environment,
+                                        .compatibility_environment = process_started.compatibility_environment};
+        const std::scoped_lock publication(this->publication_mutex_);
+        const auto registration = this->session_.publish_process(identity);
+        if (!registration)
+        {
+            entry->kill();
+            return {.error = registration.error};
+        }
         {
             const std::scoped_lock lock(this->mutex_);
             if (this->stopping_)
@@ -984,24 +994,23 @@ namespace sogen
                 entry->kill();
                 return {.error = process_error::unavailable};
             }
+            entry->status = registration.process;
+            entry->exit_thread = std::thread([process = entry.get()] { process->monitor_exit(); });
             this->processes_.emplace(handle.value, entry);
+            discard_reservation.cancel();
         }
-        const auto& process_started = *started->payload.AsProcessStarted();
-        return {.process = handle,
-                .process_id = request.process_id,
+        return {.process = {.handle = handle, .identity = identity},
                 .thread_id = request.thread_id,
-                .native_environment = process_started.native_environment,
-                .compatibility_environment = process_started.compatibility_environment,
                 .native_parameters = process_started.native_parameters,
                 .compatibility_parameters = process_started.compatibility_parameters};
     }
 
     process_error subprocess_process_manager::resume_process(const managed_process process)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, lookup_error] = this->find_child(process);
         if (!entry)
         {
-            return process_error::invalid_process;
+            return lookup_error;
         }
         const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, ProcessProtocol::ResumeProcessRequestT{}))
@@ -1029,7 +1038,10 @@ namespace sogen
         for (const auto& [handle, process] : this->processes_)
         {
             (void)handle;
-            process->kill();
+            if (const auto* child = std::get_if<std::shared_ptr<child_process>>(&process))
+            {
+                (*child)->kill();
+            }
         }
     }
 
@@ -1037,16 +1049,16 @@ namespace sogen
     // destructor still ends the others.
     void subprocess_process_manager::wait_for_processes()
     {
-        std::vector<std::shared_ptr<process_entry>> processes{};
+        std::vector<std::shared_ptr<child_process>> processes{};
         {
             const std::scoped_lock lock(this->mutex_);
             this->stopping_ = true;
             for (const auto& [handle, process] : this->processes_)
             {
                 (void)handle;
-                if (process->resumed)
+                if (const auto* child = std::get_if<std::shared_ptr<child_process>>(&process); child && (*child)->resumed)
                 {
-                    processes.push_back(process);
+                    processes.push_back(*child);
                 }
             }
         }
@@ -1064,10 +1076,10 @@ namespace sogen
                                                                       const uint64_t size, const memory_permission permission,
                                                                       const bool reserve, const bool commit)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return {.error = process_error::invalid_process};
+            return {.error = error};
         }
         ProcessProtocol::AllocateMemoryRequestT request{};
         request.address = address;
@@ -1092,10 +1104,10 @@ namespace sogen
     process_error subprocess_process_manager::free_memory(const managed_process process, const uint64_t address, const uint64_t size,
                                                           const bool release)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return process_error::invalid_process;
+            return error;
         }
         ProcessProtocol::FreeMemoryRequestT request{};
         request.address = address;
@@ -1118,10 +1130,10 @@ namespace sogen
     process_memory_result subprocess_process_manager::protect_memory(const managed_process process, const uint64_t address,
                                                                      const uint64_t size, const memory_permission permission)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return {.error = process_error::invalid_process};
+            return {.error = error};
         }
         ProcessProtocol::ProtectMemoryRequestT request{};
         request.address = address;
@@ -1144,10 +1156,10 @@ namespace sogen
     process_memory_read_result subprocess_process_manager::read_memory(const managed_process process, const uint64_t address,
                                                                        const uint64_t size) const
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return {.error = process_error::invalid_process};
+            return {.error = error};
         }
         ProcessProtocol::ReadMemoryRequestT request{};
         request.address = address;
@@ -1170,10 +1182,10 @@ namespace sogen
     process_memory_result subprocess_process_manager::write_memory(const managed_process process, const uint64_t address,
                                                                    const std::span<const uint8_t> data)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry || data.size() > maximum_payload_size)
         {
-            return {.error = entry ? process_error::resource_limit : process_error::invalid_process};
+            return {.error = entry ? process_error::resource_limit : error};
         }
         ProcessProtocol::WriteMemoryRequestT request{};
         request.address = address;
@@ -1193,26 +1205,26 @@ namespace sogen
     }
 
     template <typename Request>
-    std::optional<ProcessProtocol::MessageT> subprocess_process_manager::exchange(const managed_process process, Request request,
-                                                                                  const uint8_t response_type) const
+    subprocess_process_manager::control_response subprocess_process_manager::exchange(const managed_process process, Request request,
+                                                                                      const uint8_t response_type) const
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return std::nullopt;
+            return {.error = error};
         }
         const auto expected = static_cast<ProcessProtocol::MessagePayload>(response_type);
         const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, std::move(request)))
         {
-            return std::nullopt;
+            return {.error = process_error::communication_failure};
         }
         auto response = entry->receive_response(expected, std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != expected)
         {
-            return std::nullopt;
+            return {.error = process_error::communication_failure};
         }
-        return response;
+        return {.message = std::move(response)};
     }
 
     process_debug_event_result subprocess_process_manager::next_debug_event(const managed_process process)
@@ -1220,7 +1232,7 @@ namespace sogen
         auto response = this->exchange(process, ProcessProtocol::DebugEventRequestT{}, ProcessProtocol::MessagePayload_DebugEventResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         auto& result = *response->payload.AsDebugEventResponse();
         process_debug_event_result decoded{.error = decode_error(result.error)};
@@ -1238,14 +1250,14 @@ namespace sogen
         request.thread_id = thread_id;
         request.status = status;
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
-        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : response.error;
     }
 
     process_error subprocess_process_manager::detach_debugger(const managed_process process)
     {
         const auto response =
             this->exchange(process, ProcessProtocol::DebugDetachRequestT{}, ProcessProtocol::MessagePayload_ProcessErrorResponse);
-        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : response.error;
     }
 
     process_thread_context_result subprocess_process_manager::get_thread_context(const managed_process process, const uint32_t thread_id,
@@ -1257,7 +1269,7 @@ namespace sogen
         auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadContextResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         auto& result = *response->payload.AsThreadContextResponse();
         return {.context = std::move(result.context), .error = decode_error(result.error)};
@@ -1271,7 +1283,7 @@ namespace sogen
         request.wow64 = wow64;
         request.context.assign(context.begin(), context.end());
         const auto response = this->exchange(process, std::move(request), ProcessProtocol::MessagePayload_ProcessErrorResponse);
-        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : response.error;
     }
 
     process_thread_information subprocess_process_manager::thread_information(const managed_process process, const uint32_t thread_id)
@@ -1281,7 +1293,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadInformationResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsThreadInformationResponse();
         return {.teb = result.teb, .error = decode_error(result.error)};
@@ -1296,7 +1308,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_SuspendThreadResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsSuspendThreadResponse();
         return {.previous_count = result.previous_count, .error = decode_error(result.error)};
@@ -1310,7 +1322,7 @@ namespace sogen
         const auto response = this->exchange(process, std::move(request), ProcessProtocol::MessagePayload_InstallObjectResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsInstallObjectResponse();
         return {.handle = result.handle, .error = decode_error(result.error)};
@@ -1323,7 +1335,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ExportObjectResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsExportObjectResponse();
         if (result.error != ProcessProtocol::ProcessError_None || !result.object)
@@ -1341,7 +1353,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
         if (!response)
         {
-            return process_error::communication_failure;
+            return response.error;
         }
         return decode_error(response->payload.AsProcessErrorResponse()->error);
     }
@@ -1355,7 +1367,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
         if (!response)
         {
-            return process_error::communication_failure;
+            return response.error;
         }
         return decode_error(response->payload.AsProcessErrorResponse()->error);
     }
@@ -1367,7 +1379,7 @@ namespace sogen
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadTokenResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsThreadTokenResponse();
         return {.token = decode_token(result.token, result.has_privileges, result.privileges), .error = decode_error(result.error)};
@@ -1389,7 +1401,7 @@ namespace sogen
             this->exchange(process, ProcessProtocol::CycleTimeRequestT{}, ProcessProtocol::MessagePayload_CycleTimeResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         const auto& result = *response->payload.AsCycleTimeResponse();
         return {.cycles = result.cycles, .error = decode_error(result.error)};
@@ -1402,7 +1414,7 @@ namespace sogen
         auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_QueryMemoryResponse);
         if (!response)
         {
-            return {.error = process_error::communication_failure};
+            return {.error = response.error};
         }
         auto& result = *response->payload.AsQueryMemoryResponse();
         return {.base_address = result.base_address,
@@ -1418,15 +1430,15 @@ namespace sogen
 
     process_error subprocess_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
     {
-        const auto entry = this->find_process(process);
+        const auto [entry, error] = this->find_child(process);
         if (!entry)
         {
-            return process_error::invalid_process;
+            return error;
         }
 
         {
             const std::scoped_lock lock(entry->state_mutex);
-            if (entry->exit)
+            if (entry->status->exit_status().status)
             {
                 return process_error::none;
             }
@@ -1436,71 +1448,54 @@ namespace sogen
         return process_error::none;
     }
 
-    process_exit_status_result subprocess_process_manager::exit_status(const managed_process process) const
+    process_exit_status_result subprocess_process_manager::poll_exit_status(const managed_process process) const
     {
-        const auto entry = this->find_process(process);
-        if (!entry)
+        const auto reference = this->find_process(process);
+        if (!reference)
         {
             return {.error = process_error::invalid_process};
         }
-
+        if (const auto* opened = std::get_if<std::shared_ptr<session_process>>(&*reference))
         {
-            const std::scoped_lock lock(entry->state_mutex);
-            if (entry->exit)
-            {
-                return {.status = entry->exit};
-            }
+            return this->session_.poll_exit_status(*opened);
         }
-
-        // The child reports its guest's exit before its host process waits for its own children, so the guest process is
-        // signaled as soon as the report arrives, not when the host process ends.
-        if (std::unique_lock control(entry->control_mutex, std::try_to_lock); control.owns_lock() && entry->control.is_ready(true))
-        {
-            (void)entry->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
-                                          std::chrono::steady_clock::now() + exit_notification_timeout);
-        }
-
-        bool host_exited{};
-        {
-            const std::scoped_lock lock(entry->state_mutex);
-            if (entry->exit)
-            {
-                return {.status = entry->exit};
-            }
-            if (!entry->host_exit_status && !entry->host_failure)
-            {
-                return {};
-            }
-            host_exited = entry->host_exit_status.has_value();
-        }
-
-        if (host_exited)
-        {
-            const std::scoped_lock lock(entry->control_mutex);
-            (void)entry->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
-                                          std::chrono::steady_clock::now() + exit_notification_timeout);
-        }
-
-        const std::scoped_lock lock(entry->state_mutex);
-        if (entry->exit)
-        {
-            return {.status = entry->exit};
-        }
-        if (entry->termination_code)
-        {
-            entry->exit = process_exit{.kind = process_exit_kind::terminated, .code = *entry->termination_code};
-            return {.status = entry->exit};
-        }
-
-        entry->exit = process_exit{.kind = process_exit_kind::runtime_failure,
-                                   .code = entry->host_exit_status ? static_cast<uint32_t>(*entry->host_exit_status) : 1};
-        return {.status = entry->exit};
+        return this->session_.poll_exit_status(std::get<std::shared_ptr<child_process>>(*reference)->status);
     }
 
-    std::shared_ptr<subprocess_process_manager::process_entry> subprocess_process_manager::find_process(const managed_process process) const
+    process_exit_status_result subprocess_process_manager::exit_status(const managed_process process) const
+    {
+        const auto reference = this->find_process(process);
+        if (!reference)
+        {
+            return {.error = process_error::invalid_process};
+        }
+        if (const auto* opened = std::get_if<std::shared_ptr<session_process>>(&*reference))
+        {
+            return this->session_.exit_status(*opened);
+        }
+        const auto& entry = std::get<std::shared_ptr<child_process>>(*reference);
+        return this->session_.exit_status(entry->status);
+    }
+
+    std::optional<subprocess_process_manager::process_reference> subprocess_process_manager::find_process(
+        const managed_process process) const
     {
         const std::scoped_lock lock(this->mutex_);
         const auto entry = this->processes_.find(process.value);
-        return entry == this->processes_.end() ? nullptr : entry->second;
+        return entry == this->processes_.end() ? std::nullopt : std::optional{entry->second};
+    }
+
+    subprocess_process_manager::child_process_result subprocess_process_manager::find_child(const managed_process process) const
+    {
+        const auto reference = this->find_process(process);
+        if (!reference)
+        {
+            return {.error = process_error::invalid_process};
+        }
+        if (const auto* child = std::get_if<std::shared_ptr<child_process>>(&*reference))
+        {
+            return {.process = *child};
+        }
+        return {.error = process_error::unavailable};
     }
 }

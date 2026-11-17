@@ -872,18 +872,20 @@ namespace sogen
                        ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}
                        : registry_manager{}),
           mod_manager(memory, file_sys, this->callbacks, guest_architecture_of(*this->emu_)),
-          process(*this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_),
-                  [this]() -> std::optional<native_tsc> {
-                      // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
-                      const auto frequency = this->native_timestamp_counter_frequency();
-                      const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
-                      if (!value)
-                      {
-                          return std::nullopt;
-                      }
+          process(
+              *this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_),
+              [this]() -> std::optional<native_tsc> {
+                  // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
+                  const auto frequency = this->native_timestamp_counter_frequency();
+                  const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
+                  if (!value)
+                  {
+                      return std::nullopt;
+                  }
 
-                      return native_tsc{.value = *value, .frequency = *frequency};
-                  }),
+                  return native_tsc{.value = *value, .frequency = *frequency};
+              },
+              this->process_manager_),
           use_relative_time_(settings.use_relative_time),
           // Instruction precision runs through a global execution hook; backends that only count instructions
           // (single-stepping) cannot provide it.
@@ -972,6 +974,29 @@ namespace sogen
         this->process.abandon_shared_mutants();
     }
 
+    void windows_emulator::initialize_process_manager()
+    {
+        if (this->process_manager_ && this->setup_completed_)
+        {
+            this->process_manager_->initialize_current_process(
+                {.process_id = this->process.process_id,
+                 .parent_process_id = this->process.parent_process_id,
+                 .native_environment = this->process.peb64.value(),
+                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0},
+                this->process.initial_thread_id);
+            for (const auto& thread : this->process.threads | std::views::values)
+            {
+                if (thread.id != this->process.initial_thread_id)
+                {
+                    if (const auto allocated = this->process_manager_->allocate_thread_id(thread.id); allocated && !*allocated)
+                    {
+                        throw std::runtime_error("Registering a restored guest thread failed");
+                    }
+                }
+            }
+        }
+    }
+
     void windows_emulator::setup_process_if_necessary()
     {
         if (this->setup_completed_)
@@ -982,6 +1007,7 @@ namespace sogen
         this->setup_completed_ = true;
 
         this->setup_process();
+        this->initialize_process_manager();
     }
 
     void windows_emulator::setup_process()
@@ -1959,6 +1985,13 @@ namespace sogen
         this->last_stop_reason_ = stop_reason::none;
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
+
+        const auto report_exit = utils::finally([this] {
+            if (this->process_manager_ && this->process.exit_status)
+            {
+                this->process_manager_->notify_current_process_exit(static_cast<uint32_t>(*this->process.exit_status));
+            }
+        });
 
         this->debugger_.begin_emulation();
         const auto end_debugger_emulation = utils::finally([this] { this->debugger_.end_emulation(); });
@@ -3221,6 +3254,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
@@ -3423,6 +3457,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         this->apply_cursor_shape();

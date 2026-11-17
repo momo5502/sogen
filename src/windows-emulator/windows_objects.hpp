@@ -1,6 +1,7 @@
 #pragma once
 
 #include "handles.hpp"
+#include <process_manager.hpp>
 #include "io_device.hpp"
 #include "memory_manager.hpp"
 #include "shared_sync_state.hpp"
@@ -260,14 +261,14 @@ namespace sogen
         struct debuggee
         {
             uint64_t process{};
-            uint32_t process_id{};
+            process_identity identity{};
             bool exit_reported{};
             std::vector<uint32_t> thread_ids{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
                 buffer.write(this->process);
-                buffer.write(this->process_id);
+                buffer.write(this->identity);
                 buffer.write(this->exit_reported);
                 buffer.write_vector(this->thread_ids);
             }
@@ -275,7 +276,7 @@ namespace sogen
             void deserialize(utils::buffer_deserializer& buffer)
             {
                 buffer.read(this->process);
-                buffer.read(this->process_id);
+                buffer.read(this->identity);
                 buffer.read(this->exit_reported);
                 buffer.read_vector(this->thread_ids);
             }

@@ -910,9 +910,10 @@ namespace sogen
                 throw std::runtime_error("--trace-children requires an x86 or x64 target with the WHP backend");
             }
             manager = std::make_unique<subprocess_process_manager>(
-                get_managed_process_executable(use_sandbox && !options.trace_children), [&](const auto port, const auto& token) {
-                    return create_managed_process_arguments(options, port, token, ++child_counter);
-                });
+                get_managed_process_executable(use_sandbox && !options.trace_children),
+                [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token, ++child_counter); },
+                create_subprocess_launcher(),
+                options.managed_process ? options.managed_process->request().session : process_session_endpoint{});
 #endif
             // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
             // other way out leaves the children to the process manager's destructor.

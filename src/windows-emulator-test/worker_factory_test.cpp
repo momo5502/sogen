@@ -2,6 +2,9 @@
 #include <io_completion_wait.hpp>
 #include <syscall_utils.hpp>
 #include <worker_factory_support.hpp>
+#ifndef __EMSCRIPTEN__
+#include <subprocess_process_manager.hpp>
+#endif
 
 namespace sogen::syscalls
 {
@@ -134,12 +137,74 @@ namespace sogen::test
                 EXPECT_EQ(1u, emulator_object<ULONG>(this->emu->memory, this->storage + 0x80).read());
             }
 
+#ifndef __EMSCRIPTEN__
+            void fail_thread_allocation()
+            {
+                this->process_manager = std::make_unique<subprocess_process_manager>(
+                    "unused", [](uint16_t, const std::string&) { return std::vector<std::string>{}; });
+                this->emu->process.process_manager_ = this->process_manager.get();
+            }
+
+            void restore_thread_allocation()
+            {
+                this->process_manager->initialize_current_process({.process_id = this->emu->process.process_id},
+                                                                  this->emu->process.initial_thread_id);
+            }
+
+            std::unique_ptr<subprocess_process_manager> process_manager{};
+#endif
             std::unique_ptr<windows_emulator> emu{};
             uint64_t storage{};
             handle factory_handle{};
             handle port{};
         };
     }
+
+#ifndef __EMSCRIPTEN__
+    TEST_F(WorkerFactoryTest, FailedMinimumWorkerCreationStopsAndCanRecover)
+    {
+        this->make_pool();
+        this->fail_thread_allocation();
+        EXPECT_EQ(STATUS_INSUFFICIENT_RESOURCES, this->set_limit(WorkerFactoryThreadMinimum, 2));
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+        EXPECT_EQ(0u, this->pool().pending_worker_count);
+
+        this->restore_thread_allocation();
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 3));
+        EXPECT_EQ(3u, this->pool().worker_threads.size());
+        EXPECT_EQ(3u, this->pool().pending_worker_count);
+    }
+
+    TEST_F(WorkerFactoryTest, FailedMaximumWorkerCreationCanBeRetried)
+    {
+        this->make_pool(0);
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        this->fail_thread_allocation();
+        EXPECT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+        EXPECT_EQ(0u, this->pool().pending_worker_count);
+
+        this->restore_thread_allocation();
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+        EXPECT_EQ(1u, this->pool().pending_worker_count);
+    }
+
+    TEST_F(WorkerFactoryTest, FailedQueuedWorkerCreationDoesNotPreventTheNextRelease)
+    {
+        this->make_pool();
+        this->fail_thread_allocation();
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+        EXPECT_EQ(0u, this->pool().pending_worker_count);
+        this->take_release();
+
+        this->restore_thread_allocation();
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+        EXPECT_EQ(1u, this->pool().pending_worker_count);
+    }
+#endif
 
     TEST_F(WorkerFactoryTest, ReleaseStartsAWorkerWhenEveryWorkerIsBusy)
     {
