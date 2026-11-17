@@ -3,6 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
+#include <code_page.hpp>
 #include <managed_process_start.hpp>
 #include <backend_selection.hpp>
 #include <win_gdb_stub_handler.hpp>
@@ -104,6 +105,8 @@ namespace sogen
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
             std::filesystem::path registry_state{};
+            std::optional<uint32_t> ansi_code_page{};
+            std::optional<uint32_t> oem_code_page{};
             std::filesystem::path emulation_root{};
             std::filesystem::path working_directory{};
             uint16_t managed_process_port{};
@@ -839,6 +842,21 @@ namespace sogen
             }
         }
 
+        void apply_code_page_options(windows_emulator& win_emu, const analysis_options& options)
+        {
+            if (!options.dump.empty() || !options.minidump_path.empty())
+            {
+                return;
+            }
+#ifndef OS_EMSCRIPTEN
+            if (options.managed_process)
+            {
+                return;
+            }
+#endif
+            configure_process_code_pages(win_emu.registry, options.ansi_code_page, options.oem_code_page);
+        }
+
         std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args,
                                                          emulator_interfaces interfaces)
         {
@@ -949,6 +967,7 @@ namespace sogen
                 registry_state->load(win_emu->registry);
             }
             apply_registry_files(*win_emu, options);
+            apply_code_page_options(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
@@ -1288,12 +1307,12 @@ namespace sogen
             app.add_option("--working-directory", options.working_directory, "Set the working directory for the analyzed application");
             app.add_option("--managed-process-port", options.managed_process_port)->group("");
             app.add_option("--managed-process-token", options.managed_process_token)->group("");
-            app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
+            auto* const snapshot_option = app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
 #ifndef OS_EMSCRIPTEN
             app.add_option("--snapshot-dir", options.snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process, which keeps running")
                 ->capture_default_str();
 #endif
-            app.add_option("--minidump", options.minidump_path, "Load minidump from path");
+            auto* const minidump_option = app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
             app.add_option("--report-format", options.report_format, "Report format (supported: jsonl)")->capture_default_str();
             app.add_option("--stdout", options.stdout_path, "Write guest console output to a file");
@@ -1308,6 +1327,14 @@ namespace sogen
                 ->type_name("FILE")
                 ->expected(1)
                 ->allow_extra_args(false);
+            app.add_option("--ansi-code-page", options.ansi_code_page, "Override guest ANSI code page (default: guest registry ACP)")
+                ->check(CLI::Range(4, 65535))
+                ->excludes(snapshot_option)
+                ->excludes(minidump_option);
+            app.add_option("--oem-code-page", options.oem_code_page, "Override guest OEM code page (default: guest registry OEMCP)")
+                ->check(CLI::Range(4, 65535))
+                ->excludes(snapshot_option)
+                ->excludes(minidump_option);
 
             app.add_option("--vcpus", options.vcpu_count, "Number of virtual CPUs (requires a backend with multi-vCPU support)")
                 ->capture_default_str();
