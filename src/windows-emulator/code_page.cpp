@@ -198,6 +198,20 @@ namespace sogen
             }
         }
 
+        std::pair<uint32_t, uint32_t> resolve_code_page_ids(registry_manager& registry, const std::optional<uint32_t> ansi_override = {},
+                                                            const std::optional<uint32_t> oem_override = {})
+        {
+            const auto ansi = ansi_override ? ansi_override : get_code_page(registry, "ACP", 1252);
+            const auto oem = oem_override ? oem_override : get_code_page(registry, "OEMCP", 437);
+            if (!ansi || !oem)
+            {
+                throw std::invalid_argument("Invalid ANSI/OEM code-page configuration");
+            }
+            validate_code_page_id(*ansi);
+            validate_code_page_id(*oem);
+            return {*ansi, *oem};
+        }
+
         code_page load_code_page(windows_emulator& win_emu, const uint32_t id)
         {
             validate_code_page_id(id);
@@ -386,16 +400,36 @@ namespace sogen
         return address;
     }
 
+    void configure_process_code_pages(registry_manager& registry, const std::optional<uint32_t> ansi_id,
+                                      const std::optional<uint32_t> oem_id)
+    {
+        if (!ansi_id && !oem_id)
+        {
+            return;
+        }
+        (void)resolve_code_page_ids(registry, ansi_id, oem_id);
+
+        const auto key = registry.create_key(R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)");
+        if (!key)
+        {
+            throw std::runtime_error("Cannot configure ANSI/OEM code pages without the SYSTEM registry hive");
+        }
+        const auto write_code_page = [&](const std::string_view name, const std::optional<uint32_t> id) {
+            if (id)
+            {
+                const auto text = u8_to_u16(std::to_string(*id));
+                registry.set_value(*key, std::string{name}, REG_SZ, std::as_bytes(std::span{text.c_str(), text.size() + 1}));
+            }
+        };
+        write_code_page("ACP", ansi_id);
+        write_code_page("OEMCP", oem_id);
+    }
+
     void initialize_process_code_pages(windows_emulator& win_emu)
     {
-        const auto ansi_id = get_code_page(win_emu.registry, "ACP", 1252);
-        const auto oem_id = get_code_page(win_emu.registry, "OEMCP", 437);
-        if (!ansi_id || !oem_id)
-        {
-            throw std::runtime_error("Invalid ANSI/OEM code-page configuration");
-        }
-        auto ansi = load_code_page(win_emu, *ansi_id);
-        auto oem = *oem_id == *ansi_id ? ansi : load_code_page(win_emu, *oem_id);
+        const auto [ansi_id, oem_id] = resolve_code_page_ids(win_emu.registry);
+        auto ansi = load_code_page(win_emu, ansi_id);
+        auto oem = oem_id == ansi_id ? ansi : load_code_page(win_emu, oem_id);
         win_emu.process.ansi_code_page = std::move(ansi);
         win_emu.process.oem_code_page = std::move(oem);
     }

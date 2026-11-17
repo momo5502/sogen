@@ -32,6 +32,28 @@ atomically replace the destination. A failed save preserves the previous state. 
 clean-exit persistence; periodic checkpoints, power-loss recovery and concurrent-writer
 merging are not provided.
 
+## Guest code pages
+
+`--ansi-code-page ID` and `--oem-code-page ID` independently override the guest's
+`ACP` and `OEMCP` values under `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage`:
+
+```sh
+analyzer -e /path/to/root --ansi-code-page 936 c:/sample.exe
+```
+
+An omitted option leaves that registry value unchanged. Explicit code-page options
+are applied after registry state and `--reg-file` imports; they do not use the host's
+ANSI or OEM code page. Missing registry values use 1252 and 437 respectively. The
+selected pages may differ, including when either is DBCS. These overrides are part
+of the registry overlay, so `--registry-state` saves them and managed children inherit
+them. They cannot be combined with snapshot or minidump loading.
+
+The guest root must contain a valid `c_<ID>.nls` in its Windows `System32` directory
+for each selected page. `create-root.bat` collects the installed `c_*.nls` files.
+Missing or unsupported data stops setup rather than silently selecting another page.
+SBCS and DBCS NLS pages are supported; UTF-7 (65000) and UTF-8 (65001) are not.
+Code-page conversion does not add fonts or change the text-rendering backend.
+
 ## Format and limits
 
 Version 1 has a 24-byte little-endian header: eight bytes `SOGREG01`, a 32-bit version,
