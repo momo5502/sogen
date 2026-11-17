@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 
 #include "../devices/named_pipe.hpp"
+#include "../devices/console.hpp"
 
 namespace sogen
 {
@@ -1658,6 +1659,8 @@ namespace sogen
             return pipe->start_io(c.win_emu, container->prepare_io_context(context), reading);
         }
 
+        NTSTATUS check_completion_event(const syscall_context& c, handle event);
+
         NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t event, const uint64_t apc_routine,
                                    const uint64_t apc_context,
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
@@ -1668,9 +1671,39 @@ namespace sogen
 
             if (file_handle == STDIN_HANDLE)
             {
-                const auto data = c.win_emu.console().read_input(length);
-                commit_file_data(data, c.emu, io_status_block, buffer);
-                return STATUS_SUCCESS;
+                if (const auto status = probe_range(c.win_emu, io_status_block.value(), sizeof(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>),
+                                                    memory_permission::write);
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+                if (length != 0)
+                {
+                    if (const auto status = probe_range(c.win_emu, buffer, length, memory_permission::write); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                }
+                if (const auto status = check_completion_event(c, make_handle(event)); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+                io_device_context context{c.emu};
+                context.source_handle = file_handle;
+                context.event = c.proc.reference_of(make_handle(event));
+                if (event != 0 && !context.event)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                context.event_low_bit = (event & 1) != 0;
+                context.apc_routine = apc_routine;
+                context.apc_context = apc_context;
+                context.io_status_block = io_status_block;
+                context.output_buffer = buffer;
+                context.output_buffer_length = length;
+                context.vcpu = &c.vcpu;
+                context.wow64_io_status_block.set_address(wow64_io_status_block);
+                return read_console_input(c.win_emu, context);
             }
 
             if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
@@ -1801,7 +1834,9 @@ namespace sogen
             {
                 return STATUS_INVALID_PARAMETER;
             }
-            const auto resolved = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            const auto resolved = file_handle == STDIN_HANDLE && c.proc.console_handle.bits
+                                      ? c.proc.console_handle
+                                      : c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             if (auto* device = c.proc.devices.get(resolved))
             {
                 device->cancel_io(c.win_emu, 0, c.thread().id);
@@ -1834,7 +1869,9 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            const auto resolved_handle = file_handle == STDIN_HANDLE
+                                             ? c.proc.console_handle
+                                             : c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             auto* device = c.proc.devices.get(resolved_handle);
             if (!device)
             {

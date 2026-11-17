@@ -209,6 +209,11 @@ namespace sogen::test
                 return {};
             }
 
+            std::optional<std::string> try_read_input(size_t /*length*/) override
+            {
+                return std::string{};
+            }
+
             void set_input_mode(const console_input_mode& /*mode*/) override
             {
             }

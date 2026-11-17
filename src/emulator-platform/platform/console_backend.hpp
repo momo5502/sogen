@@ -54,7 +54,21 @@ namespace sogen
 
         virtual bool input_available() = 0;
         virtual std::optional<console_key_event> read_input_event(bool wait, bool remove) = 0;
+
+        virtual bool input_closed() const
+        {
+            return false;
+        }
+
         virtual std::string read_input(size_t length) = 0;
+        // nullopt means pending; an empty string means EOF (or a zero-length read).
+        virtual std::optional<std::string> try_read_input(size_t length) = 0;
+
+        virtual bool cancel_read_input()
+        {
+            return true;
+        }
+
         virtual void set_input_mode(const console_input_mode& mode) = 0;
         virtual void reset() = 0;
 
@@ -77,9 +91,19 @@ namespace sogen
             return std::nullopt;
         }
 
+        bool input_closed() const override
+        {
+            return true;
+        }
+
         std::string read_input(size_t /*length*/) override
         {
             return {};
+        }
+
+        std::optional<std::string> try_read_input(size_t /*length*/) override
+        {
+            return std::string{};
         }
 
         void set_input_mode(const console_input_mode& /*mode*/) override

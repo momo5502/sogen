@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -169,7 +170,8 @@ namespace sogen
             return context;
         }
 
-        static void queue_io_completion(windows_emulator& win_emu, const io_device_context& context);
+        static void queue_io_completion(windows_emulator& win_emu, const io_device_context& context,
+                                        std::optional<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status = std::nullopt);
 
         virtual void release_references(process_context& process)
         {
