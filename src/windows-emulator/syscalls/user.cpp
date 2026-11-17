@@ -2626,39 +2626,41 @@ namespace sogen
             return static_cast<ULONG>(-1);
         }
 
-        // GetRawInputData fetches the payload referenced by a WM_INPUT message's lParam (an HRAWINPUT token we
-        // minted in handle_ui_event). We only synthesize relative mouse motion, so reconstruct a RAWINPUT whose
-        // mouse delta is the {dx, dy} stored for the token. uiCommand selects the header-only (RID_HEADER) or
-        // full (RID_INPUT) payload; passing pData==NULL is the standard size query.
+        // GetRawInputData fetches the payload referenced by WM_INPUT's lParam. RID_HEADER reads only the header,
+        // RID_INPUT reads the header and payload, and a null data pointer queries the required size. Reads leave
+        // the token valid so the window procedure can read the payload again.
         //
-        // The RAWMOUSE body follows the header with no extra padding, so it sits at offset == cbSizeHeader. A
-        // WoW64 (32-bit) guest on 64-bit Windows gets the *64-bit* RAWINPUTHEADER (24 bytes: 8-byte hDevice +
-        // wParam), not the 16-byte 32-bit one -- the well-known WoW64 raw-input quirk -- so honor whatever
-        // cbSizeHeader the caller passes and place the mouse body there, instead of assuming a fixed layout.
+        // The mouse or keyboard body follows the header with no extra padding. Native 64-bit callers use the
+        // 24-byte header, while WoW64 callers can use either the 16-byte or 24-byte layout.
         uint32_t handle_NtUserGetRawInputData(const syscall_context& c, const emulator_pointer raw_input, const uint32_t command,
                                               const emulator_pointer data, const emulator_object<uint32_t> size_ptr,
                                               const uint32_t header_size)
         {
             constexpr auto failure = static_cast<uint32_t>(-1);
-            constexpr uint32_t max_header_size = 0x20;
-
-            if (!size_ptr || header_size < sizeof(RAWINPUTHEADER32) || header_size > max_header_size)
+            const auto valid_header =
+                header_size == sizeof(RAWINPUTHEADER64) || (header_size == sizeof(RAWINPUTHEADER32) && c.proc.is_wow64_process);
+            if (!size_ptr || !valid_header)
             {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
                 return failure;
             }
 
-            const auto token = static_cast<uint32_t>(raw_input);
-            const auto entry = c.proc.raw_inputs.find(token);
-            if (entry == c.proc.raw_inputs.end())
+            const auto* payload = c.thread().find_raw_input(raw_input);
+            if (!payload)
             {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
                 return failure;
             }
 
-            const auto& payload = entry->second;
+            if (command != RID_HEADER && command != RID_INPUT)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return failure;
+            }
 
-            // The body is a RAWKEYBOARD or RAWMOUSE depending on what the token carried.
-            const uint32_t body_size = payload.keyboard ? sizeof(RAWKEYBOARD32) : sizeof(RAWMOUSE32);
-            const uint32_t dw_type = payload.keyboard ? RIM_TYPEKEYBOARD : RIM_TYPEMOUSE;
+            // The payload is a RAWKEYBOARD or RAWMOUSE depending on what the token carried.
+            const uint32_t body_size = payload->keyboard ? sizeof(RAWKEYBOARD32) : sizeof(RAWMOUSE32);
+            const uint32_t dw_type = payload->keyboard ? RIM_TYPEKEYBOARD : RIM_TYPEMOUSE;
 
             const uint32_t total = header_size + body_size;
             const uint32_t required = (command == RID_HEADER) ? header_size : total;
@@ -2671,26 +2673,28 @@ namespace sogen
 
             if (size_ptr.read() < required)
             {
+                size_ptr.write(required);
+                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
                 return failure;
             }
 
             // dwType @0 and dwSize @4 are identical across header layouts; hDevice/wParam stay zeroed, so only
             // the overall header size (which shifts the body) matters.
-            std::array<uint8_t, max_header_size + sizeof(RAWMOUSE32)> buffer{};
+            std::array<uint8_t, sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE32)> buffer{};
             const uint32_t dw_size = total;
             std::memcpy(buffer.data() + 0, &dw_type, sizeof(dw_type));
             std::memcpy(buffer.data() + 4, &dw_size, sizeof(dw_size));
-            if (command != RID_HEADER)
+            if (command == RID_INPUT)
             {
-                if (payload.keyboard)
+                if (payload->keyboard)
                 {
                     RAWKEYBOARD32 keyboard{};
-                    keyboard.MakeCode = payload.scan_code;
-                    const bool key_release = payload.key_message == WM_KEYUP || payload.key_message == WM_SYSKEYUP;
+                    keyboard.MakeCode = payload->scan_code;
+                    const bool key_release = payload->key_message == WM_KEYUP || payload->key_message == WM_SYSKEYUP;
                     keyboard.Flags =
-                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload.key_extended ? RI_KEY_E0 : 0));
-                    keyboard.VKey = payload.vkey;
-                    keyboard.Message = payload.key_message;
+                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload->key_extended ? RI_KEY_E0 : 0));
+                    keyboard.VKey = payload->vkey;
+                    keyboard.Message = payload->key_message;
                     std::memcpy(buffer.data() + header_size, &keyboard, sizeof(keyboard));
                 }
                 else
@@ -2700,12 +2704,11 @@ namespace sogen
                     // RAWMOUSE has a usButtonFlags/usButtonData union packed into ulButtons. The high
                     // word carries wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL.
                     mouse.ulButtons =
-                        static_cast<uint32_t>(payload.mouse_buttons) | (static_cast<uint32_t>(payload.mouse_button_data) << 16);
-                    mouse.lLastX = payload.dx;
-                    mouse.lLastY = payload.dy;
+                        static_cast<uint32_t>(payload->mouse_buttons) | (static_cast<uint32_t>(payload->mouse_button_data) << 16);
+                    mouse.lLastX = payload->dx;
+                    mouse.lLastY = payload->dy;
                     std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
                 }
-                c.proc.raw_inputs.erase(entry);
             }
 
             c.emu.write_memory(data, buffer.data(), required);

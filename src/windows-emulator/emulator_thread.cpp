@@ -1264,6 +1264,19 @@ namespace sogen
             auto msg = *it;
             if (remove)
             {
+                if (msg.message == WM_INPUT)
+                {
+                    const auto input = this->queued_raw_inputs_.extract(msg.lParam);
+                    if (input)
+                    {
+                        // The WM_INPUT documentation calls for DefWindowProc to clean up foreground input. Our Windows x64 and WoW64
+                        // probe could still read the token after both DefWindowProc and DispatchMessageW returned. We deliberately
+                        // follow the observed lifetime: PM_NOREMOVE leaves the last dequeued token valid, while PM_REMOVE of the next
+                        // raw input invalidates it immediately, even during nested dispatch. Other threads cannot read the token.
+                        this->last_raw_input_ = retrieved_raw_input{.token = input.key(), .payload = input.mapped()};
+                    }
+                }
+
                 const auto removed_bits = get_message_queue_status_bits(msg);
 
                 for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
@@ -1386,6 +1399,37 @@ namespace sogen
         win_emu.wake_idle_vcpu();
     }
 
+    void emulator_thread::post_raw_input(windows_emulator& win_emu, const hwnd window, const uint32_t token,
+                                         const raw_input_payload& payload)
+    {
+        if (this->is_terminated() || (this->last_raw_input_ && this->last_raw_input_->token == token))
+        {
+            return;
+        }
+
+        if (this->queued_raw_inputs_.try_emplace(token, payload).second)
+        {
+            this->post_message(win_emu, {.window = window, .message = WM_INPUT, .wParam = RIM_INPUT, .lParam = token});
+        }
+    }
+
+    const raw_input_payload* emulator_thread::find_raw_input(const emulator_pointer token) const
+    {
+        if (this->last_raw_input_ && this->last_raw_input_->token == token)
+        {
+            return &this->last_raw_input_->payload;
+        }
+
+        const auto input = this->queued_raw_inputs_.find(token);
+        return input != this->queued_raw_inputs_.end() ? &input->second : nullptr;
+    }
+
+    void emulator_thread::clear_raw_input()
+    {
+        this->queued_raw_inputs_.clear();
+        this->last_raw_input_.reset();
+    }
+
     // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
     void emulator_thread::set_active_window(const hwnd window)
     {
@@ -1450,6 +1494,11 @@ namespace sogen
             {
                 ++it;
                 continue;
+            }
+
+            if (it->message == WM_INPUT)
+            {
+                this->queued_raw_inputs_.erase(it->lParam);
             }
 
             const auto removed_bits = get_message_queue_status_bits(*it);

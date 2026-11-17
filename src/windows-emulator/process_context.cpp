@@ -1203,7 +1203,6 @@ namespace sogen
         buffer.write(this->next_low_level_input_id);
         buffer.write(this->next_hook_handle);
         buffer.write(this->drop_low_level_characters);
-        buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
         buffer.write_map(this->audio_render_events_by_stream);
         buffer.write_map(this->pending_audio_render_events);
@@ -1342,7 +1341,6 @@ namespace sogen
         buffer.read(this->next_low_level_input_id);
         buffer.read(this->next_hook_handle);
         buffer.read(this->drop_low_level_characters);
-        buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
         buffer.read_map(this->audio_render_events_by_stream);
         buffer.read_map(this->pending_audio_render_events);
@@ -2043,6 +2041,7 @@ namespace sogen
         }
 
         thread.exit_status = thread_exit_status;
+        thread.clear_raw_input();
         this->impersonate_token(thread, {});
 
         for (auto& entry : this->mutants | std::views::values)

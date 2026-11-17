@@ -185,6 +185,16 @@ namespace sogen
 
     static_assert(sizeof(RAWINPUTHEADER32) == 0x10);
 
+    struct RAWINPUTHEADER64
+    {
+        uint32_t dwType;
+        uint32_t dwSize;
+        uint64_t hDevice;
+        uint64_t wParam;
+    };
+
+    static_assert(sizeof(RAWINPUTHEADER64) == 0x18);
+
     // The mouse body has no pointer fields, so its layout is identical for 32- and 64-bit guests.
     struct RAWMOUSE32
     {

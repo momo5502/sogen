@@ -18,6 +18,20 @@ namespace sogen
     struct vcpu_context;
     struct windows_arch_abi;
 
+    // A raw-input payload is keyed by the HRAWINPUT token posted in WM_INPUT's lParam.
+    struct raw_input_payload
+    {
+        bool keyboard{}; // false = mouse, true = keyboard
+        int32_t dx{};    // mouse relative motion
+        int32_t dy{};
+        uint16_t mouse_buttons{};     // RI_MOUSE_* button transition flags
+        uint16_t mouse_button_data{}; // wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL
+        uint16_t vkey{};
+        uint16_t scan_code{};   // keyboard scan code
+        uint32_t key_message{}; // corresponding WM_KEY* or WM_SYSKEY* message
+        bool key_extended{};    // true when the key's scan code has an E0 prefix (lParam bit 24)
+    };
+
     struct user_timer_key
     {
         sogen::hwnd hwnd{};
@@ -613,6 +627,9 @@ namespace sogen
         std::optional<msg> peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0,
                                                 bool remove = false);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
+        void post_raw_input(windows_emulator& win_emu, hwnd window, uint32_t token, const raw_input_payload& payload);
+        const raw_input_payload* find_raw_input(emulator_pointer token) const;
+        void clear_raw_input();
         void remove_window_messages(hwnd window);
         void set_active_window(hwnd window);
         void set_focus_window(hwnd window);
@@ -728,6 +745,8 @@ namespace sogen
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
             buffer.write_vector(this->message_queue);
+            buffer.write_map(this->queued_raw_inputs_);
+            buffer.write_optional(this->last_raw_input_);
             buffer.write(this->current_message_time);
             buffer.write(this->current_message_position);
             buffer.write(this->message_queue_status_bit_counts);
@@ -817,6 +836,8 @@ namespace sogen
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);
             buffer.read_vector(this->message_queue);
+            buffer.read_map(this->queued_raw_inputs_);
+            buffer.read_optional(this->last_raw_input_);
             buffer.read(this->current_message_time);
             buffer.read(this->current_message_position);
             buffer.read(this->message_queue_status_bit_counts);
@@ -835,6 +856,15 @@ namespace sogen
         static bool deleter(emulator_thread& t);
 
       private:
+        struct retrieved_raw_input
+        {
+            emulator_pointer token{};
+            raw_input_payload payload{};
+        };
+
+        std::map<emulator_pointer, raw_input_payload> queued_raw_inputs_{};
+        std::optional<retrieved_raw_input> last_raw_input_{};
+
         bool can_coalesce_message(const msg& msg) const;
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
