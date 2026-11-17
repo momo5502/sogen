@@ -94,6 +94,14 @@ namespace sogen
                 // stepped thread is in NtDelayExecution), causing IDA to
                 // receive a T05 for an unexpected tid → SIGTRAP error.
                 vcpu.switch_thread = false;
+
+                // A wait syscall returns before the wait ends, and the scheduler runs the thread again when the wait ends. A step
+                // runs the rest of the WOW64 syscall path to the 32-bit caller, so it must not start a thread that still waits.
+                if (this->is_wow64_view() && !this->win_emu_->synchronize([&] { return vcpu.thread().is_thread_ready(*this->win_emu_); }))
+                {
+                    return action;
+                }
+
                 vcpu.thread().setup_if_necessary(vcpu.cpu, this->win_emu_->process);
 
                 if (!this->is_wow64_view())
