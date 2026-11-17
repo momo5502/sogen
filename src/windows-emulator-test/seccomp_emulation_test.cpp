@@ -11,6 +11,7 @@
 #include <platform/arm64_context.hpp>
 #include <sys/auxv.h>
 #include <sys/mman.h>
+#include <ucontext.h>
 #include <utils/finally.hpp>
 
 #include <atomic>
@@ -25,6 +26,38 @@ namespace sogen::test
     {
         thread_local volatile sig_atomic_t host_signal_bits{};
         thread_local volatile sig_atomic_t host_signal_mask_invalid{};
+        thread_local volatile sig_atomic_t cycle_counter_probe_state{};
+
+        bool native_cycle_counter_faults()
+        {
+            struct sigaction action{};
+            action.sa_flags = SA_SIGINFO;
+            action.sa_sigaction = [](const int signal, siginfo_t* info, void* raw_context) {
+                auto& pc = static_cast<ucontext_t*>(raw_context)->uc_mcontext.pc;
+                if (cycle_counter_probe_state != 1 || info->si_code <= 0 || *reinterpret_cast<const uint32_t*>(pc) != 0xD53B9D0Bu)
+                {
+                    _exit(128 + signal);
+                }
+                cycle_counter_probe_state = 2;
+                pc += 4;
+            };
+            sigemptyset(&action.sa_mask);
+            struct sigaction previous{};
+            if (sigaction(SIGILL, &action, &previous) != 0)
+            {
+                throw std::system_error(errno, std::generic_category(), "Install cycle-counter probe signal handler");
+            }
+            // PMU permissions can be task-specific, so probe on the vCPU's host thread.
+            cycle_counter_probe_state = 1;
+            asm volatile("mrs x11, pmccntr_el0" : : : "x11");
+            const bool faulted = cycle_counter_probe_state == 2;
+            cycle_counter_probe_state = 0;
+            if (sigaction(SIGILL, &previous, nullptr) != 0)
+            {
+                throw std::system_error(errno, std::generic_category(), "Restore cycle-counter probe signal handler");
+            }
+            return faulted;
+        }
 
         void host_signal_handler(const int signal, siginfo_t*, void*)
         {
@@ -367,6 +400,10 @@ namespace sogen::test
 
     TEST_P(SeccompCycleCounterTest, ReadsPreserveOtherRegistersAndIllegalInstructionDelivery)
     {
+        if (!native_cycle_counter_faults())
+        {
+            GTEST_SKIP() << "Host permits native PMCCNTR_EL0 reads";
+        }
         const auto destination = GetParam();
         machine->write_memory(code_address, std::array{0xD53B9D00u | destination, 0xD5384250u, 0xD4000001u});
         const auto register_id = [](const uint32_t index) {
