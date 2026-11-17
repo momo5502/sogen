@@ -157,6 +157,45 @@ namespace sogen::test
         this->expect_io_pending(this->first, false);
     }
 
+    TEST_F(IoCancellationTest, ImmediateAfdPollWithoutEventsReturnsHeader)
+    {
+        struct endpoint_creation_data
+        {
+            uint64_t flags{};
+            std::array<char, 16> packet{};
+            uint64_t group{};
+            int32_t address_family{2};
+            int32_t type{1};
+            int32_t protocol{6};
+        };
+
+        const endpoint_creation_data creation{};
+        this->emu->memory.write_memory(this->storage + 0xD00, &creation, sizeof(creation));
+        this->endpoint = this->emu->process.devices.store(
+            io_device_container{u"Afd\\Endpoint", *this->emu, {.buffer = this->storage + 0xD00, .length = sizeof(creation)}});
+
+        AFD_POLL_INFO<EmulatorTraits<Emu64>> info{};
+        info.NumberOfHandles = 1;
+        info.Handles[0].Handle = this->endpoint.bits;
+        info.Handles[0].PollEvents = AFD_POLL_CONNECT_FAIL;
+        this->emu->memory.write_memory(this->storage + 0x40, &info, sizeof(info));
+
+        io_device_context request{this->emu->memory};
+        request.source_handle = this->endpoint;
+        request.io_control_code = 0x12024;
+        request.io_status_block = this->status(0);
+        request.input_buffer = this->storage + 0x40;
+        request.output_buffer = request.input_buffer;
+        request.input_buffer_length = sizeof(info);
+        request.output_buffer_length = sizeof(info);
+        request.vcpu = &this->emu->vcpu(0);
+
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->process.devices.get(this->endpoint)->execute_ioctl(*this->emu, request));
+        EXPECT_EQ(STATUS_SUCCESS, this->status(0).read().Status);
+        EXPECT_EQ(offsetof(AFD_POLL_INFO<EmulatorTraits<Emu64>>, Handles), this->status(0).read().Information);
+        EXPECT_EQ(0u, this->emu->memory.read_memory<AFD_POLL_INFO<EmulatorTraits<Emu64>>>(this->storage + 0x40).NumberOfHandles);
+    }
+
     TEST_F(IoCancellationTest, PendingIoQueryRequiresExactUlongLength)
     {
         for (const uint32_t length : {0, 1, 3, 5, 8})
