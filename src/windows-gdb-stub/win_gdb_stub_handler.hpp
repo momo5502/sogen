@@ -36,6 +36,7 @@ namespace sogen
                 }
 
                 library_stop_pending_ = true;
+                module_event_ = true;
                 win_emu_->stop();
             };
 
@@ -57,6 +58,7 @@ namespace sogen
 
         void on_interrupt() override
         {
+            interrupt_requested_ = true;
             this->win_emu_->stop();
         }
 
@@ -101,6 +103,11 @@ namespace sogen
                 }
 
                 // A 32-bit debugger does not see the 64-bit code of WOW64, so one step runs that code with one 32-bit instruction.
+                // A thread switch (for example a wait) and a module load occur in a syscall, after wow64cpu saved the 32-bit context,
+                // so the step ends there. A breakpoint, a watchpoint or an interrupt can occur before wow64cpu saves the context, so
+                // the step ends when the thread is in 32-bit code again.
+                module_event_ = false;
+                interrupt_requested_ = false;
                 bool ran_32bit_instruction = false;
                 for (size_t i = 0; i < max_instructions_per_step; ++i)
                 {
@@ -108,7 +115,9 @@ namespace sogen
                     vcpu.cpu.start(1);
 
                     const bool thread_ended = vcpu.thread().is_terminated() || this->win_emu_->process.exit_status.has_value();
-                    if (action != gdb_stub::action::resume || thread_ended || (ran_32bit_instruction && !this->shows_saved_wow64_state()))
+                    const bool in_32bit_code = !this->shows_saved_wow64_state();
+                    const bool step_done = in_32bit_code && (ran_32bit_instruction || interrupt_requested_);
+                    if (action != gdb_stub::action::resume || thread_ended || vcpu.switch_thread || module_event_ || step_done)
                     {
                         break;
                     }
@@ -464,6 +473,8 @@ namespace sogen
 
         // Track library stop events
         std::atomic<bool> library_stop_pending_{true};
+        std::atomic<bool> module_event_{false};
+        std::atomic<bool> interrupt_requested_{false};
         std::string debug_message{};
         gdb_stub::action action{gdb_stub::action::resume};
         utils::callback_id_type mod_load_id{};
