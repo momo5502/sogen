@@ -25,8 +25,9 @@ signals outside guest execution and unrelated user-sent signals chain to the pre
 Guest entry is accepted only while the owner thread is requesting it. Guest GPRs, NZCV, SP, PC and
 FPSIMD state are saved before returning to the host stack, where emulator callbacks execute.
 
-`SIGILL` becomes an ARM64 undefined-instruction exception at the faulting PC. The Windows exception
-dispatcher delivers `STATUS_ILLEGAL_INSTRUCTION` with the saved guest registers. This includes
+`PMCCNTR_EL0` reads rejected by the host are completed using the native virtual counter, discarding
+the result for XZR. Other `SIGILL` faults become ARM64 undefined-instruction exceptions at the faulting
+PC. The Windows exception dispatcher delivers `STATUS_ILLEGAL_INSTRUCTION` with the saved guest registers. This includes
 `MRS CurrentEL` at EL0; a guest handler can advance its saved PC and resume execution.
 
 Guest `BRK` instructions become ARM64 breakpoint-instruction exceptions at the faulting PC.

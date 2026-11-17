@@ -11,6 +11,7 @@
 #include <platform/arm64_context.hpp>
 #include <sys/auxv.h>
 #include <sys/mman.h>
+#include <ucontext.h>
 #include <utils/finally.hpp>
 
 #include <atomic>
@@ -25,6 +26,38 @@ namespace sogen::test
     {
         thread_local volatile sig_atomic_t host_signal_bits{};
         thread_local volatile sig_atomic_t host_signal_mask_invalid{};
+        thread_local volatile sig_atomic_t cycle_counter_probe_state{};
+
+        bool native_cycle_counter_faults()
+        {
+            struct sigaction action{};
+            action.sa_flags = SA_SIGINFO;
+            action.sa_sigaction = [](const int signal, siginfo_t* info, void* raw_context) {
+                auto& pc = static_cast<ucontext_t*>(raw_context)->uc_mcontext.pc;
+                if (cycle_counter_probe_state != 1 || info->si_code <= 0 || *reinterpret_cast<const uint32_t*>(pc) != 0xD53B9D0Bu)
+                {
+                    _exit(128 + signal);
+                }
+                cycle_counter_probe_state = 2;
+                pc += 4;
+            };
+            sigemptyset(&action.sa_mask);
+            struct sigaction previous{};
+            if (sigaction(SIGILL, &action, &previous) != 0)
+            {
+                throw std::system_error(errno, std::generic_category(), "Install cycle-counter probe signal handler");
+            }
+            // PMU permissions can be task-specific, so probe on the vCPU's host thread.
+            cycle_counter_probe_state = 1;
+            asm volatile("mrs x11, pmccntr_el0" : : : "x11");
+            const bool faulted = cycle_counter_probe_state == 2;
+            cycle_counter_probe_state = 0;
+            if (sigaction(SIGILL, &previous, nullptr) != 0)
+            {
+                throw std::system_error(errno, std::generic_category(), "Restore cycle-counter probe signal handler");
+            }
+            return faulted;
+        }
 
         void host_signal_handler(const int signal, siginfo_t*, void*)
         {
@@ -106,6 +139,10 @@ namespace sogen::test
         };
 
         class SeccompCurrentElTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
+        {
+        };
+
+        class SeccompCycleCounterTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
 
@@ -360,6 +397,68 @@ namespace sogen::test
     }
 
     INSTANTIATE_TEST_SUITE_P(Destination, SeccompCurrentElTest, testing::Values(0u, 16u, 30u, 31u));
+
+    TEST_P(SeccompCycleCounterTest, ReadsPreserveOtherRegistersAndIllegalInstructionDelivery)
+    {
+        if (!native_cycle_counter_faults())
+        {
+            GTEST_SKIP() << "Host permits native PMCCNTR_EL0 reads";
+        }
+        const auto destination = GetParam();
+        machine->write_memory(code_address, std::array{0xD53B9D00u | destination, 0xD5384250u, 0xD4000001u});
+        const auto register_id = [](const uint32_t index) {
+            if (index < 29)
+            {
+                return static_cast<arm64_register>(static_cast<uint32_t>(arm64_register::x0) + index);
+            }
+            return index == 29 ? arm64_register::x29 : arm64_register::x30;
+        };
+        for (uint32_t i = 0; i < 31; ++i)
+        {
+            machine->reg(register_id(i), 0xABC000ull + i);
+        }
+        machine->reg(arm64_register::nzcv, 0xA0000000u);
+        size_t exceptions{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++exceptions;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::undefined_instruction));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+            machine->reg(arm64_register::pc, code_address + 8);
+        });
+        size_t calls{};
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, const uint64_t service) {
+            ++calls;
+            EXPECT_EQ(service, 0u);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 8);
+            EXPECT_EQ(machine->read_stack_pointer(), stack_address + 0xFF0);
+            EXPECT_EQ(machine->reg(arm64_register::nzcv), 0xA0000000u);
+            for (uint32_t i = 0; i < 31; ++i)
+            {
+                if (i != destination)
+                {
+                    EXPECT_EQ(machine->reg(register_id(i)), 0xABC000ull + i) << "x" << i;
+                }
+            }
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        const auto before = machine->read_native_timestamp_counter().value();
+        ASSERT_NO_THROW(machine->start());
+        const auto after = machine->read_native_timestamp_counter().value();
+        if (destination != 31)
+        {
+            const auto ticks = machine->reg(register_id(destination));
+            EXPECT_GE(ticks, before);
+            EXPECT_LE(ticks, after);
+        }
+        EXPECT_EQ(exceptions, 1u);
+        EXPECT_EQ(calls, 1u);
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 12);
+        EXPECT_FALSE(machine->has_violation());
+    }
+
+    INSTANTIATE_TEST_SUITE_P(Destination, SeccompCycleCounterTest, testing::Values(0u, 11u, 30u, 31u));
 
     TEST_P(SeccompBreakpointTest, ReportsTheFaultingPcAndCancelsPendingSoftwareStep)
     {
