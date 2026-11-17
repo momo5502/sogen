@@ -812,6 +812,15 @@ namespace sogen::seccomp
                         dispatch_svc();
                         continue;
                     }
+                    if (trapped_signal_ == SIGILL && trapped_code_ > 0 && handle_cycle_counter_read())
+                    {
+                        if (single_step)
+                        {
+                            const auto callback = interrupt_hook_;
+                            callback(*this, static_cast<int>(arm64_exception_class::software_step));
+                        }
+                        continue;
+                    }
                     if (trapped_signal_ == SIGILL && trapped_code_ > 0 && interrupt_hook_)
                     {
                         const auto callback = interrupt_hook_;
@@ -1435,6 +1444,24 @@ namespace sogen::seccomp
                 default:
                     throw std::runtime_error("Seccomp does not support register " + std::to_string(static_cast<int>(id)));
                 }
+            }
+
+            bool handle_cycle_counter_read()
+            {
+                uint32_t instruction{};
+                if (!try_read_memory(state_.pc, &instruction, sizeof(instruction)) || (instruction & ~0x1Fu) != 0xD53B9D00u)
+                {
+                    return false;
+                }
+                // Windows permits EL0 cycle-counter reads even when the Linux host denies PMU access.
+                const auto ticks = read_native_timestamp_counter().value();
+                const auto destination = instruction & 31;
+                if (destination != 31)
+                {
+                    state_.x[destination] = ticks;
+                }
+                state_.pc += 4;
+                return true;
             }
 
             void dispatch_svc()
