@@ -1870,7 +1870,11 @@ namespace sogen
                 if (!info.Timeout.QuadPart)
                 {
                     complete_poll_timeout(win_emu, c);
-                    return STATUS_TIMEOUT;
+                    if (c.io_status_block)
+                    {
+                        c.io_status_block.access([](status_block& block) { block.Information = offsetof(AFD_POLL_INFO<Traits>, Handles); });
+                    }
+                    return STATUS_SUCCESS;
                 }
 
                 std::optional<std::chrono::steady_clock::time_point> timeout{};
