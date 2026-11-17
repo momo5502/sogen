@@ -53,6 +53,7 @@ namespace sogen::seccomp
         constexpr int enter_signal = SIGUSR2;
         constexpr int stop_signal = SIGUSR1;
         constexpr std::array signals{enter_signal, stop_signal, SIGSYS, SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGFPE};
+        constexpr uint32_t mrs_cycle_counter = 0xD53B9D00;
 
         [[noreturn]] void unsupported(const char* feature)
         {
@@ -812,6 +813,10 @@ namespace sogen::seccomp
                         dispatch_svc();
                         continue;
                     }
+                    if (trapped_signal_ == SIGILL && trapped_code_ > 0 && handle_cycle_counter_fault())
+                    {
+                        continue;
+                    }
                     if (trapped_signal_ == SIGILL && trapped_code_ > 0 && interrupt_hook_)
                     {
                         const auto callback = interrupt_hook_;
@@ -1435,6 +1440,25 @@ namespace sogen::seccomp
                 default:
                     throw std::runtime_error("Seccomp does not support register " + std::to_string(static_cast<int>(id)));
                 }
+            }
+
+            bool handle_cycle_counter_fault()
+            {
+                uint32_t instruction{};
+                read_memory(state_.pc, &instruction, sizeof(instruction));
+                if ((instruction & ~0x1Fu) != mrs_cycle_counter)
+                {
+                    return false;
+                }
+
+                const auto destination = instruction & 0x1F;
+                if (destination != 31)
+                {
+                    // Linux commonly leaves PMCCNTR_EL0 disabled for EL0 even though Windows exposes it.
+                    state_.x[destination] = *read_native_timestamp_counter();
+                }
+                state_.pc += sizeof(instruction);
+                return true;
             }
 
             void dispatch_svc()
