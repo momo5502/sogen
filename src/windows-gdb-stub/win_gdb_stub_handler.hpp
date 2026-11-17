@@ -95,41 +95,14 @@ namespace sogen
                 // receive a T05 for an unexpected tid → SIGTRAP error.
                 vcpu.switch_thread = false;
 
-                // A wait syscall returns before the wait ends, and the scheduler runs the thread again when the wait ends. A step
-                // runs the rest of the WOW64 syscall path to the 32-bit caller, so it must not start a thread that still waits.
-                if (this->is_wow64_view() && !this->win_emu_->synchronize([&] { return vcpu.thread().is_thread_ready(*this->win_emu_); }))
+                if (this->is_wow64_view())
                 {
+                    this->step_wow64_thread(vcpu);
                     return action;
                 }
 
                 vcpu.thread().setup_if_necessary(vcpu.cpu, this->win_emu_->process);
-
-                if (!this->is_wow64_view())
-                {
-                    vcpu.cpu.start(1);
-                    return action;
-                }
-
-                // A 32-bit debugger does not see the 64-bit code of WOW64, so one step runs that code with one 32-bit instruction.
-                // A thread switch (for example a wait) and a module load occur in a syscall, after wow64cpu saved the 32-bit context,
-                // so the step ends there. A breakpoint, a watchpoint or an interrupt can occur before wow64cpu saves the context, so
-                // the step ends when the thread is in 32-bit code again.
-                module_event_ = false;
-                interrupt_requested_ = false;
-                bool ran_32bit_instruction = false;
-                for (size_t i = 0; i < max_instructions_per_step; ++i)
-                {
-                    ran_32bit_instruction |= !this->shows_saved_wow64_state();
-                    vcpu.cpu.start(1);
-
-                    const bool thread_ended = vcpu.thread().is_terminated() || this->win_emu_->process.exit_status.has_value();
-                    const bool in_32bit_code = !this->shows_saved_wow64_state();
-                    const bool step_done = in_32bit_code && (ran_32bit_instruction || interrupt_requested_);
-                    if (action != gdb_stub::action::resume || thread_ended || vcpu.switch_thread || module_event_ || step_done)
-                    {
-                        break;
-                    }
-                }
+                vcpu.cpu.start(1);
             }
             catch (const std::exception& e)
             {
@@ -363,8 +336,8 @@ namespace sogen
         }
 
         // In the WOW64 view, the client debugs a WOW64 process with the i386 target, so it sees only the 32-bit part of the
-        // process: the I386 modules and the 32-bit code. While the thread runs 64-bit WOW64 code, the stub gives the saved
-        // 32-bit context and not the CPU registers.
+        // process: the I386 modules and the 32-bit code. While the thread runs 64-bit WOW64 code, the stub reads the registers
+        // from the saved 32-bit context and not from the CPU.
         bool is_wow64_view() const
         {
             return this->is_32_bit() && this->win_emu_->process.is_wow64_process;
@@ -374,6 +347,51 @@ namespace sogen
         bool is_visible_module(const mapped_module& mod) const
         {
             return !this->is_wow64_view() || mod.machine == static_cast<uint16_t>(PEMachineType::I386);
+        }
+
+        // The client does not see the 64-bit WOW64 code, so one step runs that code together with one 32-bit instruction.
+        // A wait syscall does not wait: it marks the thread as waiting, yields and returns at once. The scheduler runs the
+        // thread again when the wait ends and sets the syscall result then. A step does not use the scheduler, so it must not
+        // start a thread that still waits, and it must end at the yield.
+        void step_wow64_thread(vcpu_context& vcpu)
+        {
+            auto& thread = vcpu.thread();
+
+            // If the wait is over, is_thread_ready sets the wait status, and setup_if_necessary writes it to the return register.
+            if (!this->win_emu_->synchronize([&] { return thread.is_thread_ready(*this->win_emu_); }))
+            {
+                return;
+            }
+
+            thread.setup_if_necessary(vcpu.cpu, this->win_emu_->process);
+
+            module_event_ = false;
+            interrupt_requested_ = false;
+            bool ran_32bit_instruction = false;
+
+            for (size_t i = 0; i < max_instructions_per_step; ++i)
+            {
+                ran_32bit_instruction |= !this->shows_saved_wow64_state();
+                vcpu.cpu.start(1);
+
+                if (action != gdb_stub::action::resume || thread.is_terminated() || this->win_emu_->process.exit_status.has_value())
+                {
+                    break;
+                }
+
+                // A thread switch (for example the yield of a wait) needs the scheduler, and a module load needs a library stop.
+                if (vcpu.switch_thread || module_event_)
+                {
+                    break;
+                }
+
+                // The step ends in 32-bit code after one 32-bit instruction or after a stop in 64-bit code. A breakpoint, watchpoint
+                // or interrupt can stop the CPU before wow64cpu saves the 32-bit context, so the stub defers that stop to 32-bit code.
+                if (!this->shows_saved_wow64_state() && (ran_32bit_instruction || interrupt_requested_))
+                {
+                    break;
+                }
+            }
         }
 
         size_t read_saved_wow64_register(const size_t reg, void* data, const size_t max_length)
@@ -388,7 +406,7 @@ namespace sogen
             const auto* field = context ? wow64_context_field(*context, x86_reg) : nullptr;
             if (!field)
             {
-                // The WOW64 context has no x87 or XMM registers, so these come from the live CPU.
+                // The saved context gives only the CONTEXT32_FULL registers. The others, for example x87 and XMM, come from the CPU.
                 return cpu_gdb_stub_handler::read_register(reg, data, max_length);
             }
 
@@ -420,7 +438,7 @@ namespace sogen
             auto* field = context ? wow64_context_field(*context, x86_reg) : nullptr;
             if (!field)
             {
-                // The WOW64 context has no x87 or XMM registers, so these go to the live CPU.
+                // The saved context takes only the CONTEXT32_FULL registers. The others go to the CPU.
                 return cpu_gdb_stub_handler::write_register(reg, data, size);
             }
 
@@ -434,7 +452,8 @@ namespace sogen
 
             auto& vcpu = this->win_emu_->vcpu(0);
             const auto* bytes = reinterpret_cast<const uint8_t*>(&*context);
-            if (!apply_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread(), {bytes, sizeof(WOW64_CONTEXT)}))
+            if (!this->win_emu_->synchronize(
+                    [&] { return apply_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread(), {bytes, sizeof(WOW64_CONTEXT)}); }))
             {
                 return 0;
             }
@@ -454,6 +473,7 @@ namespace sogen
             return sizeof(teb32);
         }
 
+        // The stub does not move the TEB. It accepts a write of the current address, because a G packet writes all registers.
         size_t write_teb32_base(const void* data, const size_t size)
         {
             const uint64_t teb32 = this->get_thread_teb_addr(this->get_current_thread_id());
@@ -463,7 +483,8 @@ namespace sogen
         std::optional<WOW64_CONTEXT> read_wow64_context() const
         {
             auto& vcpu = this->win_emu_->vcpu(0);
-            const auto bytes = capture_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread());
+            const auto bytes =
+                this->win_emu_->synchronize([&] { return capture_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread()); });
             if (bytes.size() < sizeof(WOW64_CONTEXT))
             {
                 return std::nullopt;
