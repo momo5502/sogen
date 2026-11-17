@@ -27,7 +27,7 @@ namespace sogen::test
                 this->emu.vcpu(0).active_thread = this->emu.process.threads.get(thread);
             }
 
-            hwnd create_window(const uint32_t style = WS_OVERLAPPEDWINDOW)
+            hwnd create_window(const uint32_t style = 0)
             {
                 auto [handle, window] = this->emu.process.windows.create(this->emu.memory);
                 window.handle = handle.bits;
@@ -54,8 +54,8 @@ namespace sogen::test
     TEST_F(SetForegroundWindowTest, DedicatedSyscallSwitchesForegroundAndFocus)
     {
         this->emu.version.set_windows_build_number(26100);
-        const auto first = this->create_window(WS_OVERLAPPEDWINDOW | WS_VISIBLE);
-        const auto second = this->create_window(WS_OVERLAPPEDWINDOW);
+        const auto first = this->create_window(WS_VISIBLE);
+        const auto second = this->create_window();
 
         for (const auto window : {first, second, first})
         {
