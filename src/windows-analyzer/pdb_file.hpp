@@ -41,8 +41,6 @@ namespace sogen
         pdb_validation_result validate(const pdb_signature& expected) const;
         bool matches(const pdb_signature& expected) const;
 
-        static bool check_pdbutil_available();
-
       private:
         std::filesystem::path path_{};
     };

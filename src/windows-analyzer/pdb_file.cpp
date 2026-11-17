@@ -1,177 +1,250 @@
 #include "pdb_file.hpp"
 
-#include <utils/exec.hpp>
-#include <utils/string.hpp>
+#include <utils/buffer_accessor.hpp>
+#include <utils/io.hpp>
 #include <platform/platform.hpp>
-#include <platform/win_pefile_debug.hpp>
 
-#include <charconv>
-#include <optional>
-#include <sstream>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <bit>
+#include <limits>
+#include <span>
+#include <stdexcept>
 #include <vector>
+#include <utility>
+
+#include <PDB.h>
+#include <PDB_RawFile.h>
+#include <PDB_Types.h>
+#include <PDB_DBITypes.h>
 
 namespace sogen
 {
     namespace
     {
-        const std::string& pdbutil_command()
+        using byte_view = std::span<const std::byte>;
+        using symbol_map = std::map<std::pair<uint32_t, uint32_t>, std::string>;
+        using record = PDB::CodeView::DBI::Record;
+        using record_kind = PDB::CodeView::DBI::SymbolRecordKind;
+
+        template <typename T>
+        T read_object(const byte_view bytes, const size_t offset = 0)
         {
-            static const std::string command = [] {
-#if (defined(__linux__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__)
-                std::vector<std::string> names{"llvm-pdbutil"};
+            return utils::safe_buffer_accessor{bytes}.template as<T>(offset).get();
+        }
 
-#if defined(__APPLE__)
-                names.emplace_back("/opt/homebrew/opt/llvm/bin/llvm-pdbutil");
-                names.emplace_back("/usr/local/opt/llvm/bin/llvm-pdbutil");
-#endif
+        byte_view checked_slice(const byte_view bytes, const size_t offset, const size_t size)
+        {
+            utils::safe_buffer_accessor{bytes}.validate(offset, size);
+            return bytes.subspan(offset, size);
+        }
 
-                for (int version = 14; version <= 30; ++version)
+        size_t block_count(const size_t size, const uint32_t block_size)
+        {
+            return size / block_size + (size % block_size != 0);
+        }
+
+        std::vector<std::byte> read_blocks(const byte_view bytes, const PDB::SuperBlock& header, const byte_view indices, const size_t size)
+        {
+            if (size > bytes.size())
+            {
+                throw std::runtime_error("PDB stream exceeds file size");
+            }
+            std::vector<std::byte> result(size);
+            for (size_t i = 0, offset = 0; offset < size; ++i)
+            {
+                const auto index = read_object<uint32_t>(indices, i * sizeof(uint32_t));
+                if (index >= header.blockCount)
                 {
-                    names.emplace_back("llvm-pdbutil-" + std::to_string(version));
+                    throw std::runtime_error("Invalid PDB block index");
                 }
+                const auto count = std::min<size_t>(header.blockSize, size - offset);
+                const auto source = checked_slice(bytes, static_cast<size_t>(index) * header.blockSize, count);
+                std::memcpy(result.data() + offset, source.data(), count);
+                offset += count;
+            }
+            return result;
+        }
 
-                for (const auto& name : names)
+        void validate_msf(const byte_view bytes)
+        {
+            const auto& header = *reinterpret_cast<const PDB::SuperBlock*>(checked_slice(bytes, 0, sizeof(PDB::SuperBlock)).data());
+            if (!std::has_single_bit(header.blockSize) || header.blockSize < 512 || header.blockSize > 65536 ||
+                header.directorySize > std::numeric_limits<uint32_t>::max() - header.blockSize ||
+                static_cast<uint64_t>(header.blockCount) * header.blockSize > bytes.size() ||
+                PDB::ValidateFile(bytes.data(), bytes.size()) != PDB::ErrorCode::Success)
+            {
+                throw std::runtime_error("Invalid PDB superblock");
+            }
+
+            const auto directory_blocks = block_count(header.directorySize, header.blockSize);
+            const auto index_size = directory_blocks * sizeof(uint32_t);
+            const auto indices = read_blocks(bytes, header, bytes.subspan(offsetof(PDB::SuperBlock, directoryBlockIndices)), index_size);
+            const auto directory_data = read_blocks(bytes, header, indices, header.directorySize);
+            const byte_view directory{directory_data};
+            const auto stream_count = read_object<uint32_t>(directory);
+            if (stream_count > (directory.size() - sizeof(uint32_t)) / sizeof(uint32_t))
+            {
+                throw std::runtime_error("Invalid PDB stream count");
+            }
+            const auto sizes = checked_slice(directory, sizeof(uint32_t), static_cast<size_t>(stream_count) * sizeof(uint32_t));
+            size_t offset = sizeof(uint32_t) + sizes.size();
+            for (uint32_t i = 0; i < stream_count; ++i)
+            {
+                const auto size = read_object<uint32_t>(sizes, i * sizeof(uint32_t));
+                if (size == PDB::NilPageSize)
                 {
-                    try
-                    {
-                        auto candidate = utils::string::trim(utils::exec::run_command_capture({"which", name}));
-                        if (!candidate.empty())
-                        {
-                            return candidate;
-                        }
-                    }
-                    catch (const std::exception&)
-                    {
-                        continue;
-                    }
-                }
-#endif
-
-                return std::string{"llvm-pdbutil"};
-            }();
-
-            return command;
-        }
-
-        std::optional<std::pair<uint32_t, uint32_t>> parse_section_offset(const std::string_view line)
-        {
-            const auto addr_pos = line.find("addr = ");
-            if (addr_pos == std::string_view::npos)
-            {
-                return std::nullopt;
-            }
-
-            auto value = line.substr(addr_pos + 7);
-            const auto comma = value.find(',');
-            if (comma != std::string_view::npos)
-            {
-                value = value.substr(0, comma);
-            }
-
-            const auto colon = value.find(':');
-            if (colon == std::string_view::npos)
-            {
-                return std::nullopt;
-            }
-
-            uint32_t section{};
-            uint32_t offset{};
-            const auto section_text = utils::string::trim(value.substr(0, colon));
-            const auto offset_text = utils::string::trim(value.substr(colon + 1));
-
-            auto result = std::from_chars(section_text.data(), section_text.data() + section_text.size(), section, 10);
-            if (result.ec != std::errc{})
-            {
-                return std::nullopt;
-            }
-
-            result = std::from_chars(offset_text.data(), offset_text.data() + offset_text.size(), offset, 10);
-            if (result.ec != std::errc{})
-            {
-                return std::nullopt;
-            }
-
-            return std::pair{section, offset};
-        }
-
-        std::optional<std::string> extract_backtick_name(const std::string_view text)
-        {
-            const auto first = text.find('`');
-            const auto last = text.rfind('`');
-            if (first == std::string::npos || last == first)
-            {
-                return std::nullopt;
-            }
-
-            return std::string{text.substr(first + 1, last - first - 1)};
-        }
-
-        std::optional<uint32_t> parse_age(const std::string_view value)
-        {
-            uint32_t age{};
-            const auto text = utils::string::trim(value);
-            const auto result = std::from_chars(text.data(), text.data() + text.size(), age, 10);
-            if (result.ec != std::errc{})
-            {
-                return std::nullopt;
-            }
-
-            return age;
-        }
-
-        void parse_pdb_guid_line(const std::string_view trimmed, pdb_signature& signature)
-        {
-            if (trimmed.starts_with("GUID:"))
-            {
-                signature.guid = winpe::detail::normalize_guid(utils::string::trim(trimmed.substr(5)));
-            }
-        }
-
-        std::optional<uint32_t> read_pdb_dbi_age(const std::filesystem::path& path)
-        {
-            const auto output = utils::exec::run_command_capture({pdbutil_command(), "pdb2yaml", "-dbi-stream", path.string()});
-
-            std::istringstream stream{output};
-            std::string line{};
-            bool parsing_dbi_stream = false;
-            while (std::getline(stream, line))
-            {
-                const auto trimmed = utils::string::trim(line);
-                if (trimmed == "DbiStream:")
-                {
-                    parsing_dbi_stream = true;
                     continue;
                 }
-
-                if (parsing_dbi_stream && trimmed.starts_with("Age:"))
+                if (size > bytes.size() || size > std::numeric_limits<uint32_t>::max() - header.blockSize)
                 {
-                    return parse_age(trimmed.substr(4));
+                    throw std::runtime_error("Invalid PDB stream size");
                 }
+                const auto count = block_count(size, header.blockSize);
+                const auto blocks = checked_slice(directory, offset, count * sizeof(uint32_t));
+                for (size_t j = 0; j < count; ++j)
+                {
+                    if (read_object<uint32_t>(blocks, j * sizeof(uint32_t)) >= header.blockCount)
+                    {
+                        throw std::runtime_error("Invalid PDB stream block");
+                    }
+                }
+                offset += blocks.size();
             }
-
-            return std::nullopt;
         }
 
-        std::optional<pdb_signature> read_pdb_signature(const std::filesystem::path& path)
+        PDB::CoalescedMSFStream read_stream(const PDB::RawFile& file, const uint32_t index)
         {
-            const auto output = utils::exec::run_command_capture({pdbutil_command(), "dump", "-summary", path.string()});
-
-            pdb_signature signature{};
-            std::istringstream stream{output};
-            std::string line{};
-            while (std::getline(stream, line))
+            if (index >= file.GetStreamCount() || file.GetStreamSize(index) == 0)
             {
-                parse_pdb_guid_line(utils::string::trim(line), signature);
+                throw std::runtime_error("Missing PDB stream");
             }
+            return file.CreateMSFStream<PDB::CoalescedMSFStream>(index);
+        }
 
-            signature.age = read_pdb_dbi_age(path).value_or(0);
+        byte_view stream_bytes(const PDB::CoalescedMSFStream& stream)
+        {
+            return {stream.GetDataAtOffset<const std::byte>(0), stream.GetSize()};
+        }
+
+        PDB::DBI::StreamHeader read_dbi_header(const byte_view bytes)
+        {
+            const auto header = read_object<PDB::DBI::StreamHeader>(bytes);
+            if (header.signature != PDB::DBI::StreamHeader::Signature || header.version < PDB::DBI::StreamHeader::Version::V70)
+            {
+                throw std::runtime_error("Unsupported PDB DBI header");
+            }
+            return header;
+        }
+
+        pdb_signature read_signature(const PDB::RawFile& file, const std::filesystem::path& path)
+        {
+            const auto info = read_stream(file, 1);
+            const auto header = read_object<PDB::Header>(stream_bytes(info));
+            if (header.version < PDB::Header::Version::VC70)
+            {
+                throw std::runtime_error("Unsupported PDB info header");
+            }
+            const auto dbi = read_stream(file, 3);
+            const auto dbi_header = read_dbi_header(stream_bytes(dbi));
+            pdb_signature signature{
+                .guid = winpe::detail::format_guid(std::as_bytes(std::span<const PDB::GUID, 1>{&header.guid, 1})),
+                .age = dbi_header.age,
+                .path = path.string(),
+            };
             if (!signature.valid())
             {
-                return std::nullopt;
+                throw std::runtime_error("Invalid PDB identity");
             }
-
-            signature.path = path.string();
             return signature;
+        }
+
+        template <typename Symbol>
+        void add_symbol(const byte_view bytes, symbol_map& symbols, const bool replace)
+        {
+            constexpr auto name_offset = offsetof(Symbol, name);
+            const auto section = read_object<uint16_t>(bytes, offsetof(Symbol, section));
+            const auto offset = read_object<uint32_t>(bytes, offsetof(Symbol, offset));
+            const auto name = utils::safe_buffer_accessor{bytes}.as_string(name_offset);
+            if (section == 0 || name.empty())
+            {
+                return;
+            }
+            const auto address = std::pair<uint32_t, uint32_t>{section, offset};
+            if (replace)
+            {
+                symbols.insert_or_assign(address, name);
+            }
+            else
+            {
+                symbols.try_emplace(address, name);
+            }
+        }
+
+        void read_symbols(const byte_view bytes, symbol_map& symbols)
+        {
+            for (size_t offset = 0; offset < bytes.size();)
+            {
+                const auto header = read_object<PDB::CodeView::DBI::RecordHeader>(bytes, offset);
+                const auto size = static_cast<size_t>(header.size) + sizeof(uint16_t);
+                if (size < sizeof(header))
+                {
+                    throw std::runtime_error("Invalid CodeView record size");
+                }
+                const auto payload = checked_slice(bytes, offset, size).subspan(sizeof(header));
+                switch (header.kind)
+                {
+                case record_kind::S_PUB32:
+                    if ((read_object<uint32_t>(payload) & static_cast<uint32_t>(PDB::CodeView::DBI::PublicSymbolFlags::Function)) != 0)
+                    {
+                        add_symbol<decltype(std::declval<record>().data.S_PUB32)>(payload, symbols, false);
+                    }
+                    break;
+                case record_kind::S_GPROC32:
+                case record_kind::S_LPROC32:
+                case record_kind::S_GPROC32_ID:
+                case record_kind::S_LPROC32_ID:
+                case record_kind::S_LPROC32_DPC:
+                case record_kind::S_LPROC32_DPC_ID:
+                    add_symbol<decltype(std::declval<record>().data.S_GPROC32)>(payload, symbols, true);
+                    break;
+                default:
+                    break;
+                }
+                offset = (offset + size + 3) & ~size_t{3};
+            }
+        }
+
+        void read_module_symbols(const PDB::RawFile& file, const byte_view modules, symbol_map& symbols)
+        {
+            for (size_t offset = 0; offset < modules.size();)
+            {
+                const auto module = read_object<PDB::DBI::ModuleInfo>(modules, offset);
+                offset += sizeof(module);
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    const auto name = utils::safe_buffer_accessor{modules}.as_string(offset);
+                    offset += name.size() + 1;
+                }
+                offset = (offset + 3) & ~size_t{3};
+                if (offset > modules.size())
+                {
+                    throw std::runtime_error("Invalid PDB module alignment");
+                }
+                if (module.moduleSymbolStreamIndex == PDB::NilStreamIndex || module.symbolSize == 0)
+                {
+                    continue;
+                }
+                const auto stream = read_stream(file, module.moduleSymbolStreamIndex);
+                const auto bytes = checked_slice(stream_bytes(stream), 0, module.symbolSize);
+                if (read_object<uint32_t>(bytes) != 4)
+                {
+                    throw std::runtime_error("Unsupported CodeView module signature");
+                }
+                read_symbols(bytes.subspan(sizeof(uint32_t)), symbols);
+            }
         }
 
         bool signatures_match(const pdb_signature& lhs, const pdb_signature& rhs)
@@ -189,130 +262,49 @@ namespace sogen
     {
         this->signature = {};
         this->symbols.clear();
-
         try
         {
-            const auto output =
-                utils::exec::run_command_capture({pdbutil_command(), "dump", "-summary", "-publics", "-symbols", this->path_.string()});
-
-            pdb_signature parsed_signature{};
-            std::map<std::pair<uint32_t, uint32_t>, std::string> parsed_symbols{};
-            std::optional<std::string> pending_public{};
-            std::optional<std::string> pending_proc{};
-            std::string pending_proc_text{};
-
-            std::istringstream stream{output};
-            std::string line{};
-            while (std::getline(stream, line))
+            const auto data = utils::io::read_file(this->path_);
+            validate_msf(data);
+            const auto file = PDB::CreateRawFile(data.data());
+            auto parsed_signature = read_signature(file, this->path_);
+            symbol_map parsed_symbols{};
+            const auto dbi = read_stream(file, 3);
+            const auto bytes = stream_bytes(dbi);
+            const auto header = read_dbi_header(bytes);
+            if (header.symbolRecordStreamIndex != PDB::NilStreamIndex)
             {
-                const auto trimmed = utils::string::trim(line);
-
-                parse_pdb_guid_line(trimmed, parsed_signature);
-
-                if (trimmed.find("S_PUB32") != std::string::npos)
-                {
-                    pending_public = extract_backtick_name(trimmed);
-                    continue;
-                }
-
-                if (pending_public)
-                {
-                    if (trimmed.find("flags = function") != std::string::npos)
-                    {
-                        if (const auto address = parse_section_offset(trimmed))
-                        {
-                            parsed_symbols.try_emplace(*address, *pending_public);
-                        }
-                    }
-
-                    pending_public.reset();
-                    continue;
-                }
-
-                if (trimmed.find("S_GPROC32") != std::string::npos || trimmed.find("S_LPROC32") != std::string::npos)
-                {
-                    pending_proc_text.assign(trimmed);
-                    pending_proc = extract_backtick_name(pending_proc_text);
-                    continue;
-                }
-
-                if (!pending_proc_text.empty())
-                {
-                    pending_proc_text += ' ';
-                    pending_proc_text.append(trimmed);
-                    if (!pending_proc)
-                    {
-                        pending_proc = extract_backtick_name(pending_proc_text);
-                    }
-
-                    if (trimmed.find("addr = ") != std::string::npos)
-                    {
-                        if (pending_proc)
-                        {
-                            if (const auto address = parse_section_offset(trimmed))
-                            {
-                                parsed_symbols[*address] = *pending_proc;
-                            }
-                        }
-
-                        pending_proc.reset();
-                        pending_proc_text.clear();
-                    }
-                }
+                const auto stream = read_stream(file, header.symbolRecordStreamIndex);
+                read_symbols(stream_bytes(stream), parsed_symbols);
             }
-
-            parsed_signature.age = read_pdb_dbi_age(this->path_).value_or(0);
-            if (!parsed_signature.valid())
-            {
-                return {.error = "llvm-pdbutil did not report a valid PDB identity for " + this->path_.string()};
-            }
-
-            parsed_signature.path = this->path_.string();
+            read_module_symbols(file, checked_slice(bytes, sizeof(header), header.moduleInfoSize), parsed_symbols);
             this->signature = std::move(parsed_signature);
             this->symbols = std::move(parsed_symbols);
             return {.success = true};
         }
         catch (const std::exception& e)
         {
-            return {.error = std::string{e.what()}};
+            return {.error = e.what()};
         }
-    }
-
-    bool pdb_file::check_pdbutil_available()
-    {
-        static const bool available = [] {
-            try
-            {
-                (void)utils::exec::run_command_capture({pdbutil_command(), "--version"});
-                return true;
-            }
-            catch (const std::exception&)
-            {
-                return false;
-            }
-        }();
-        return available;
     }
 
     pdb_validation_result pdb_file::validate(const pdb_signature& expected) const
     {
+        std::vector<std::byte> data{};
+        if (!utils::io::read_file(this->path_, &data))
+        {
+            return {.status = pdb_validation_status::validation_error, .error = "Failed to read PDB file"};
+        }
         try
         {
-            const auto actual = read_pdb_signature(this->path_);
-            if (!actual)
-            {
-                return {.status = pdb_validation_status::invalid_artifact, .error = "llvm-pdbutil did not report a valid PDB identity"};
-            }
-
-            return {.status = signatures_match(*actual, expected) ? pdb_validation_status::match : pdb_validation_status::mismatch};
-        }
-        catch (const utils::exec::external_command_exit_error& e)
-        {
-            return {.status = pdb_validation_status::invalid_artifact, .error = std::string{e.what()}};
+            validate_msf(data);
+            const auto file = PDB::CreateRawFile(data.data());
+            const auto actual = read_signature(file, this->path_);
+            return {.status = signatures_match(actual, expected) ? pdb_validation_status::match : pdb_validation_status::mismatch};
         }
         catch (const std::exception& e)
         {
-            return {.status = pdb_validation_status::validation_error, .error = std::string{e.what()}};
+            return {.status = pdb_validation_status::invalid_artifact, .error = e.what()};
         }
     }
 

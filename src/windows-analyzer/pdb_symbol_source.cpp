@@ -257,13 +257,6 @@ namespace sogen
         : win_emu_(&win_emu),
           options_(std::move(options))
     {
-        if (this->options_.enabled())
-        {
-            if (!pdb_file::check_pdbutil_available())
-            {
-                throw std::runtime_error("PDB support requires llvm-pdbutil");
-            }
-        }
         symbol_cache::initialize(win_emu.log, this->options_.symbol_cache);
     }
 

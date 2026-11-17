@@ -2,19 +2,17 @@
 #include "pdb_file.hpp"
 #include "symbol_cache.hpp"
 #include "symbol_source.hpp"
+#include "symbol_download.hpp"
+#include "cab_file.hpp"
 
 #include <logger.hpp>
-#include <utils/exec.hpp>
 #include <utils/finally.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 
-#include <cstdint>
 #include <exception>
-#include <span>
 #include <string>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 namespace sogen
@@ -24,13 +22,6 @@ namespace sogen
         using namespace std::literals;
 
         constexpr auto k_default_symbol_server = "https://msdl.microsoft.com/download/symbols"sv;
-
-        struct download_result
-        {
-            bool success{};
-            std::string reason{};
-            bool not_found{};
-        };
 
         struct server_attempt
         {
@@ -76,7 +67,7 @@ namespace sogen
             return result;
         }
 
-        std::string make_curl_url(const std::string& server, const std::filesystem::path& relative_path)
+        std::string make_symbol_url(const std::string& server, const std::filesystem::path& relative_path)
         {
             std::string result = server;
             while (!result.empty() && result.back() == '/')
@@ -92,94 +83,18 @@ namespace sogen
             return result;
         }
 
-        const std::optional<std::string>& decompressor_command()
-        {
-            static const std::optional<std::string> command = []() -> std::optional<std::string> {
-#ifdef __EMSCRIPTEN__
-                return std::nullopt;
-#else
-#ifdef _WIN32
-                constexpr auto finder = "where";
-                constexpr auto candidate = "expand.exe";
-#else
-                constexpr auto finder = "which";
-                constexpr auto candidate = "cabextract";
-#endif
-
-                try
-                {
-                    if (!utils::string::trim(utils::exec::run_command_capture({finder, candidate})).empty())
-                    {
-                        return candidate;
-                    }
-                }
-                catch (const std::exception&)
-                {
-                }
-                return std::nullopt;
-#endif
-            }();
-            return command;
-        }
-
-        download_result download_with_curl(const std::string& server, const std::filesystem::path& relative_path,
-                                           const std::filesystem::path& output_path)
+        symbol_download_result decompress_pdb(const std::filesystem::path& compressed_path, const std::filesystem::path& output_path,
+                                              const std::string_view filename)
         {
             try
             {
-                (void)utils::exec::run_command_capture({"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "120", "-o",
-                                                        output_path.string(), make_curl_url(server, relative_path)});
+                extract_cab_file(compressed_path, output_path, filename);
+                return {.success = true};
             }
             catch (const std::exception& e)
             {
-                auto reason = std::string_view{e.what()};
-                const auto not_found = reason.find("(22)") != std::string_view::npos && reason.find("404") != std::string_view::npos;
-                const auto timeout = reason.find("(28)") != std::string_view::npos || reason.find("timed out") != std::string_view::npos ||
-                                     reason.find("Timeout") != std::string_view::npos;
-                if (not_found)
-                {
-                    reason = "symbol not found on server";
-                }
-                else if (timeout)
-                {
-                    reason = "download timed out";
-                }
-                return {.reason = std::string{reason}, .not_found = not_found};
+                return {.reason = e.what()};
             }
-
-            if (!utils::io::file_exists(output_path))
-            {
-                return {.reason = "download finished but output file was not created"};
-            }
-
-            return {.success = true};
-        }
-
-        download_result decompress_pdb(const std::filesystem::path& compressed_path, const std::filesystem::path& output_path,
-                                       const std::string& command)
-        {
-            std::error_code ec{};
-            std::filesystem::remove(output_path, ec);
-            try
-            {
-#ifdef _WIN32
-                (void)utils::exec::run_command_capture({command, compressed_path.string(), output_path.string()});
-#else
-                const auto output = utils::exec::run_command_capture({command, "-q", "-p", compressed_path.string()});
-                const auto bytes = std::as_bytes(std::span{output.data(), output.size()});
-                if (!utils::io::write_file(output_path, bytes))
-                {
-                    return {.reason = "failed to write decompressed PDB"};
-                }
-#endif
-            }
-            catch (const std::exception& e)
-            {
-                std::filesystem::remove(output_path, ec);
-                return {.reason = "failed to decompress symbol-store artifact: " + std::string{e.what()}};
-            }
-
-            return {.success = true};
         }
 
         server_attempt publish_download(const symbol_cache::download_slot& slot, const std::filesystem::path& path,
@@ -234,15 +149,15 @@ namespace sogen
             log.info("Downloading PDB symbols for %.*s from %s\n", static_cast<int>(module_name.size()), module_name.data(),
                      server.c_str());
 
-            if (const auto& decompressor = decompressor_command())
             {
                 const auto compressed_path = std::filesystem::path{slot->path.string() + ".compressed"};
                 const auto expanded_path =
                     slot->temporary_directory ? slot->path : std::filesystem::path{slot->path.string() + ".expanded"};
-                const auto compressed = download_with_curl(server, symbol_cache::store_relative_path(sig, true), compressed_path);
+                const auto compressed =
+                    download_symbol(make_symbol_url(server, symbol_cache::store_relative_path(sig, true)), compressed_path);
                 if (compressed.success)
                 {
-                    const auto decompressed = decompress_pdb(compressed_path, expanded_path, *decompressor);
+                    const auto decompressed = decompress_pdb(compressed_path, expanded_path, sig.filename());
                     std::filesystem::remove(compressed_path, ec);
                     if (decompressed.success)
                     {
@@ -279,7 +194,7 @@ namespace sogen
                 }
             }
 
-            const auto download = download_with_curl(server, symbol_cache::store_relative_path(sig), slot->path);
+            const auto download = download_symbol(make_symbol_url(server, symbol_cache::store_relative_path(sig)), slot->path);
             if (!download.success)
             {
                 if (download.not_found)

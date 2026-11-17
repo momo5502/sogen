@@ -4,7 +4,19 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
   *.rc
 )
 
+list(REMOVE_ITEM SRC_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/pdb_file.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/cab_file.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/symbol_download.cpp"
+)
 list(SORT SRC_FILES)
+
+add_library(symbol-files STATIC pdb_file.cpp cab_file.cpp symbol_download.cpp)
+target_include_directories(symbol-files PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(symbol-files PRIVATE emulator-common raw_pdb cab-decoder)
+if(NOT EMSCRIPTEN)
+  target_link_libraries(symbol-files PRIVATE CURL::libcurl_static)
+endif()
 
 add_library(windows-analyzer STATIC ${SRC_FILES})
 
@@ -43,3 +55,5 @@ if(SOGEN_ENABLE_REFLECTION)
     reflect
   )
 endif()
+
+target_link_libraries(windows-analyzer PRIVATE symbol-files)
