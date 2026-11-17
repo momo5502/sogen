@@ -443,7 +443,15 @@ namespace sogen::test
             return instruction_hook_continuation::skip_instruction;
         });
 
+        const auto before = machine->read_native_timestamp_counter().value();
         ASSERT_NO_THROW(machine->start());
+        const auto after = machine->read_native_timestamp_counter().value();
+        if (destination != 31)
+        {
+            const auto ticks = machine->reg(register_id(destination));
+            EXPECT_GE(ticks, before);
+            EXPECT_LE(ticks, after);
+        }
         EXPECT_EQ(exceptions, 1u);
         EXPECT_EQ(calls, 1u);
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 12);
