@@ -277,7 +277,7 @@ namespace sogen
       private:
         static constexpr size_t max_instructions_per_step = 1'000'000;
 
-        static uint32_t* wow64_context_field(WOW64_CONTEXT& c, const x86_register reg)
+        static DWORD* wow64_context_field(WOW64_CONTEXT& c, const x86_register reg)
         {
             switch (reg)
             {
