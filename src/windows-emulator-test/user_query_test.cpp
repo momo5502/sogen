@@ -606,7 +606,7 @@ namespace sogen::test
         EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
         EXPECT_EQ(11, this->emu.memory.read_memory<RAWMOUSE32>(data + header_size).lLastX);
 
-        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = k_wm_app});
+        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = k_wm_app, .wParam = 0, .lParam = 0});
         const emulator_object<msg> ordinary{this->emu.memory, this->storage + 0x100};
         ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, k_wm_app, k_wm_app, PM_NOREMOVE));
         EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
@@ -637,13 +637,13 @@ namespace sogen::test
         ASSERT_TRUE(input);
         auto& thread = *this->emu.vcpu(0).active_thread;
         const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
-        thread.post_message(this->emu, {.message = WM_QUIT});
+        thread.post_message(this->emu, {.window = 0, .message = WM_QUIT, .wParam = 0, .lParam = 0});
         EXPECT_FALSE(syscalls::handle_NtUserGetMessage(this->context(), message, 0, 0, 0));
-        EXPECT_EQ(WM_QUIT, message.read().message);
+        EXPECT_EQ(static_cast<UINT>(WM_QUIT), message.read().message);
         EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
-        thread.post_message(this->emu, {.message = WM_QUIT});
+        thread.post_message(this->emu, {.window = 0, .message = WM_QUIT, .wParam = 0, .lParam = 0});
         ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, 0, 0, 0, PM_REMOVE));
-        EXPECT_EQ(WM_QUIT, message.read().message);
+        EXPECT_EQ(static_cast<UINT>(WM_QUIT), message.read().message);
         EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0));
     }
 
