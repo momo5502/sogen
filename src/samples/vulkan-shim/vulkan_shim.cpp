@@ -6331,7 +6331,7 @@ namespace
 
     struct graphics_pipeline_stage
     {
-        VkShaderStageFlagBits stage{};
+        uint32_t stage{}; // VkShaderStageFlagBits
         resolved_stage_source source{};
         const VkSpecializationInfo* spec{};
         uint32_t spec_entries{};
@@ -6418,7 +6418,7 @@ extern "C"
                     break;
                 }
                 const VkSpecializationInfo* spec = stage_info.pSpecializationInfo;
-                stages.push_back({.stage = stage_info.stage,
+                stages.push_back({.stage = static_cast<uint32_t>(stage_info.stage),
                                   .source = source,
                                   .spec = spec,
                                   .spec_entries = (spec && spec->pMapEntries) ? spec->mapEntryCount : 0u,
@@ -6648,7 +6648,7 @@ extern "C"
             };
             for (const graphics_pipeline_stage& stage : stages)
             {
-                const gb::pipeline_shader_stage wire{.stage = static_cast<uint32_t>(stage.stage),
+                const gb::pipeline_shader_stage wire{.stage = stage.stage,
                                                      .spec_entry_count = stage.spec_entries,
                                                      .spec_data_size = stage.spec_bytes,
                                                      .reserved = 0,
