@@ -5,7 +5,6 @@
 #include <sogen_version.hpp>
 
 #include <cstring>
-#include <fstream>
 #include <random>
 
 namespace sogen::test

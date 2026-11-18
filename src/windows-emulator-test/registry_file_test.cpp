@@ -3,9 +3,6 @@
 #include <registry/registry_file.hpp>
 #include <syscall_utils.hpp>
 
-#include <atomic>
-#include <fstream>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,

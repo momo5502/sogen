@@ -3,7 +3,6 @@
 #include <syscall_utils.hpp>
 
 #include <initializer_list>
-#include <optional>
 #include <tuple>
 
 namespace sogen::syscalls

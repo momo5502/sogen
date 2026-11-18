@@ -2,8 +2,6 @@
 
 #include <syscall_utils.hpp>
 
-#include <optional>
-
 namespace sogen::syscalls
 {
     BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, hdc dc, emulator_pointer text, ULONG char_count, ULONG max_extent,

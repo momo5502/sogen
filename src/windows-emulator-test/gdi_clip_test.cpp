@@ -2,9 +2,7 @@
 
 #include <gdi_clip.hpp>
 
-#include <map>
 #include <utility>
-#include <vector>
 
 namespace sogen::test
 {

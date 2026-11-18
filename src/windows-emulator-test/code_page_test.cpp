@@ -2,8 +2,6 @@
 
 #include <code_page.hpp>
 
-#include <vector>
-
 namespace sogen::test
 {
     namespace

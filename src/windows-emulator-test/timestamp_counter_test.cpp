@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <array>
-
 namespace sogen::test
 {
     namespace

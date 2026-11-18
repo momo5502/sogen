@@ -5,9 +5,6 @@
 #include <network/tcp_server_socket.hpp>
 #include <platform/compiler.hpp>
 
-#include <array>
-#include <stdexcept>
-
 namespace sogen::test
 {
 #ifndef OS_EMSCRIPTEN

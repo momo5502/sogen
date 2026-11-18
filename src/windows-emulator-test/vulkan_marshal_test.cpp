@@ -1,8 +1,5 @@
 #include "std_include.hpp"
 
-#include <array>
-#include <vector>
-
 #include "vk_bridge_marshal.generated.hxx"
 
 namespace sogen::test

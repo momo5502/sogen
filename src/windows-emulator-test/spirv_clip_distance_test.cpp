@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
-#include <vector>
 
 namespace sogen::test
 {

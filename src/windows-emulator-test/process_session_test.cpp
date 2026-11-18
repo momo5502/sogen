@@ -9,12 +9,6 @@
 #undef exception_info
 #include <process_session_registry.hpp>
 
-#include <array>
-#include <set>
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <thread>
 #include <process_protocol_utils.hpp>
 
 namespace sogen::test

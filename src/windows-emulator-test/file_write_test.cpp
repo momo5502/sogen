@@ -3,7 +3,6 @@
 #include <syscall_utils.hpp>
 #include <utils/finally.hpp>
 
-#include <fstream>
 #include <random>
 
 namespace sogen::syscalls

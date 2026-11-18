@@ -4,7 +4,6 @@
 #include <gpu_bridge_protocol.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include <array>
 #include <cstdint>
 
 namespace sogen::test

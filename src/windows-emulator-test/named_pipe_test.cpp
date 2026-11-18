@@ -5,7 +5,6 @@
 #include <io_completion_wait.hpp>
 #include <inherited_pipes.hpp>
 #include <syscall_utils.hpp>
-#include <chrono>
 
 namespace sogen::syscalls
 {

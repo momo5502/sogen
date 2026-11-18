@@ -2,7 +2,6 @@
 
 #include <syscall_utils.hpp>
 
-#include <set>
 #include <type_traits>
 
 namespace sogen::syscalls

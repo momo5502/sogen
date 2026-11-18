@@ -5,7 +5,6 @@
 #include "page_memory.hpp"
 
 #include <cstring>
-#include <vector>
 
 namespace sogen::test
 {

@@ -6,8 +6,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
-#include <vector>
 
 namespace sogen::test
 {

@@ -2,8 +2,6 @@
 
 #include <memory_manager.hpp>
 
-#include <array>
-
 namespace sogen::test
 {
     namespace

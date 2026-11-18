@@ -6,7 +6,6 @@
 #include <filesystem/layered_provider.hpp>
 #include <utils/finally.hpp>
 
-#include <fstream>
 #include <random>
 
 namespace sogen::test

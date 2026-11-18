@@ -2,9 +2,7 @@
 
 #include <arch/syscall_abi.hpp>
 
-#include <array>
 #include <cstring>
-#include <vector>
 
 namespace sogen::test
 {

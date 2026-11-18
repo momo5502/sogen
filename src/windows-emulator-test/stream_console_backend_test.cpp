@@ -3,7 +3,6 @@
 #include <utils/finally.hpp>
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
-#include <array>
 #include <cstdio>
 #include <fcntl.h>
 #include <iostream>

@@ -4,9 +4,6 @@
 #include <syscall_utils.hpp>
 #include <utils/io.hpp>
 
-#include <chrono>
-#include <filesystem>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtCreateTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,

@@ -5,9 +5,6 @@
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
 
-#include <atomic>
-#include <fstream>
-
 #ifndef OS_WINDOWS
 #include <csignal>
 #include <sys/resource.h>

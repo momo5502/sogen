@@ -3,8 +3,6 @@
 #include <syscall_utils.hpp>
 #include <window_show_orchestrator.hpp>
 
-#include <functional>
-
 namespace sogen::test
 {
     namespace

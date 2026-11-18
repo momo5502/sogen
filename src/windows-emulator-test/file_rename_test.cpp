@@ -2,7 +2,6 @@
 
 #include <syscall_utils.hpp>
 
-#include <fstream>
 #include <random>
 
 namespace sogen::syscalls

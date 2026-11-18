@@ -4,8 +4,6 @@
 #include <memory_manager.hpp>
 
 #include <algorithm>
-#include <array>
-#include <span>
 #endif
 
 #ifdef __APPLE__
@@ -14,8 +12,6 @@
 #endif
 
 #include <cstring>
-#include <string>
-#include <vector>
 
 #include <sys/mman.h>
 #endif

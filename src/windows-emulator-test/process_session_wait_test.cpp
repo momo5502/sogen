@@ -10,13 +10,8 @@
 #include <process_protocol_utils.hpp>
 #include <process_session_registry.hpp>
 #include <future>
-#include <set>
 
 #include <algorithm>
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 
 namespace sogen::test
 {

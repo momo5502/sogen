@@ -3,9 +3,6 @@
 #include <memory_manager.hpp>
 
 #include <algorithm>
-#include <optional>
-#include <stdexcept>
-#include <vector>
 
 namespace sogen::test
 {

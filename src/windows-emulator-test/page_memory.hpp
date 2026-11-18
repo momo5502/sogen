@@ -2,10 +2,6 @@
 
 #include <memory_interface.hpp>
 
-#include <array>
-#include <map>
-#include <stdexcept>
-
 namespace sogen::test
 {
     class page_memory final : public memory_interface

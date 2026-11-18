@@ -2,8 +2,6 @@
 
 #include <console_backends/buffered_console_backend.hpp>
 
-#include <array>
-#include <chrono>
 #include <cstddef>
 
 #include <io_device.hpp>

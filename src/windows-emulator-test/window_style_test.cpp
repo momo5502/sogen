@@ -4,7 +4,6 @@
 #include <syscall_utils.hpp>
 
 #include <tuple>
-#include <unordered_map>
 
 namespace sogen::syscalls
 {

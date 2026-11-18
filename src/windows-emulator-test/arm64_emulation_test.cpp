@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstdlib>
-
 namespace sogen::test
 {
     namespace

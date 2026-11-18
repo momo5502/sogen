@@ -2,14 +2,7 @@
 
 #include <network/tcp_client_socket.hpp>
 
-#include <array>
-#include <chrono>
 #include <cstring>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <vector>
 
 namespace sogen::test
 {

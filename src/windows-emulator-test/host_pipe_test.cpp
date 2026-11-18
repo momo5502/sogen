@@ -5,13 +5,7 @@
 #include <utils/serialization.hpp>
 #include <network/tcp_server_socket.hpp>
 
-#include <chrono>
-#include <stdexcept>
-#include <thread>
-#include <vector>
 #include <future>
-#include <array>
-#include <atomic>
 
 namespace sogen::test
 {

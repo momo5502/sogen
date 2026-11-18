@@ -3,7 +3,6 @@
 #include <utils/finally.hpp>
 #include <utils/nt_handle.hpp>
 #include <utils/nt_thread.hpp>
-#include <thread>
 
 #ifdef OS_WINDOWS
 namespace sogen::test

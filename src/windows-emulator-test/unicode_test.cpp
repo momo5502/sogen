@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <platform/platform.hpp>
 #include <cstring>
 
 namespace sogen::test

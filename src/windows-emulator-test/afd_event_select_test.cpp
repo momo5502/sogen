@@ -2,8 +2,6 @@
 
 #include <devices/afd_types.hpp>
 
-#include <array>
-
 namespace sogen::test
 {
     namespace

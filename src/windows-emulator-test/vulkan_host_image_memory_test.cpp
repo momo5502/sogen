@@ -3,10 +3,8 @@
 #include <devices/vulkan_host.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 namespace sogen::test
 {

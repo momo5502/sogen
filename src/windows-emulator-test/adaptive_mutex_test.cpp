@@ -2,13 +2,7 @@
 
 #include <adaptive_mutex.hpp>
 
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
-#include <mutex>
-#include <thread>
-#include <vector>
 
 #ifdef _MSC_VER
 #ifndef NOMINMAX

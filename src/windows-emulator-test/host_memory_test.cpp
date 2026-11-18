@@ -1,8 +1,6 @@
 #include "std_include.hpp"
 
-#include <array>
 #include <cstring>
-#include <vector>
 
 namespace sogen::test
 {

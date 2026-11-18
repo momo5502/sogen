@@ -10,9 +10,7 @@
 #include <emscripten.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
-#include <string>
 
 namespace sogen::test
 {

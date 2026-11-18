@@ -3,7 +3,6 @@
 #include <utils/shared_host_buffer.hpp>
 
 #include <cstring>
-#include <vector>
 
 #if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <fcntl.h>

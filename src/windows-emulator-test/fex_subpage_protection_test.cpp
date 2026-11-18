@@ -4,10 +4,6 @@
 #include <memory_manager.hpp>
 #include <utils/host_watchpoints.hpp>
 
-#include <array>
-#include <optional>
-#include <vector>
-
 namespace sogen::test
 {
     namespace

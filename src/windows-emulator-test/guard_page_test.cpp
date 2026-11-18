@@ -2,12 +2,8 @@
 
 #include <syscall_utils.hpp>
 
-#include <array>
 #include <cstring>
-#include <map>
-#include <span>
 #include <utility>
-#include <vector>
 
 namespace sogen::syscalls
 {

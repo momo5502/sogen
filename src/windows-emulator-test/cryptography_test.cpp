@@ -3,7 +3,6 @@
 #include <io_device.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstring>
 #include <limits>
 

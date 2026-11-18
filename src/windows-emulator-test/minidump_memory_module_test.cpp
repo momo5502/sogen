@@ -7,10 +7,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
-#include <map>
-#include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace sogen::test
 {

@@ -2,9 +2,6 @@
 
 #include <snapshot.hpp>
 
-#include <filesystem>
-#include <vector>
-
 namespace sogen::test
 {
     // A controller made to keep the process running saves it when asked and lets it run to its end; one that is not

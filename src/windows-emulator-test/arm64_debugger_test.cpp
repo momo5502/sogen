@@ -2,9 +2,6 @@
 
 #include <debug_session.hpp>
 
-#include <array>
-#include <cstdlib>
-
 namespace sogen::test
 {
     TEST(Arm64DebuggerTest, InspectsAnArm64ThreadAtTheLoaderEntry)
