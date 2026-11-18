@@ -1287,8 +1287,8 @@ namespace sogen
         return std::nullopt;
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
-                                                             bool remove)
+    std::optional<msg> emulator_thread::select_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min,
+                                                               UINT filter_max, bool remove)
     {
         if (auto queued_message = this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove))
         {
@@ -1333,6 +1333,30 @@ namespace sogen
         }
 
         return std::nullopt;
+    }
+
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             message_retrieval_mode mode)
+    {
+        const bool remove = mode != message_retrieval_mode::peek;
+        const auto message = this->select_pending_message(win_emu, hwnd_filter, filter_min, filter_max, remove);
+
+        // Native Windows keeps this token through dispatch, but invalidates it on the next removal,
+        // except when GetMessage retrieves WM_QUIT.
+        if (message && remove && !(mode == message_retrieval_mode::get && message->message == WM_QUIT))
+        {
+            this->last_raw_input_.reset();
+            if (message->message == WM_INPUT)
+            {
+                const auto input = this->queued_raw_inputs_.extract(message->lParam);
+                if (input)
+                {
+                    this->last_raw_input_ = retrieved_raw_input{.token = input.key(), .payload = input.mapped()};
+                }
+            }
+        }
+
+        return message;
     }
 
     bool emulator_thread::can_coalesce_message(const msg& msg) const
@@ -1384,6 +1408,37 @@ namespace sogen
         message_queue.push_back(msg);
         this->mark_queue_status_changed(bits);
         win_emu.wake_idle_vcpu();
+    }
+
+    void emulator_thread::post_raw_input(windows_emulator& win_emu, const hwnd window, const uint32_t token,
+                                         const raw_input_payload& payload)
+    {
+        if (this->is_terminated() || (this->last_raw_input_ && this->last_raw_input_->token == token))
+        {
+            return;
+        }
+
+        if (this->queued_raw_inputs_.try_emplace(token, payload).second)
+        {
+            this->post_message(win_emu, {.window = window, .message = WM_INPUT, .wParam = RIM_INPUT, .lParam = token});
+        }
+    }
+
+    const raw_input_payload* emulator_thread::find_raw_input(const emulator_pointer token) const
+    {
+        if (this->last_raw_input_ && this->last_raw_input_->token == token)
+        {
+            return &this->last_raw_input_->payload;
+        }
+
+        const auto input = this->queued_raw_inputs_.find(token);
+        return input != this->queued_raw_inputs_.end() ? &input->second : nullptr;
+    }
+
+    void emulator_thread::clear_raw_input()
+    {
+        this->queued_raw_inputs_.clear();
+        this->last_raw_input_.reset();
     }
 
     // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
@@ -1450,6 +1505,11 @@ namespace sogen
             {
                 ++it;
                 continue;
+            }
+
+            if (it->message == WM_INPUT)
+            {
+                this->queued_raw_inputs_.erase(it->lParam);
             }
 
             const auto removed_bits = get_message_queue_status_bits(*it);
@@ -1751,7 +1811,7 @@ namespace sogen
             }
 
             if (const auto m = this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min,
-                                                          this->await_msg->filter_max, true))
+                                                          this->await_msg->filter_max, message_retrieval_mode::get))
             {
                 this->await_msg->message.write(*m);
                 this->record_current_message(*m);

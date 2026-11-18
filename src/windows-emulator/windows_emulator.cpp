@@ -2184,7 +2184,7 @@ namespace sogen
         this->dump_lock_profile();
     }
 
-    void windows_emulator::deliver_raw_input(const process_context::raw_input_payload& payload, const hwnd explicit_target)
+    void windows_emulator::deliver_raw_input(const raw_input_payload& payload, const hwnd explicit_target)
     {
         // Resolve the destination at delivery time: an explicit hwndTarget, else the foreground window
         // (raw input registered with a NULL target follows keyboard focus). If neither resolves to a live
@@ -2202,23 +2202,7 @@ namespace sogen
             return;
         }
 
-        const auto token = this->process.next_raw_input_token++;
-        this->process.raw_inputs[token] = payload;
-
-        // Bound the pending set: WM_INPUT is normally consumed at once by GetRawInputData, but if the guest
-        // stops pumping, drop the oldest tokens so the map can't grow without limit.
-        constexpr size_t max_pending_raw_inputs = 256;
-        while (this->process.raw_inputs.size() > max_pending_raw_inputs)
-        {
-            this->process.raw_inputs.erase(this->process.raw_inputs.begin());
-        }
-
-        msg m{};
-        m.window = target;
-        m.message = WM_INPUT;
-        m.wParam = RIM_INPUT;
-        m.lParam = token;
-        thread->post_message(*this, m);
+        thread->post_raw_input(*this, target, this->process.next_raw_input_token++, payload);
     }
 
     void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags,
