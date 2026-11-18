@@ -124,6 +124,4 @@ sogen_strip_target(windows-emulator-test)
 sogen_enable_hypervisor_entitlement(windows-emulator-test)
 sogen_target_skip_clang_tidy(windows-emulator-test)
 
-if(NOT SOGEN_ENABLE_CLANG_TIDY)
-  target_precompile_headers(windows-emulator-test PRIVATE <gtest/gtest.h> <windows_emulator.hpp> <backend_selection.hpp>)
-endif()
+target_precompile_headers(windows-emulator-test PRIVATE <gtest/gtest.h> <windows_emulator.hpp> <backend_selection.hpp>)
