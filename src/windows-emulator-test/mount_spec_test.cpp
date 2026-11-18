@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include <gtest/gtest.h>
 
 #include <filesystem/mount_spec.hpp>

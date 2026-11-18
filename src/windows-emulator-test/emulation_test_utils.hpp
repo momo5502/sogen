@@ -1,13 +1,10 @@
 #pragma once
 
-#ifdef __MINGW64__
-#include <unistd.h>
+#ifndef SOGEN_WINDOWS_EMULATOR_TEST_STD_INCLUDE
+#error "Tests must include std_include.hpp first"
 #endif
 
 #include <cstdlib>
-#include <gtest/gtest.h>
-#include <windows_emulator.hpp>
-#include <backend_selection.hpp>
 
 #include <network/static_socket_factory.hpp>
 

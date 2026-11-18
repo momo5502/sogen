@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "emulation_test_utils.hpp"
 
 #include <ui_backends/surface_alpha.hpp>

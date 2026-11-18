@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "rpc_test_utils.hpp"
 
 namespace sogen::test

@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "../windows-emulator/ports/sspi_context.hpp"
 
 #include <gtest/gtest.h>

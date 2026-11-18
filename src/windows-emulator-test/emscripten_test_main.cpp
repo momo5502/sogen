@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include <platform/compiler.hpp>
 
 #ifdef OS_EMSCRIPTEN

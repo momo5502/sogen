@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "emulation_test_utils.hpp"
 #include <registry/registry_file.hpp>
 #include <registry/registry_state_file.hpp>

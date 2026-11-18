@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #ifndef __EMSCRIPTEN__
 
 #include "emulation_test_utils.hpp"

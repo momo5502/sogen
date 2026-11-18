@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include <console_backends/buffered_console_backend.hpp>
 
 #include <array>

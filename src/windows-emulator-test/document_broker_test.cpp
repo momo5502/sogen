@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #if defined(__linux__)
 
 #include <gtest/gtest.h>

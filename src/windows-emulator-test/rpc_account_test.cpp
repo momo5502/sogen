@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "emulation_test_utils.hpp"
 #include <port.hpp>
 #include <registry/registry_utils.hpp>
