@@ -1,10 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <gdi_clip.hpp>
-
-#include <map>
-#include <utility>
-#include <vector>
 
 namespace sogen::test
 {

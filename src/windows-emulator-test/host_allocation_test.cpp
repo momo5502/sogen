@@ -1,10 +1,4 @@
-#include <gtest/gtest.h>
-#include <memory_manager.hpp>
-
-#include <algorithm>
-#include <optional>
-#include <stdexcept>
-#include <vector>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

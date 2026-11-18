@@ -1,11 +1,4 @@
-#include <arch/syscall_abi.hpp>
-#include <backend_selection.hpp>
-
-#include <gtest/gtest.h>
-
-#include <array>
-#include <cstring>
-#include <vector>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

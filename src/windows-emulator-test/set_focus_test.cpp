@@ -1,6 +1,5 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_dispatcher.hpp>
-#include <syscall_utils.hpp>
+#include "std_include.hpp"
+
 #include <user_callback_dispatch.hpp>
 
 namespace sogen::syscalls

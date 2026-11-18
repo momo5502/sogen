@@ -1,8 +1,6 @@
-#include "emulation_test_utils.hpp"
-#include <utils/finally.hpp>
-#include <utils/nt_handle.hpp>
+#include "std_include.hpp"
+
 #include <utils/nt_thread.hpp>
-#include <thread>
 
 #ifdef OS_WINDOWS
 namespace sogen::test

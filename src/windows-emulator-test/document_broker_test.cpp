@@ -1,15 +1,10 @@
+#include "std_include.hpp"
+
 #if defined(__linux__)
 
-#include <gtest/gtest.h>
-
-#include <emulator_utils.hpp>
 #include <filesystem/document_broker.hpp>
 
 #include <fcntl.h>
-#include <fstream>
-#include <limits>
-#include <random>
-#include <thread>
 #include <unistd.h>
 
 namespace sogen::test

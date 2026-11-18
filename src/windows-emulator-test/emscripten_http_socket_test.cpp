@@ -1,17 +1,8 @@
-#include <platform/compiler.hpp>
+#include "std_include.hpp"
 
 #ifdef OS_EMSCRIPTEN
 
-#include <network/dns_lookup.hpp>
-#include <network/socket_factory.hpp>
-#include <utils/finally.hpp>
-#include <gtest/gtest.h>
 #include <emscripten.h>
-
-#include <algorithm>
-#include <array>
-#include <cctype>
-#include <string>
 
 namespace sogen::test
 {

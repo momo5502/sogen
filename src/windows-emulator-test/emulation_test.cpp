@@ -1,6 +1,4 @@
-#include "emulation_test_utils.hpp"
-
-#include <array>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

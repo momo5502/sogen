@@ -123,3 +123,5 @@ sogen_targets_set_folder("tests" windows-emulator-test)
 sogen_strip_target(windows-emulator-test)
 sogen_enable_hypervisor_entitlement(windows-emulator-test)
 sogen_target_skip_clang_tidy(windows-emulator-test)
+
+target_precompile_headers(windows-emulator-test PRIVATE std_include.hpp)

@@ -1,4 +1,5 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
+
 #include <ports/api_port.hpp>
 
 namespace sogen::test

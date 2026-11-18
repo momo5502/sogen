@@ -1,9 +1,6 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
 
 #include <debug_object.hpp>
-#include <syscall_utils.hpp>
-
-#include <utility>
 
 namespace sogen::syscalls
 {

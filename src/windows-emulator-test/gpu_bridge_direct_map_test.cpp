@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <gpu_bridge_protocol.hpp>
 

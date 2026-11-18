@@ -1,10 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <filesystem/host_directory_provider.hpp>
-
-#include <fstream>
-#include <random>
-#include <set>
 
 namespace sogen::test
 {

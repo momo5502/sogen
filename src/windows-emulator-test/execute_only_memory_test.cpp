@@ -1,7 +1,4 @@
-#include <std_include.hpp>
-#include <memory_manager.hpp>
-
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

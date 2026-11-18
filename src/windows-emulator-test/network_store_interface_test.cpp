@@ -1,5 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <io_device.hpp>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

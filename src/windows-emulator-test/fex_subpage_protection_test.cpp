@@ -1,12 +1,7 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
 
 #ifdef __APPLE__
-#include <memory_manager.hpp>
 #include <utils/host_watchpoints.hpp>
-
-#include <array>
-#include <optional>
-#include <vector>
 
 namespace sogen::test
 {

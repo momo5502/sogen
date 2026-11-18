@@ -1,6 +1,6 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
+
 #include <cpu_context.hpp>
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {

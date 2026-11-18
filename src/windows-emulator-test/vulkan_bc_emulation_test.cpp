@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <devices/vulkan_bc_emulation.hpp>
 

@@ -1,14 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <adaptive_mutex.hpp>
-
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <cstdint>
-#include <mutex>
-#include <thread>
-#include <vector>
+#include "std_include.hpp"
 
 #ifdef _MSC_VER
 #ifndef NOMINMAX

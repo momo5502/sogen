@@ -1,23 +1,11 @@
-#include "emulation_test_utils.hpp"
-
-#include <cstring>
-#include <filesystem>
-#include <random>
-#include <stdexcept>
-#include <system_error>
+#include "std_include.hpp"
 
 #ifdef SOGEN_ENABLE_SECCOMP
 #include <asm/hwcap.h>
-#include <platform/arm64_context.hpp>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <ucontext.h>
-#include <utils/finally.hpp>
 
-#include <atomic>
-#include <cerrno>
-#include <csignal>
-#include <thread>
 #include <unistd.h>
 
 namespace sogen::test

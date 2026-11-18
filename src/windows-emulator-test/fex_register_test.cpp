@@ -1,21 +1,9 @@
-#include "emulation_test_utils.hpp"
-
-#if defined(__ANDROID__) || defined(__APPLE__)
-#include <memory_manager.hpp>
-
-#include <algorithm>
-#include <array>
-#include <span>
-#endif
+#include "std_include.hpp"
 
 #ifdef __APPLE__
 #ifdef SOGEN_ENABLE_FEX
 #include <fex_x86_64_emulator.hpp>
 #endif
-
-#include <cstring>
-#include <string>
-#include <vector>
 
 #include <sys/mman.h>
 #endif

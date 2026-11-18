@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #ifndef __EMSCRIPTEN__
 
 #include <subprocess_process_manager.hpp>
@@ -7,13 +9,6 @@
 #undef exception_info
 #include <process_session_registry.hpp>
 
-#include <array>
-#include <set>
-#include <atomic>
-#include <chrono>
-#include <gtest/gtest.h>
-#include <condition_variable>
-#include <thread>
 #include <process_protocol_utils.hpp>
 
 namespace sogen::test

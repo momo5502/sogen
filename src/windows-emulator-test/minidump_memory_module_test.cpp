@@ -1,17 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include "module/module_manager.hpp"
-
-#include <gtest/gtest.h>
-
-#include <algorithm>
-#include <cstddef>
-#include <cstring>
-#include <iterator>
-#include <limits>
-#include <map>
-#include <stdexcept>
-#include <utility>
-#include <vector>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

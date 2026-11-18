@@ -1,10 +1,6 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
 
 #include <registry/registry_file.hpp>
-#include <syscall_utils.hpp>
-
-#include <atomic>
-#include <fstream>
 
 namespace sogen::syscalls
 {

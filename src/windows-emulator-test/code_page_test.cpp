@@ -1,7 +1,6 @@
-#include <gtest/gtest.h>
-#include <code_page.hpp>
+#include "std_include.hpp"
 
-#include <vector>
+#include <code_page.hpp>
 
 namespace sogen::test
 {

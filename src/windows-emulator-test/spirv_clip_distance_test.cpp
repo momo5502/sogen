@@ -1,11 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <devices/spirv_clip_distance.hpp>
-
-#include <algorithm>
-#include <cstdint>
-#include <initializer_list>
-#include <vector>
 
 namespace sogen::test
 {

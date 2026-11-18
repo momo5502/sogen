@@ -1,13 +1,7 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <emulator_utils.hpp>
-#include <file_system.hpp>
 #include <filesystem/host_directory_provider.hpp>
 #include <filesystem/layered_provider.hpp>
-#include <utils/finally.hpp>
-
-#include <fstream>
-#include <random>
 
 namespace sogen::test
 {

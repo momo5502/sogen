@@ -1,8 +1,4 @@
-#include "emulation_test_utils.hpp"
-
-#include <array>
-#include <cstring>
-#include <vector>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

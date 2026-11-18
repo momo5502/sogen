@@ -1,11 +1,6 @@
-#include <network/dns_lookup.hpp>
-#include <network/socket_factory.hpp>
-#include <network/tcp_server_socket.hpp>
-#include <platform/compiler.hpp>
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <array>
-#include <stdexcept>
+#include <network/tcp_server_socket.hpp>
 
 namespace sogen::test
 {
