@@ -349,10 +349,38 @@ namespace sogen
                                                      uint64_t& out_alignment, uint32_t& out_memory_type_bits);
         int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
 
-        // Records a single image memory barrier into the (recording) command buffer.
-        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
-                                     uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
-                                     uint32_t src_queue_family_index, uint32_t dst_queue_family_index, const subresource_range& range);
+        struct barrier_masks
+        {
+            uint64_t src_stage_mask;
+            uint64_t src_access_mask;
+            uint64_t dst_stage_mask;
+            uint64_t dst_access_mask;
+        };
+
+        struct buffer_barrier
+        {
+            barrier_masks masks;
+            uint32_t src_queue_family_index;
+            uint32_t dst_queue_family_index;
+            uint64_t buffer;
+            uint64_t offset;
+            uint64_t size;
+        };
+
+        struct image_barrier
+        {
+            barrier_masks masks;
+            uint32_t old_layout;
+            uint32_t new_layout;
+            uint32_t src_queue_family_index;
+            uint32_t dst_queue_family_index;
+            uint64_t image;
+            subresource_range range;
+        };
+
+        // Records a VkDependencyInfo into the (recording) command buffer.
+        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags, std::span<const barrier_masks> memory_barriers,
+                                     std::span<const buffer_barrier> buffer_barriers, std::span<const image_barrier> image_barriers);
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);

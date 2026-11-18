@@ -32,6 +32,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan12Features);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES:
             return sizeof(VkPhysicalDeviceVulkan13Features);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES:
+            return sizeof(VkPhysicalDeviceSynchronization2Features);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceDepthClipEnableFeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:

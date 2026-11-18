@@ -4525,10 +4525,62 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask,
-                                                              req.src_access_mask, req.dst_access_mask, req.old_layout, req.new_layout,
-                                                              req.src_queue_family_index, req.dst_queue_family_index,
-                                                              to_host_range(req.subresource));
+                    const size_t memory_bytes = static_cast<size_t>(req.memory_barrier_count) * sizeof(gpu_bridge::barrier_masks);
+                    const size_t buffer_bytes = static_cast<size_t>(req.buffer_barrier_count) * sizeof(gpu_bridge::buffer_memory_barrier);
+                    const size_t image_bytes = static_cast<size_t>(req.image_barrier_count) * sizeof(gpu_bridge::image_memory_barrier);
+                    if (size - sizeof(req) != memory_bytes + buffer_bytes + image_bytes)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+
+                    const auto* cursor = payload + sizeof(req);
+                    const auto to_masks = [](const gpu_bridge::barrier_masks& masks) {
+                        return vulkan_host::barrier_masks{.src_stage_mask = masks.src_stage_mask,
+                                                          .src_access_mask = masks.src_access_mask,
+                                                          .dst_stage_mask = masks.dst_stage_mask,
+                                                          .dst_access_mask = masks.dst_access_mask};
+                    };
+
+                    std::vector<vulkan_host::barrier_masks> memory_barriers(req.memory_barrier_count);
+                    for (auto& barrier : memory_barriers)
+                    {
+                        gpu_bridge::barrier_masks wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = to_masks(wire);
+                    }
+
+                    std::vector<vulkan_host::buffer_barrier> buffer_barriers(req.buffer_barrier_count);
+                    for (auto& barrier : buffer_barriers)
+                    {
+                        gpu_bridge::buffer_memory_barrier wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = {.masks = to_masks(wire.masks),
+                                   .src_queue_family_index = wire.src_queue_family_index,
+                                   .dst_queue_family_index = wire.dst_queue_family_index,
+                                   .buffer = wire.buffer,
+                                   .offset = wire.offset,
+                                   .size = wire.size};
+                    }
+
+                    std::vector<vulkan_host::image_barrier> image_barriers(req.image_barrier_count);
+                    for (auto& barrier : image_barriers)
+                    {
+                        gpu_bridge::image_memory_barrier wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = {.masks = to_masks(wire.masks),
+                                   .old_layout = wire.old_layout,
+                                   .new_layout = wire.new_layout,
+                                   .src_queue_family_index = wire.src_queue_family_index,
+                                   .dst_queue_family_index = wire.dst_queue_family_index,
+                                   .image = wire.image,
+                                   .range = to_host_range(wire.subresource)};
+                    }
+
+                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.dependency_flags, memory_barriers, buffer_barriers,
+                                                              image_barriers);
                 }
                 case gpu_bridge::command::cmd_clear_color_image: {
                     gpu_bridge::cmd_clear_color_image_request req{};

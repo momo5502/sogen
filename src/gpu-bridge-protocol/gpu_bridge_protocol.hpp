@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 48;
+    inline constexpr uint32_t protocol_version = 49;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1162,19 +1162,46 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
     };
 
-    struct cmd_pipeline_barrier_request
+    // VkMemoryBarrier2, and the masks of the buffer and image barriers.
+    struct barrier_masks
     {
-        object_id command_buffer;
-        object_id image;
-        image_subresource_range subresource;
-        uint32_t src_stage_mask; // VkPipelineStageFlags
-        uint32_t dst_stage_mask;
-        uint32_t src_access_mask; // VkAccessFlags
-        uint32_t dst_access_mask;
+        uint64_t src_stage_mask;  // VkPipelineStageFlags2
+        uint64_t src_access_mask; // VkAccessFlags2
+        uint64_t dst_stage_mask;  // VkPipelineStageFlags2
+        uint64_t dst_access_mask; // VkAccessFlags2
+    };
+
+    struct buffer_memory_barrier
+    {
+        barrier_masks masks;
+        uint32_t src_queue_family_index;
+        uint32_t dst_queue_family_index;
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize (VK_WHOLE_SIZE allowed)
+    };
+
+    struct image_memory_barrier
+    {
+        barrier_masks masks;
         uint32_t old_layout; // VkImageLayout
         uint32_t new_layout;
         uint32_t src_queue_family_index;
         uint32_t dst_queue_family_index;
+        object_id image;
+        image_subresource_range subresource;
+        uint32_t reserved;
+    };
+
+    // A VkDependencyInfo. The barriers trail the header: memory_barrier_count barrier_masks, then buffer_barrier_count
+    // buffer_memory_barrier, then image_barrier_count image_memory_barrier.
+    struct cmd_pipeline_barrier_request
+    {
+        object_id command_buffer;
+        uint32_t dependency_flags; // VkDependencyFlags
+        uint32_t memory_barrier_count;
+        uint32_t buffer_barrier_count;
+        uint32_t image_barrier_count;
     };
 
     struct cmd_clear_color_image_request
@@ -2704,7 +2731,10 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(queue_present_request) == 24, "wire layout drift");
     static_assert(sizeof(create_surface_request) == 16, "wire layout drift");
     static_assert(sizeof(create_swapchain_request) == 80, "wire layout drift");
-    static_assert(sizeof(cmd_pipeline_barrier_request) == 72, "wire layout drift");
+    static_assert(sizeof(barrier_masks) == 32, "wire layout drift");
+    static_assert(sizeof(buffer_memory_barrier) == 64, "wire layout drift");
+    static_assert(sizeof(image_memory_barrier) == 80, "wire layout drift");
+    static_assert(sizeof(cmd_pipeline_barrier_request) == 24, "wire layout drift");
     static_assert(sizeof(acquire_next_image_request) == 32, "wire layout drift");
     static_assert(sizeof(get_surface_support_request) == 24, "wire layout drift");
     static_assert(sizeof(surface_format) == 8, "wire layout drift");

@@ -746,6 +746,8 @@ namespace sogen
             PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
+            // Null unless the guest enabled synchronization2.
+            PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier2{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdClearAttachments cmd_clear_attachments{};
             PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
@@ -2525,6 +2527,54 @@ namespace sogen
 
             params.max_inline_uniform_block_bindings = std::max(params.max_inline_uniform_block_bindings, inline_uniform_blocks);
             return params;
+        }
+
+        // Without synchronization2 the guest can only have used the legacy flags, which fit the legacy call. Each barrier
+        // keeps its own stages, so each becomes a call of its own.
+        static void record_legacy_barriers(const device_data& device, const VkCommandBuffer command_buffer, const uint32_t dependency_flags,
+                                           const std::span<const VkMemoryBarrier2> memory_barriers,
+                                           const std::span<const VkBufferMemoryBarrier2> buffer_barriers,
+                                           const std::span<const VkImageMemoryBarrier2> image_barriers)
+        {
+            const auto record = [&](const auto& barrier, const VkMemoryBarrier* memory, const VkBufferMemoryBarrier* buffer,
+                                    const VkImageMemoryBarrier* image) {
+                device.cmd_pipeline_barrier(command_buffer, static_cast<VkPipelineStageFlags>(barrier.srcStageMask),
+                                            static_cast<VkPipelineStageFlags>(barrier.dstStageMask), dependency_flags, memory ? 1 : 0,
+                                            memory, buffer ? 1 : 0, buffer, image ? 1 : 0, image);
+            };
+
+            for (const VkMemoryBarrier2& barrier : memory_barriers)
+            {
+                const VkMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                             .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                             .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
+                record(barrier, &legacy, nullptr, nullptr);
+            }
+            for (const VkBufferMemoryBarrier2& barrier : buffer_barriers)
+            {
+                const VkBufferMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                                                   .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                                   .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                                                   .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                                                   .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                                                   .buffer = barrier.buffer,
+                                                   .offset = barrier.offset,
+                                                   .size = barrier.size};
+                record(barrier, nullptr, &legacy, nullptr);
+            }
+            for (const VkImageMemoryBarrier2& barrier : image_barriers)
+            {
+                const VkImageMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                                  .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                                  .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                                                  .oldLayout = barrier.oldLayout,
+                                                  .newLayout = barrier.newLayout,
+                                                  .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                                                  .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                                                  .image = barrier.image,
+                                                  .subresourceRange = barrier.subresourceRange};
+                record(barrier, nullptr, nullptr, &legacy);
+            }
         }
 
         static VkResult create_host_descriptor_pool(const device_data& device, const descriptor_pool_params& create, VkDescriptorPool& pool)
@@ -5883,6 +5933,15 @@ namespace sogen
                    reinterpret_cast<const VkPhysicalDeviceMaintenance5FeaturesKHR*>(base)->maintenance5 == VK_TRUE;
         });
         data.maintenance5_enabled = maintenance5_extension_enabled && maintenance5_feature_enabled;
+        const bool synchronization2_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
+            const auto* base = reinterpret_cast<const VkBaseInStructure*>(buffer.data());
+            if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
+            {
+                return reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(base)->synchronization2 == VK_TRUE;
+            }
+            return base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES &&
+                   reinterpret_cast<const VkPhysicalDeviceSynchronization2Features*>(base)->synchronization2 == VK_TRUE;
+        });
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
@@ -6001,6 +6060,14 @@ namespace sogen
             data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
+            if (synchronization2_enabled)
+            {
+                data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2"));
+                if (!data.cmd_pipeline_barrier2)
+                {
+                    data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2KHR"));
+                }
+            }
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_clear_attachments = reinterpret_cast<PFN_vkCmdClearAttachments>(resolve("vkCmdClearAttachments"));
             data.cmd_clear_depth_stencil_image = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(resolve("vkCmdClearDepthStencilImage"));
@@ -8233,49 +8300,112 @@ namespace sogen
         }
     }
 
-    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
-                                              uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
-                                              uint32_t src_queue_family_index, uint32_t dst_queue_family_index,
-                                              const subresource_range& range)
+    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags,
+                                              std::span<const barrier_masks> memory_barriers,
+                                              std::span<const buffer_barrier> buffer_barriers,
+                                              std::span<const image_barrier> image_barriers)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
-        const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || img->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         const auto dev = this->impl_->devices.find(cb->second.device_id);
-        if (dev == this->impl_->devices.end() || !dev->second.cmd_pipeline_barrier)
+        if (dev == this->impl_->devices.end() || (!dev->second.cmd_pipeline_barrier2 && !dev->second.cmd_pipeline_barrier))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = src_access_mask;
-        barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = img->second.host_layout(old_layout);
-        barrier.newLayout = img->second.host_layout(new_layout);
-        barrier.srcQueueFamilyIndex = src_queue_family_index;
-        barrier.dstQueueFamilyIndex = dst_queue_family_index;
-        barrier.image = img->second.handle;
-        barrier.subresourceRange = to_vk_range(range);
+        std::vector<VkMemoryBarrier2> vk_memory_barriers{};
+        vk_memory_barriers.reserve(memory_barriers.size());
+        for (const barrier_masks& masks : memory_barriers)
+        {
+            vk_memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                          .srcStageMask = masks.src_stage_mask,
+                                          .srcAccessMask = masks.src_access_mask,
+                                          .dstStageMask = masks.dst_stage_mask,
+                                          .dstAccessMask = masks.dst_access_mask});
+        }
 
-        dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        std::vector<VkBufferMemoryBarrier2> vk_buffer_barriers{};
+        vk_buffer_barriers.reserve(buffer_barriers.size());
+        for (const buffer_barrier& barrier : buffer_barriers)
+        {
+            const auto buffer = this->impl_->buffers.find(barrier.buffer);
+            if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                          .srcStageMask = barrier.masks.src_stage_mask,
+                                          .srcAccessMask = barrier.masks.src_access_mask,
+                                          .dstStageMask = barrier.masks.dst_stage_mask,
+                                          .dstAccessMask = barrier.masks.dst_access_mask,
+                                          .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                          .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                          .buffer = buffer->second.handle,
+                                          .offset = barrier.offset,
+                                          .size = barrier.size});
+        }
 
-        cb->second.layout_transitions.push_back(impl::layout_transition{
-            .image = image,
-            .aspect_mask = range.aspect_mask,
-            .base_mip_level = range.base_mip_level,
-            .level_count = range.level_count,
-            .base_array_layer = range.base_array_layer,
-            .layer_count = range.layer_count,
-            .new_layout = static_cast<uint32_t>(barrier.newLayout),
-            .transfers_ownership = src_queue_family_index != dst_queue_family_index && src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
-            .source_family = src_queue_family_index,
-            .destination_family = dst_queue_family_index,
-        });
+        std::vector<VkImageMemoryBarrier2> vk_image_barriers{};
+        vk_image_barriers.reserve(image_barriers.size());
+        for (const image_barrier& barrier : image_barriers)
+        {
+            const auto image = this->impl_->images.find(barrier.image);
+            if (image == this->impl_->images.end() || image->second.device_id != cb->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                         .srcStageMask = barrier.masks.src_stage_mask,
+                                         .srcAccessMask = barrier.masks.src_access_mask,
+                                         .dstStageMask = barrier.masks.dst_stage_mask,
+                                         .dstAccessMask = barrier.masks.dst_access_mask,
+                                         .oldLayout = image->second.host_layout(barrier.old_layout),
+                                         .newLayout = image->second.host_layout(barrier.new_layout),
+                                         .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                         .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                         .image = image->second.handle,
+                                         .subresourceRange = to_vk_range(barrier.range)});
+        }
+
+        if (dev->second.cmd_pipeline_barrier2)
+        {
+            const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .dependencyFlags = dependency_flags,
+                                              .memoryBarrierCount = static_cast<uint32_t>(vk_memory_barriers.size()),
+                                              .pMemoryBarriers = vk_memory_barriers.data(),
+                                              .bufferMemoryBarrierCount = static_cast<uint32_t>(vk_buffer_barriers.size()),
+                                              .pBufferMemoryBarriers = vk_buffer_barriers.data(),
+                                              .imageMemoryBarrierCount = static_cast<uint32_t>(vk_image_barriers.size()),
+                                              .pImageMemoryBarriers = vk_image_barriers.data()};
+            dev->second.cmd_pipeline_barrier2(cb->second.handle, &dependency);
+        }
+        else
+        {
+            impl::record_legacy_barriers(dev->second, cb->second.handle, dependency_flags, vk_memory_barriers, vk_buffer_barriers,
+                                         vk_image_barriers);
+        }
+
+        for (const image_barrier& barrier : image_barriers)
+        {
+            const auto& range = barrier.range;
+            cb->second.layout_transitions.push_back(impl::layout_transition{
+                .image = barrier.image,
+                .aspect_mask = range.aspect_mask,
+                .base_mip_level = range.base_mip_level,
+                .level_count = range.level_count,
+                .base_array_layer = range.base_array_layer,
+                .layer_count = range.layer_count,
+                .new_layout = static_cast<uint32_t>(this->impl_->images.at(barrier.image).host_layout(barrier.new_layout)),
+                .transfers_ownership = barrier.src_queue_family_index != barrier.dst_queue_family_index &&
+                                       barrier.src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+                .source_family = barrier.src_queue_family_index,
+                .destination_family = barrier.dst_queue_family_index,
+            });
+        }
         return VK_SUCCESS;
     }
 

@@ -2944,62 +2944,127 @@ extern "C"
         }
     }
 
-    // Only image memory barriers are remoted (one IOCTL each, using the global stage masks); memory and
-    // buffer barriers are not modeled yet.
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask,
-                                                                          VkPipelineStageFlags dstStageMask, VkDependencyFlags, uint32_t,
-                                                                          const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
-                                                                          uint32_t imageMemoryBarrierCount,
-                                                                          const VkImageMemoryBarrier* pImageMemoryBarriers)
+    namespace
     {
-        for (uint32_t i = 0; i < imageMemoryBarrierCount; ++i)
+        void record_pipeline_barrier(const VkCommandBuffer command_buffer, const VkDependencyFlags dependency_flags,
+                                     const std::span<const gb::barrier_masks> memory_barriers,
+                                     const std::span<const gb::buffer_memory_barrier> buffer_barriers,
+                                     const std::span<const gb::image_memory_barrier> image_barriers)
         {
-            const VkImageMemoryBarrier& b = pImageMemoryBarriers[i];
-            gb::cmd_pipeline_barrier_request request{};
-            request.command_buffer = to_object_id(commandBuffer);
-            request.image = to_object_id(b.image);
-            request.subresource = to_wire_range(b.subresourceRange);
-            request.src_stage_mask = srcStageMask;
-            request.dst_stage_mask = dstStageMask;
-            request.src_access_mask = b.srcAccessMask;
-            request.dst_access_mask = b.dstAccessMask;
-            request.old_layout = static_cast<uint32_t>(b.oldLayout);
-            request.new_layout = static_cast<uint32_t>(b.newLayout);
-            request.src_queue_family_index = b.srcQueueFamilyIndex;
-            request.dst_queue_family_index = b.dstQueueFamilyIndex;
-            record_command(request.command_buffer, gb::command::cmd_pipeline_barrier, &request, sizeof(request));
+            const gb::cmd_pipeline_barrier_request header{.command_buffer = to_object_id(command_buffer),
+                                                          .dependency_flags = dependency_flags,
+                                                          .memory_barrier_count = static_cast<uint32_t>(memory_barriers.size()),
+                                                          .buffer_barrier_count = static_cast<uint32_t>(buffer_barriers.size()),
+                                                          .image_barrier_count = static_cast<uint32_t>(image_barriers.size())};
+            std::vector<uint8_t> message{};
+            message.reserve(sizeof(header) + memory_barriers.size_bytes() + buffer_barriers.size_bytes() + image_barriers.size_bytes());
+            append_bytes(message, &header, sizeof(header));
+            append_bytes(message, memory_barriers.data(), memory_barriers.size_bytes());
+            append_bytes(message, buffer_barriers.data(), buffer_barriers.size_bytes());
+            append_bytes(message, image_barriers.data(), image_barriers.size_bytes());
+            record_command(header.command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
+        }
+
+        gb::buffer_memory_barrier to_wire_buffer_barrier(const gb::barrier_masks& masks, const uint32_t src_queue_family_index,
+                                                         const uint32_t dst_queue_family_index, const VkBuffer buffer,
+                                                         const VkDeviceSize offset, const VkDeviceSize size)
+        {
+            return {.masks = masks,
+                    .src_queue_family_index = src_queue_family_index,
+                    .dst_queue_family_index = dst_queue_family_index,
+                    .buffer = to_object_id(buffer),
+                    .offset = offset,
+                    .size = size};
+        }
+
+        gb::image_memory_barrier to_wire_image_barrier(const gb::barrier_masks& masks, const VkImageLayout old_layout,
+                                                       const VkImageLayout new_layout, const uint32_t src_queue_family_index,
+                                                       const uint32_t dst_queue_family_index, const VkImage image,
+                                                       const VkImageSubresourceRange& range)
+        {
+            return {.masks = masks,
+                    .old_layout = static_cast<uint32_t>(old_layout),
+                    .new_layout = static_cast<uint32_t>(new_layout),
+                    .src_queue_family_index = src_queue_family_index,
+                    .dst_queue_family_index = dst_queue_family_index,
+                    .image = to_object_id(image),
+                    .subresource = to_wire_range(range),
+                    .reserved = 0};
         }
     }
 
-    // synchronization2 barrier: DXVK uses this exclusively. Lower its image barriers to the v1
-    // cmd_pipeline_barrier records. The VkPipelineStageFlags2/VkAccessFlags2 (64-bit) don't map cleanly to
-    // the v1 32-bit flags and a 0 stage mask is invalid in v1, so use ALL_COMMANDS stages (the bridge
-    // executes submissions synchronously, so over-synchronizing is harmless). Layout transitions -- the
-    // part DXVK actually relies on -- are preserved. Global/buffer memory barriers are no-ops here.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+    vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                         VkDependencyFlags dependencyFlags, uint32_t memoryBarrierCount, const VkMemoryBarrier* pMemoryBarriers,
+                         uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier* pBufferMemoryBarriers,
+                         uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier* pImageMemoryBarriers)
+    {
+        const auto masks = [&](const VkAccessFlags src_access, const VkAccessFlags dst_access) {
+            return gb::barrier_masks{.src_stage_mask = srcStageMask,
+                                     .src_access_mask = src_access,
+                                     .dst_stage_mask = dstStageMask,
+                                     .dst_access_mask = dst_access};
+        };
+
+        std::vector<gb::barrier_masks> memory_barriers{};
+        for (const VkMemoryBarrier& b : std::span(pMemoryBarriers, memoryBarrierCount))
+        {
+            memory_barriers.push_back(masks(b.srcAccessMask, b.dstAccessMask));
+        }
+        // Without barriers, the call still orders the source stages before the destination stages.
+        if (memoryBarrierCount == 0 && bufferMemoryBarrierCount == 0 && imageMemoryBarrierCount == 0)
+        {
+            memory_barriers.push_back(masks(0, 0));
+        }
+
+        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
+        for (const VkBufferMemoryBarrier& b : std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount))
+        {
+            buffer_barriers.push_back(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex,
+                                                             b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+        }
+
+        std::vector<gb::image_memory_barrier> image_barriers{};
+        for (const VkImageMemoryBarrier& b : std::span(pImageMemoryBarriers, imageMemoryBarrierCount))
+        {
+            image_barriers.push_back(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout,
+                                                           b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image, b.subresourceRange));
+        }
+
+        record_pipeline_barrier(commandBuffer, dependencyFlags, memory_barriers, buffer_barriers, image_barriers);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer,
                                                                            const VkDependencyInfo* pDependencyInfo)
     {
-        if (!pDependencyInfo)
+        const auto masks = [](const auto& b) {
+            return gb::barrier_masks{.src_stage_mask = b.srcStageMask,
+                                     .src_access_mask = b.srcAccessMask,
+                                     .dst_stage_mask = b.dstStageMask,
+                                     .dst_access_mask = b.dstAccessMask};
+        };
+
+        std::vector<gb::barrier_masks> memory_barriers{};
+        for (const VkMemoryBarrier2& b : std::span(pDependencyInfo->pMemoryBarriers, pDependencyInfo->memoryBarrierCount))
         {
-            return;
+            memory_barriers.push_back(masks(b));
         }
-        for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; ++i)
+
+        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
+        for (const VkBufferMemoryBarrier2& b : std::span(pDependencyInfo->pBufferMemoryBarriers, pDependencyInfo->bufferMemoryBarrierCount))
         {
-            const VkImageMemoryBarrier2& b = pDependencyInfo->pImageMemoryBarriers[i];
-            gb::cmd_pipeline_barrier_request request{};
-            request.command_buffer = to_object_id(commandBuffer);
-            request.image = to_object_id(b.image);
-            request.subresource = to_wire_range(b.subresourceRange);
-            request.src_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-            request.dst_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-            request.src_access_mask = static_cast<uint32_t>(b.srcAccessMask);
-            request.dst_access_mask = static_cast<uint32_t>(b.dstAccessMask);
-            request.old_layout = static_cast<uint32_t>(b.oldLayout);
-            request.new_layout = static_cast<uint32_t>(b.newLayout);
-            request.src_queue_family_index = b.srcQueueFamilyIndex;
-            request.dst_queue_family_index = b.dstQueueFamilyIndex;
-            record_command(request.command_buffer, gb::command::cmd_pipeline_barrier, &request, sizeof(request));
+            buffer_barriers.push_back(
+                to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
         }
+
+        std::vector<gb::image_memory_barrier> image_barriers{};
+        for (const VkImageMemoryBarrier2& b : std::span(pDependencyInfo->pImageMemoryBarriers, pDependencyInfo->imageMemoryBarrierCount))
+        {
+            image_barriers.push_back(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex, b.dstQueueFamilyIndex,
+                                                           b.image, b.subresourceRange));
+        }
+
+        record_pipeline_barrier(commandBuffer, pDependencyInfo->dependencyFlags, memory_barriers, buffer_barriers, image_barriers);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,
