@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "windows_emulator.hpp"
 #include "arch/syscall_abi.hpp"
