@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <algorithm>
-
 namespace sogen::test
 {
     namespace

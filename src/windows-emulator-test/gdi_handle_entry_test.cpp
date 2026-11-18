@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <bit>
-
 namespace sogen::syscalls
 {
     uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);

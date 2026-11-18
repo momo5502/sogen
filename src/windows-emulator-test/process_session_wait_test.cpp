@@ -11,8 +11,6 @@
 #include <process_session_registry.hpp>
 #include <future>
 
-#include <algorithm>
-
 namespace sogen::test
 {
     namespace

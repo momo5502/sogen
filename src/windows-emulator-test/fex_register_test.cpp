@@ -2,7 +2,6 @@
 
 #if defined(__ANDROID__) || defined(__APPLE__)
 
-#include <algorithm>
 #endif
 
 #ifdef __APPLE__

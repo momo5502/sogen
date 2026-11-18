@@ -2,7 +2,6 @@
 
 #include <devices/spirv_clip_distance.hpp>
 
-#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 

@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <iterator>

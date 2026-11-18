@@ -4,7 +4,6 @@
 
 #include <emscripten.h>
 
-#include <algorithm>
 #include <cctype>
 
 namespace sogen::test
