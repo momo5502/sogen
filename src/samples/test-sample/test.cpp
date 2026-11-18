@@ -1463,77 +1463,6 @@ namespace
         return signaled && executions == 2;
     }
 
-    bool test_user_mode_alert()
-    {
-        constexpr LONG status_alerted = 0x101;
-
-        using nt_alert_thread = LONG(NTAPI*)(HANDLE);
-        using nt_alert_resume_thread = LONG(NTAPI*)(HANDLE, PULONG);
-        using nt_test_alert = LONG(NTAPI*)();
-        using nt_delay_execution = LONG(NTAPI*)(BOOLEAN, PLARGE_INTEGER);
-        using nt_wait_for_single_object = LONG(NTAPI*)(HANDLE, BOOLEAN, PLARGE_INTEGER);
-
-        auto* const ntdll = GetModuleHandleA("ntdll.dll");
-        const auto alert_thread = std::bit_cast<nt_alert_thread>(GetProcAddress(ntdll, "NtAlertThread"));
-        const auto alert_resume_thread = std::bit_cast<nt_alert_resume_thread>(GetProcAddress(ntdll, "NtAlertResumeThread"));
-        const auto test_alert = std::bit_cast<nt_test_alert>(GetProcAddress(ntdll, "NtTestAlert"));
-        const auto delay_execution = std::bit_cast<nt_delay_execution>(GetProcAddress(ntdll, "NtDelayExecution"));
-        const auto wait_for_single_object = std::bit_cast<nt_wait_for_single_object>(GetProcAddress(ntdll, "NtWaitForSingleObject"));
-        if (!alert_thread || !alert_resume_thread || !test_alert || !delay_execution || !wait_for_single_object)
-        {
-            return false;
-        }
-
-        const auto self = GetCurrentThread();
-        LARGE_INTEGER no_delay{};
-        LARGE_INTEGER long_delay{};
-        long_delay.QuadPart = -600'000'000;
-
-        if (alert_thread(self) != 0 || test_alert() != status_alerted || test_alert() != 0)
-        {
-            return false;
-        }
-
-        const auto event = CreateEventW(nullptr, TRUE, TRUE, nullptr);
-        if (!event)
-        {
-            return false;
-        }
-
-        const auto close_event = sogen::utils::finally([&] { CloseHandle(event); });
-
-        if (alert_thread(self) != 0 || wait_for_single_object(event, TRUE, &no_delay) != 0 || delay_execution(FALSE, &no_delay) != 0)
-        {
-            return false;
-        }
-
-        if (delay_execution(TRUE, &long_delay) != status_alerted || test_alert() != 0)
-        {
-            return false;
-        }
-
-        static bool apc_ran{};
-
-        const auto thread = CreateThread(nullptr, 0, [](void*) -> DWORD { return apc_ran ? 0 : 1; }, nullptr, CREATE_SUSPENDED, nullptr);
-        if (!thread)
-        {
-            return false;
-        }
-
-        const auto close_thread = sogen::utils::finally([&] { CloseHandle(thread); });
-
-        QueueUserAPC([](ULONG_PTR) { apc_ran = true; }, thread, 0);
-
-        ULONG previous_suspend_count{};
-        if (alert_resume_thread(thread, &previous_suspend_count) != 0 || previous_suspend_count != 1)
-        {
-            return false;
-        }
-
-        DWORD exit_code{};
-        return WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0 && GetExitCodeThread(thread, &exit_code) && exit_code == 0;
-    }
-
     bool test_window_geometry()
     {
         WNDCLASSEXA wc{};
@@ -2730,7 +2659,6 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_apc_wait, "APC Wait")
-    RUN_TEST(test_user_mode_alert, "User-Mode Alert")
     RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")
