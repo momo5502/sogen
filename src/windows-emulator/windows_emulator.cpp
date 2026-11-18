@@ -614,10 +614,11 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
-            const auto can_run_message_hook = !is_ready && thread.message_wait_return_register.has_value() &&
-                                              (win_emu.has_low_level_hook_work(thread.id) || thread.has_hooked_message(win_emu));
+            const auto can_restart_message_wait =
+                !is_ready && thread.message_wait_return_register.has_value() &&
+                (win_emu.has_low_level_hook_work(thread.id) || thread.needs_message_wait_restart(win_emu));
 
-            if (!is_ready && !force && !can_dispatch_apcs && !can_run_message_hook)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_restart_message_wait)
             {
                 return false;
             }
@@ -638,16 +639,21 @@ namespace sogen
 
             thread.setup_if_necessary(emu, context);
 
-            if (can_dispatch_apcs && !has_pending_status)
+            if (const auto* wait = thread.current_sent_message_wait(); is_ready && wait)
+            {
+                win_emu.abi().instruction_pointer(emu, wait->syscall_ip);
+                win_emu.abi().return_value(emu, wait->syscall_number);
+            }
+            else if (can_dispatch_apcs && !has_pending_status)
             {
                 // An APC ends NtRemoveIoCompletionEx's alertable wait with KeRemoveQueueEx's one entry, STATUS_USER_APC, whose
                 // count the call stores under try.
                 auto status = STATUS_USER_APC;
-                if (const auto& wait = thread.await_io_completion;
-                    wait && wait->type == io_completion_wait_type::remove_multiple && !wait->worker_factory)
+                if (const auto& io_wait = thread.await_io_completion;
+                    io_wait && io_wait->type == io_completion_wait_type::remove_multiple && !io_wait->worker_factory)
                 {
                     if (const auto stored =
-                            io_completion_wait::write_status_entry_count(win_emu.memory, &thread, wait->entries_removed_ptr);
+                            io_completion_wait::write_status_entry_count(win_emu.memory, &thread, io_wait->entries_removed_ptr);
                         stored != STATUS_SUCCESS)
                     {
                         status = stored;
@@ -657,9 +663,9 @@ namespace sogen
                 thread.mark_as_ready(status);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
-            else if (can_run_message_hook)
+            else if (can_restart_message_wait)
             {
-                // The message syscall runs the hook first when it executes again.
+                // Guest callbacks run through the message syscall when it executes again.
                 thread.restart_message_wait(emu, win_emu.abi());
             }
 
