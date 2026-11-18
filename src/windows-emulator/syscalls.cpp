@@ -746,7 +746,7 @@ namespace sogen
                                             DWORD thread_id, UINT hwnd_max, emulator_pointer hwnd_list, emulator_object<UINT> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
-        BOOL handle_NtGdiGetCurrentDpiInfo(const syscall_context& c, handle monitor, emulator_object<EMU_DPI_INFORMATION> info);
+        NTSTATUS handle_NtGdiGetCurrentDpiInfo(const syscall_context& c, handle monitor, emulator_object<EMU_DPI_INFORMATION> info);
         BOOL handle_NtUserGetDpiForMonitor(const syscall_context& c, handle monitor, uint32_t dpi_type, emulator_object<uint32_t> dpi_x,
                                            emulator_object<uint32_t> dpi_y);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,

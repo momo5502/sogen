@@ -114,13 +114,11 @@ namespace sogen
 
                 for (uint32_t processor = 0; processor < processor_count; ++processor)
                 {
-                    const EMU_SYSTEM_CPU_SET_INFORMATION cpu_set{
-                        .Size = sizeof(EMU_SYSTEM_CPU_SET_INFORMATION),
-                        .Type = 0,
-                        .Id = first_cpu_set_id + processor,
-                        .LogicalProcessorIndex = static_cast<BYTE>(processor),
-                        .CoreIndex = static_cast<BYTE>(processor),
-                    };
+                    EMU_SYSTEM_CPU_SET_INFORMATION cpu_set{};
+                    cpu_set.Size = sizeof(EMU_SYSTEM_CPU_SET_INFORMATION);
+                    cpu_set.Id = first_cpu_set_id + processor;
+                    cpu_set.LogicalProcessorIndex = static_cast<BYTE>(processor);
+                    cpu_set.CoreIndex = static_cast<BYTE>(processor);
                     c.emu.write_memory(system_information + processor * sizeof(cpu_set), cpu_set);
                 }
 
@@ -1176,6 +1174,14 @@ namespace sogen
                 return STATUS_SUCCESS;
 
             case SystemBasicPerformanceInformation:
+                if (system_information_length != sizeof(SYSTEM_BASIC_PERFORMANCE_INFORMATION64))
+                {
+                    if (return_length)
+                    {
+                        return_length.try_write(sizeof(SYSTEM_BASIC_PERFORMANCE_INFORMATION64));
+                    }
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
                 return handle_query<SYSTEM_BASIC_PERFORMANCE_INFORMATION64>(
                     c.emu, system_information, system_information_length, return_length, [](SYSTEM_BASIC_PERFORMANCE_INFORMATION64& info) {
                         info.AvailablePages = physical_page_count / 2;
