@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 46;
+    inline constexpr uint32_t protocol_version = 47;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1560,6 +1560,7 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
         uint64_t offset; // VkDeviceSize
         uint64_t range;  // VkDeviceSize (VK_WHOLE_SIZE allowed)
+        uint64_t usage;  // VkBufferUsageFlags2 the view is limited to; 0 = the buffer's usage
     };
 
     // One source/destination/size triple of a buffer-to-buffer copy (trailing element of cmd_copy_buffer).
@@ -1981,6 +1982,33 @@ namespace sogen::gpu_bridge
         std::array<uint8_t, max_shader_module_identifier_size> identifier{};
     };
 
+    struct pipeline_stencil_op_state
+    {
+        uint32_t fail_op;       // VkStencilOp
+        uint32_t pass_op;       // VkStencilOp
+        uint32_t depth_fail_op; // VkStencilOp
+        uint32_t compare_op;    // VkCompareOp
+        uint32_t compare_mask;
+        uint32_t write_mask;
+        uint32_t reference;
+    };
+
+    // VkPipelineDepthStencilStateCreateInfo; `present` is 0 when the guest passed none.
+    struct pipeline_depth_stencil_state
+    {
+        uint32_t present;
+        uint32_t flags; // VkPipelineDepthStencilStateCreateFlags
+        uint32_t depth_test_enable;
+        uint32_t depth_write_enable;
+        uint32_t depth_compare_op; // VkCompareOp
+        uint32_t depth_bounds_test_enable;
+        uint32_t stencil_test_enable;
+        pipeline_stencil_op_state front;
+        pipeline_stencil_op_state back;
+        float min_depth_bounds;
+        float max_depth_bounds;
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
@@ -1992,9 +2020,7 @@ namespace sogen::gpu_bridge
         uint32_t library_parts; // VkGraphicsPipelineLibraryFlagsEXT this call defines; all of them for a complete pipeline
         uint32_t width;
         uint32_t height;
-        uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
-        uint32_t depth_write_enable; // VkBool32
-        uint32_t depth_compare_op;   // VkCompareOp (used when depth_test_enable != 0)
+        pipeline_depth_stencil_state depth_stencil;
         // Dynamic-rendering attachment formats (used when render_pass == 0). DXVK 2.x builds pipelines with
         // VK_KHR_dynamic_rendering (renderPass = VK_NULL_HANDLE + VkPipelineRenderingCreateInfo) instead of a
         // render-pass object, so the host rebuilds that info from these formats.
@@ -2042,8 +2068,7 @@ namespace sogen::gpu_bridge
         object_id pipeline_cache; // null_object => VK_NULL_HANDLE
         object_id pipeline_layout;
         shader_stage_source shader;
-        uint32_t flags; // VkPipelineCreateFlags
-        uint32_t reserved;
+        uint64_t flags; // VkPipelineCreateFlags2
     };
 
     struct create_compute_pipeline_response
@@ -2668,7 +2693,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(acquire_next_image_request) == 32, "wire layout drift");
     static_assert(sizeof(get_surface_support_request) == 24, "wire layout drift");
     static_assert(sizeof(surface_format) == 8, "wire layout drift");
-    static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
+    static_assert(sizeof(create_buffer_view_request) == 48, "wire layout drift");
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
     static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
@@ -2678,7 +2703,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
     static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 536, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 616, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");

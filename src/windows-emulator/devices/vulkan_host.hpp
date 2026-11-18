@@ -509,7 +509,8 @@ namespace sogen
                                   uint32_t base_mip_level, uint32_t level_count, uint32_t base_array_layer, uint32_t layer_count,
                                   uint32_t swizzle_r, uint32_t swizzle_g, uint32_t swizzle_b, uint32_t swizzle_a, uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
-        int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t& out_view);
+        int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t usage,
+                                   uint64_t& out_view);
         void destroy_buffer_view(uint64_t device, uint64_t buffer_view);
         int32_t cmd_copy_buffer(uint64_t command_buffer, uint64_t src_buffer, uint64_t dst_buffer, std::span<const buffer_copy> regions);
         int32_t create_query_pool(uint64_t device, uint32_t query_type, uint32_t query_count, uint32_t pipeline_statistics,
@@ -725,11 +726,30 @@ namespace sogen
         };
 
         // Optional depth-stencil state for a pipeline (test_enable == 0 => none, as before).
-        struct depth_state
+        struct stencil_op_state
         {
-            uint32_t test_enable;
-            uint32_t write_enable;
+            uint32_t fail_op;
+            uint32_t pass_op;
+            uint32_t depth_fail_op;
             uint32_t compare_op;
+            uint32_t compare_mask;
+            uint32_t write_mask;
+            uint32_t reference;
+        };
+
+        struct depth_stencil_state
+        {
+            bool present;
+            uint32_t flags;
+            uint32_t depth_test_enable;
+            uint32_t depth_write_enable;
+            uint32_t depth_compare_op;
+            uint32_t depth_bounds_test_enable;
+            uint32_t stencil_test_enable;
+            stencil_op_state front;
+            stencil_op_state back;
+            float min_depth_bounds;
+            float max_depth_bounds;
         };
 
         struct spec_entry
@@ -795,7 +815,7 @@ namespace sogen
             std::span<const vertex_binding> bindings{};
             std::span<const vertex_attribute> attributes{};
             std::span<const vertex_divisor> divisors{};
-            depth_state depth{};
+            depth_stencil_state depth_stencil{};
             std::span<const uint32_t> color_formats{};
             uint32_t depth_format{};
             uint32_t stencil_format{};
@@ -816,7 +836,7 @@ namespace sogen
                                          const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked,
                                          uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
-                                        const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline);
+                                        const shader_stage_source& shader, uint64_t flags, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         struct render_area

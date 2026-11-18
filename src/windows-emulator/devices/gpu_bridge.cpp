@@ -2797,8 +2797,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t view = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset, request.range, view);
+                const int32_t result = this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset,
+                                                                        request.range, request.usage, view);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
             }
 
@@ -3223,9 +3223,27 @@ namespace sogen
                     std::memcpy(libraries.data(), trailer.data() + spec_cursor, libraries_bytes);
                 }
 
-                const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
-                                                     .write_enable = request.depth_write_enable,
-                                                     .compare_op = request.depth_compare_op};
+                const auto to_stencil_op_state = [](const gpu_bridge::pipeline_stencil_op_state& state) {
+                    return vulkan_host::stencil_op_state{.fail_op = state.fail_op,
+                                                         .pass_op = state.pass_op,
+                                                         .depth_fail_op = state.depth_fail_op,
+                                                         .compare_op = state.compare_op,
+                                                         .compare_mask = state.compare_mask,
+                                                         .write_mask = state.write_mask,
+                                                         .reference = state.reference};
+                };
+                const gpu_bridge::pipeline_depth_stencil_state& ds = request.depth_stencil;
+                const vulkan_host::depth_stencil_state depth_stencil{.present = ds.present != 0,
+                                                                     .flags = ds.flags,
+                                                                     .depth_test_enable = ds.depth_test_enable,
+                                                                     .depth_write_enable = ds.depth_write_enable,
+                                                                     .depth_compare_op = ds.depth_compare_op,
+                                                                     .depth_bounds_test_enable = ds.depth_bounds_test_enable,
+                                                                     .stencil_test_enable = ds.stencil_test_enable,
+                                                                     .front = to_stencil_op_state(ds.front),
+                                                                     .back = to_stencil_op_state(ds.back),
+                                                                     .min_depth_bounds = ds.min_depth_bounds,
+                                                                     .max_depth_bounds = ds.max_depth_bounds};
 
                 const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
                 const std::span<const uint32_t> color_formats{request.color_formats.data(), color_count};
@@ -3281,7 +3299,7 @@ namespace sogen
                     .bindings = bindings,
                     .attributes = attributes,
                     .divisors = divisors,
-                    .depth = depth,
+                    .depth_stencil = depth_stencil,
                     .color_formats = color_formats,
                     .depth_format = request.depth_format,
                     .stencil_format = request.stencil_format,

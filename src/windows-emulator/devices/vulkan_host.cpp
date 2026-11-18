@@ -1872,7 +1872,7 @@ namespace sogen
             std::vector<vertex_binding> bindings{};
             std::vector<vertex_attribute> attributes{};
             std::vector<vertex_divisor> divisors{};
-            depth_state depth{};
+            depth_stencil_state depth_stencil{};
             std::vector<uint32_t> color_formats{};
             uint32_t depth_format{};
             uint32_t stencil_format{};
@@ -1913,7 +1913,7 @@ namespace sogen
                 buffer.write_vector(this->bindings);
                 buffer.write_vector(this->attributes);
                 buffer.write_vector(this->divisors);
-                buffer.write(this->depth);
+                buffer.write(this->depth_stencil);
                 buffer.write_vector(this->color_formats);
                 buffer.write(this->depth_format);
                 buffer.write(this->stencil_format);
@@ -1953,7 +1953,7 @@ namespace sogen
                 buffer.read_vector(this->bindings);
                 buffer.read_vector(this->attributes);
                 buffer.read_vector(this->divisors);
-                buffer.read(this->depth);
+                buffer.read(this->depth_stencil);
                 buffer.read_vector(this->color_formats);
                 buffer.read(this->depth_format);
                 buffer.read(this->stencil_format);
@@ -1988,6 +1988,7 @@ namespace sogen
             uint32_t format{};
             uint64_t offset{};
             uint64_t range{};
+            uint64_t usage{};
         };
 
         struct framebuffer_params
@@ -9620,7 +9621,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range,
-                                            uint64_t& out_view)
+                                            uint64_t usage, uint64_t& out_view)
     {
         out_view = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -9638,6 +9639,14 @@ namespace sogen
         info.offset = offset;
         info.range = range ? range : VK_WHOLE_SIZE;
 
+        VkBufferUsageFlags2CreateInfoKHR usage_info{};
+        if (usage != 0)
+        {
+            usage_info.sType = VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR;
+            usage_info.usage = usage;
+            info.pNext = &usage_info;
+        }
+
         VkBufferView view{};
         const VkResult result = dev->second.create_buffer_view(dev->second.handle, &info, nullptr, &view);
         if (result != VK_SUCCESS)
@@ -9647,8 +9656,9 @@ namespace sogen
 
         const uint64_t id = this->impl_->allocate_id();
         this->impl_->buffer_views.emplace(
-            id, impl::buffer_view_data{
-                    .handle = view, .device_id = device, .create = {.buffer = buffer, .format = format, .offset = offset, .range = range}});
+            id, impl::buffer_view_data{.handle = view,
+                                       .device_id = device,
+                                       .create = {.buffer = buffer, .format = format, .offset = offset, .range = range, .usage = usage}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -11415,9 +11425,26 @@ namespace sogen
 
         VkPipelineDepthStencilStateCreateInfo depth_stencil{};
         depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth_stencil.depthTestEnable = desc.depth.test_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthWriteEnable = desc.depth.write_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(desc.depth.compare_op);
+        const auto to_vk_stencil_op_state = [](const stencil_op_state& state) {
+            return VkStencilOpState{.failOp = static_cast<VkStencilOp>(state.fail_op),
+                                    .passOp = static_cast<VkStencilOp>(state.pass_op),
+                                    .depthFailOp = static_cast<VkStencilOp>(state.depth_fail_op),
+                                    .compareOp = static_cast<VkCompareOp>(state.compare_op),
+                                    .compareMask = state.compare_mask,
+                                    .writeMask = state.write_mask,
+                                    .reference = state.reference};
+        };
+        const depth_stencil_state& ds = desc.depth_stencil;
+        depth_stencil.flags = static_cast<VkPipelineDepthStencilStateCreateFlags>(ds.flags);
+        depth_stencil.depthTestEnable = ds.depth_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthWriteEnable = ds.depth_write_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(ds.depth_compare_op);
+        depth_stencil.depthBoundsTestEnable = ds.depth_bounds_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.stencilTestEnable = ds.stencil_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.front = to_vk_stencil_op_state(ds.front);
+        depth_stencil.back = to_vk_stencil_op_state(ds.back);
+        depth_stencil.minDepthBounds = ds.min_depth_bounds;
+        depth_stencil.maxDepthBounds = ds.max_depth_bounds;
 
         const auto* next = static_cast<const void*>(nullptr);
         const auto chain = [&next](auto& structure) {
@@ -11443,7 +11470,7 @@ namespace sogen
         }
 
         VkGraphicsPipelineLibraryCreateInfoEXT library_parts_info{};
-        if (library_related)
+        if (library_related && desc.library_parts != 0)
         {
             library_parts_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT;
             library_parts_info.flags = desc.library_parts;
@@ -11480,7 +11507,7 @@ namespace sogen
         info.pRasterizationState = pre_rasterization_part ? &rasterization : nullptr;
         info.pMultisampleState = fragment_shader_part || fragment_output_part ? &multisample : nullptr;
         info.pColorBlendState = fragment_output_part ? &color_blend : nullptr;
-        info.pDepthStencilState = fragment_shader_part && desc.depth.test_enable ? &depth_stencil : nullptr;
+        info.pDepthStencilState = fragment_shader_part && ds.present ? &depth_stencil : nullptr;
         info.pDynamicState = dynamic_rendering ? &dynamic_state : nullptr;
         info.layout = layout_handle;
         info.renderPass = rp_handle;
@@ -11507,7 +11534,7 @@ namespace sogen
         create.bindings.assign(desc.bindings.begin(), desc.bindings.end());
         create.attributes.assign(desc.attributes.begin(), desc.attributes.end());
         create.divisors.assign(desc.divisors.begin(), desc.divisors.end());
-        create.depth = desc.depth;
+        create.depth_stencil = desc.depth_stencil;
         create.color_formats.assign(desc.color_formats.begin(), desc.color_formats.end());
         create.depth_format = desc.depth_format;
         create.stencil_format = desc.stencil_format;
@@ -11550,7 +11577,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
-                                                 const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline)
+                                                 const shader_stage_source& shader, uint64_t flags, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
 
@@ -11599,10 +11626,17 @@ namespace sogen
             cache_handle = cache->second.handle;
         }
 
+        // Flags beyond the legacy 32 bits exist only as VkPipelineCreateFlags2.
+        VkPipelineCreateFlags2CreateInfoKHR flags2_info{};
+        flags2_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR;
+        flags2_info.flags = flags;
+        const bool needs_flags2 = (flags >> 32) != 0;
+
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkComputePipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        info.flags = static_cast<VkPipelineCreateFlags>(flags);
+        info.pNext = needs_flags2 ? &flags2_info : nullptr;
+        info.flags = needs_flags2 ? 0 : static_cast<VkPipelineCreateFlags>(flags);
         info.layout = layout->second.handle;
         info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         info.stage.pNext = has_identifier ? &identifier : nullptr;
@@ -15236,7 +15270,7 @@ namespace sogen
                 .bindings = create.bindings,
                 .attributes = create.attributes,
                 .divisors = create.divisors,
-                .depth = create.depth,
+                .depth_stencil = create.depth_stencil,
                 .color_formats = create.color_formats,
                 .depth_format = create.depth_format,
                 .stencil_format = create.stencil_format,
@@ -15286,7 +15320,7 @@ namespace sogen
                 const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
                 const auto shader = stage_source(device, create.vertex);
                 impl.forced_ids = {id};
-                result = this->create_compute_pipeline(device, cache, layout, shader, static_cast<uint32_t>(create.flags), pipeline);
+                result = this->create_compute_pipeline(device, cache, layout, shader, create.flags, pipeline);
             }
             else
             {
@@ -15328,7 +15362,8 @@ namespace sogen
 
             uint64_t view{};
             impl.forced_ids = {id};
-            const auto result = this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, view);
+            const auto result =
+                this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, create.usage, view);
             expect_restored(result, view, id, "buffer view");
         }
 

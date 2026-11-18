@@ -1985,6 +1985,11 @@ extern "C"
         request.format = static_cast<uint32_t>(pCreateInfo->format);
         request.offset = pCreateInfo->offset;
         request.range = pCreateInfo->range;
+        if (const auto* usage =
+                find_in_chain<VkBufferUsageFlags2CreateInfoKHR>(pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR))
+        {
+            request.usage = usage->usage;
+        }
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_buffer_view, &request, sizeof(request), &response, sizeof(response)))
@@ -6194,6 +6199,32 @@ namespace
 
 namespace
 {
+    gb::pipeline_stencil_op_state to_wire(const VkStencilOpState& state)
+    {
+        return {.fail_op = static_cast<uint32_t>(state.failOp),
+                .pass_op = static_cast<uint32_t>(state.passOp),
+                .depth_fail_op = static_cast<uint32_t>(state.depthFailOp),
+                .compare_op = static_cast<uint32_t>(state.compareOp),
+                .compare_mask = state.compareMask,
+                .write_mask = state.writeMask,
+                .reference = state.reference};
+    }
+
+    gb::pipeline_depth_stencil_state to_wire(const VkPipelineDepthStencilStateCreateInfo& state)
+    {
+        return {.present = 1,
+                .flags = state.flags,
+                .depth_test_enable = state.depthTestEnable,
+                .depth_write_enable = state.depthWriteEnable,
+                .depth_compare_op = static_cast<uint32_t>(state.depthCompareOp),
+                .depth_bounds_test_enable = state.depthBoundsTestEnable,
+                .stencil_test_enable = state.stencilTestEnable,
+                .front = to_wire(state.front),
+                .back = to_wire(state.back),
+                .min_depth_bounds = state.minDepthBounds,
+                .max_depth_bounds = state.maxDepthBounds};
+    }
+
     struct graphics_pipeline_chain
     {
         VkPipelineCreateFlags2KHR flags{};
@@ -6358,11 +6389,9 @@ extern "C"
             request.library_count = static_cast<uint32_t>(chain.libraries.size());
             request.width = width;
             request.height = height;
-            if (depth_stencil_state && depth_stencil_state->depthTestEnable)
+            if (depth_stencil_state)
             {
-                request.depth_test_enable = 1;
-                request.depth_write_enable = depth_stencil_state->depthWriteEnable ? 1 : 0;
-                request.depth_compare_op = static_cast<uint32_t>(depth_stencil_state->depthCompareOp);
+                request.depth_stencil = to_wire(*depth_stencil_state);
             }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
@@ -6569,7 +6598,10 @@ extern "C"
             request.pipeline_cache = to_object_id(pipelineCache);
             request.pipeline_layout = to_object_id(ci.layout);
             request.shader = shader.wire;
-            request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
+            const auto* flags2 =
+                find_in_chain<VkPipelineCreateFlags2CreateInfoKHR>(ci.pNext, VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR);
+            const VkPipelineCreateFlags2KHR flags = flags2 ? flags2->flags : ci.flags;
+            request.flags = flags & ~static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_2_DERIVATIVE_BIT_KHR);
 
             gb::create_compute_pipeline_response response{};
             const bool ok = bridge_call(gb::ioctl_create_compute_pipeline, &request, sizeof(request), &response, sizeof(response));
