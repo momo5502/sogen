@@ -6225,6 +6225,27 @@ namespace
                 .max_depth_bounds = state.maxDepthBounds};
     }
 
+    gb::pipeline_tessellation_state to_wire(const VkPipelineTessellationStateCreateInfo& state)
+    {
+        gb::pipeline_tessellation_state wire{.present = 1, .flags = state.flags, .patch_control_points = state.patchControlPoints};
+        if (const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
+                state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO))
+        {
+            wire.domain_origin_present = 1;
+            wire.domain_origin = static_cast<uint32_t>(origin->domainOrigin);
+        }
+        return wire;
+    }
+
+    struct graphics_pipeline_stage
+    {
+        VkShaderStageFlagBits stage{};
+        resolved_stage_source source{};
+        const VkSpecializationInfo* spec{};
+        uint32_t spec_entries{};
+        uint32_t spec_bytes{};
+    };
+
     struct graphics_pipeline_chain
     {
         VkPipelineCreateFlags2KHR flags{};
@@ -6287,57 +6308,46 @@ extern "C"
             const auto* input_assembly_state = vertex_input_part ? ci.pInputAssemblyState : nullptr;
             const auto* viewport_state = pre_rasterization_part ? ci.pViewportState : nullptr;
             const auto* rasterization_state = pre_rasterization_part ? ci.pRasterizationState : nullptr;
+            const auto* tessellation_state = pre_rasterization_part ? ci.pTessellationState : nullptr;
             const auto* depth_stencil_state = fragment_shader_part ? ci.pDepthStencilState : nullptr;
             const auto* multisample_state = fragment_shader_part || fragment_output_part ? ci.pMultisampleState : nullptr;
             const auto* color_blend_state = fragment_output_part ? ci.pColorBlendState : nullptr;
 
-            resolved_stage_source vertex_shader{};
-            resolved_stage_source fragment_shader{};
-            const VkSpecializationInfo* vs_spec = nullptr;
-            const VkSpecializationInfo* fs_spec = nullptr;
+            std::vector<graphics_pipeline_stage> stages;
+            stages.reserve(ci.stageCount);
             bool stages_valid = true;
             for (uint32_t s = 0; s < ci.stageCount; ++s)
             {
-                resolved_stage_source source = resolve_stage_source(device, ci.pStages[s]);
+                const VkPipelineShaderStageCreateInfo& stage_info = ci.pStages[s];
+                const resolved_stage_source source = resolve_stage_source(device, stage_info);
                 if (!source.valid)
                 {
                     stages_valid = false;
                     break;
                 }
-                if (ci.pStages[s].stage == VK_SHADER_STAGE_VERTEX_BIT)
-                {
-                    vertex_shader = source;
-                    vs_spec = ci.pStages[s].pSpecializationInfo;
-                }
-                else if (ci.pStages[s].stage == VK_SHADER_STAGE_FRAGMENT_BIT)
-                {
-                    fragment_shader = source;
-                    fs_spec = ci.pStages[s].pSpecializationInfo;
-                }
-                else if (source.owned_module != VK_NULL_HANDLE)
-                {
-                    vkDestroyShaderModule(device, source.owned_module, nullptr);
-                }
+                const VkSpecializationInfo* spec = stage_info.pSpecializationInfo;
+                stages.push_back({.stage = stage_info.stage,
+                                  .source = source,
+                                  .spec = spec,
+                                  .spec_entries = (spec && spec->pMapEntries) ? spec->mapEntryCount : 0u,
+                                  .spec_bytes = (spec && spec->pData) ? static_cast<uint32_t>(spec->dataSize) : 0u});
             }
-            stages_valid = stages_valid && (vertex_shader.valid || !pre_rasterization_part);
+            const auto destroy_owned_modules = [&] {
+                for (const graphics_pipeline_stage& stage : stages)
+                {
+                    if (stage.source.owned_module != VK_NULL_HANDLE)
+                    {
+                        vkDestroyShaderModule(device, stage.source.owned_module, nullptr);
+                    }
+                }
+            };
             if (!stages_valid)
             {
-                if (vertex_shader.owned_module != VK_NULL_HANDLE)
-                {
-                    vkDestroyShaderModule(device, vertex_shader.owned_module, nullptr);
-                }
-                if (fragment_shader.owned_module != VK_NULL_HANDLE)
-                {
-                    vkDestroyShaderModule(device, fragment_shader.owned_module, nullptr);
-                }
+                destroy_owned_modules();
                 pPipelines[i] = VK_NULL_HANDLE;
                 overall = VK_ERROR_INITIALIZATION_FAILED;
                 continue;
             }
-            const uint32_t vs_spec_entries = (vs_spec && vs_spec->pMapEntries) ? vs_spec->mapEntryCount : 0u;
-            const uint32_t vs_spec_bytes = (vs_spec && vs_spec->pData) ? static_cast<uint32_t>(vs_spec->dataSize) : 0u;
-            const uint32_t fs_spec_entries = (fs_spec && fs_spec->pMapEntries) ? fs_spec->mapEntryCount : 0u;
-            const uint32_t fs_spec_bytes = (fs_spec && fs_spec->pData) ? static_cast<uint32_t>(fs_spec->dataSize) : 0u;
 
             uint32_t width = 0;
             uint32_t height = 0;
@@ -6382,8 +6392,11 @@ extern "C"
             request.render_pass = to_object_id(ci.renderPass);
             request.subpass = ci.subpass;
             request.pipeline_layout = to_object_id(ci.layout);
-            request.vertex_shader = vertex_shader.wire;
-            request.fragment_shader = fragment_shader.wire;
+            request.stage_count = static_cast<uint32_t>(stages.size());
+            if (tessellation_state)
+            {
+                request.tessellation = to_wire(*tessellation_state);
+            }
             request.flags = chain.flags & ~static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_2_DERIVATIVE_BIT_KHR);
             request.library_parts = chain.library_parts;
             request.library_count = static_cast<uint32_t>(chain.libraries.size());
@@ -6431,10 +6444,6 @@ extern "C"
             // pipeline does not also declare them dynamic it bakes (often wrong) defaults instead.
             const uint32_t dynamic_state_count = ci.pDynamicState ? ci.pDynamicState->dynamicStateCount : 0;
             request.dynamic_state_count = dynamic_state_count;
-            request.vs_spec_entry_count = vs_spec_entries;
-            request.vs_spec_data_size = vs_spec_bytes;
-            request.fs_spec_entry_count = fs_spec_entries;
-            request.fs_spec_data_size = fs_spec_bytes;
 
             // Per-attachment blend state. DXVK bakes D3D9 alpha blending statically into pColorBlendState; without
             // forwarding it the host defaults to blend-disabled and transparent geometry renders fully opaque.
@@ -6484,12 +6493,16 @@ extern "C"
             const auto spec_block_bytes = [](uint32_t entries, uint32_t bytes) {
                 return static_cast<size_t>(entries) * sizeof(gb::specialization_map_entry) + bytes;
             };
+            size_t stage_bytes = stages.size() * sizeof(gb::pipeline_shader_stage);
+            for (const graphics_pipeline_stage& stage : stages)
+            {
+                stage_bytes += spec_block_bytes(stage.spec_entries, stage.spec_bytes);
+            }
             std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
                                          static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute) +
                                          static_cast<size_t>(divisor_count) * sizeof(gb::vertex_input_divisor) +
-                                         static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t) +
-                                         spec_block_bytes(vs_spec_entries, vs_spec_bytes) +
-                                         spec_block_bytes(fs_spec_entries, fs_spec_bytes) + chain.libraries.size() * sizeof(gb::object_id));
+                                         static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t) + stage_bytes +
+                                         chain.libraries.size() * sizeof(gb::object_id));
             std::memcpy(message.data(), &request, sizeof(request));
             size_t cursor = sizeof(request);
             for (uint32_t b = 0; b < binding_count; ++b)
@@ -6541,8 +6554,20 @@ extern "C"
                     cursor += bytes;
                 }
             };
-            append_spec(vs_spec, vs_spec_entries, vs_spec_bytes);
-            append_spec(fs_spec, fs_spec_entries, fs_spec_bytes);
+            for (const graphics_pipeline_stage& stage : stages)
+            {
+                const gb::pipeline_shader_stage wire{.stage = static_cast<uint32_t>(stage.stage),
+                                                     .spec_entry_count = stage.spec_entries,
+                                                     .spec_data_size = stage.spec_bytes,
+                                                     .reserved = 0,
+                                                     .source = stage.source.wire};
+                std::memcpy(message.data() + cursor, &wire, sizeof(wire));
+                cursor += sizeof(wire);
+            }
+            for (const graphics_pipeline_stage& stage : stages)
+            {
+                append_spec(stage.spec, stage.spec_entries, stage.spec_bytes);
+            }
             for (const VkPipeline library : chain.libraries)
             {
                 const gb::object_id id = to_object_id(library);
@@ -6563,14 +6588,7 @@ extern "C"
                 pPipelines[i] = to_handle<VkPipeline>(response.object);
             }
 
-            if (vertex_shader.owned_module != VK_NULL_HANDLE)
-            {
-                vkDestroyShaderModule(device, vertex_shader.owned_module, nullptr);
-            }
-            if (fragment_shader.owned_module != VK_NULL_HANDLE)
-            {
-                vkDestroyShaderModule(device, fragment_shader.owned_module, nullptr);
-            }
+            destroy_owned_modules();
         }
         return overall;
     }

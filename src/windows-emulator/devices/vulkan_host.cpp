@@ -1850,6 +1850,27 @@ namespace sogen
             }
         };
 
+        struct pipeline_stage_params
+        {
+            uint32_t stage{};
+            shader_stage_params shader{};
+            specialization_params spec{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->stage);
+                buffer.write(this->shader);
+                buffer.write(this->spec);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->stage);
+                buffer.read(this->shader);
+                buffer.read(this->spec);
+            }
+        };
+
         struct pipeline_params
         {
             bool compute{};
@@ -1859,9 +1880,9 @@ namespace sogen
             uint32_t subpass{};
             uint64_t pipeline_layout{};
             std::shared_ptr<const pipeline_layout_params> layout_create{};
-            // The compute stage for compute pipelines.
-            shader_stage_params vertex{};
-            shader_stage_params fragment{};
+            // A compute pipeline has just its compute stage.
+            std::vector<pipeline_stage_params> stages{};
+            tessellation_state tessellation{};
             uint64_t flags{};
             uint32_t library_parts{};
             std::vector<uint64_t> libraries{};
@@ -1882,8 +1903,6 @@ namespace sogen
             uint32_t rasterization_stream{};
             uint32_t rasterization_stream_flags{};
             std::vector<uint32_t> dynamic_states{};
-            specialization_params vs_spec{};
-            specialization_params fs_spec{};
             std::vector<color_blend_attachment> blend_attachments{};
 
             void serialize(utils::buffer_serializer& buffer) const
@@ -1899,8 +1918,8 @@ namespace sogen
                 {
                     buffer.write(*this->layout_create);
                 }
-                buffer.write(this->vertex);
-                buffer.write(this->fragment);
+                buffer.write_vector(this->stages);
+                buffer.write(this->tessellation);
                 buffer.write(this->flags);
                 buffer.write(this->library_parts);
                 buffer.write_vector(this->libraries);
@@ -1923,8 +1942,6 @@ namespace sogen
                 buffer.write(this->rasterization_stream);
                 buffer.write(this->rasterization_stream_flags);
                 buffer.write_vector(this->dynamic_states);
-                buffer.write(this->vs_spec);
-                buffer.write(this->fs_spec);
                 buffer.write_vector(this->blend_attachments);
             }
 
@@ -1938,8 +1955,8 @@ namespace sogen
                 buffer.read(this->pipeline_layout);
                 this->layout_create =
                     buffer.read<bool>() ? std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>()) : nullptr;
-                buffer.read(this->vertex);
-                buffer.read(this->fragment);
+                buffer.read_vector(this->stages);
+                buffer.read(this->tessellation);
                 buffer.read(this->flags);
                 buffer.read(this->library_parts);
                 buffer.read_vector(this->libraries);
@@ -1963,8 +1980,6 @@ namespace sogen
                 buffer.read(this->rasterization_stream);
                 buffer.read(this->rasterization_stream_flags);
                 buffer.read_vector(this->dynamic_states);
-                buffer.read(this->vs_spec);
-                buffer.read(this->fs_spec);
                 buffer.read_vector(this->blend_attachments);
             }
         };
@@ -11166,13 +11181,53 @@ namespace sogen
             return true;
         };
 
-        VkShaderModule vertex_module = VK_NULL_HANDLE;
-        VkShaderModule fragment_module = VK_NULL_HANDLE;
-        // Depth-only passes (depth prepass, shadows) have no fragment stage.
-        const bool has_fragment_stage =
-            fragment_shader_part && (desc.fragment_shader.module != 0 || !desc.fragment_shader.identifier.empty());
-        if ((pre_rasterization_part && !resolve_stage(desc.vertex_shader, vertex_module)) ||
-            (has_fragment_stage && !resolve_stage(desc.fragment_shader, fragment_module)))
+        const auto stage_part = [](const uint32_t stage) -> uint32_t {
+            switch (stage)
+            {
+            case VK_SHADER_STAGE_VERTEX_BIT:
+            case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
+            case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
+            case VK_SHADER_STAGE_GEOMETRY_BIT:
+                return VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT;
+            case VK_SHADER_STAGE_FRAGMENT_BIT:
+                return VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
+            default:
+                return 0;
+            }
+        };
+
+        const auto valid_spec = [](const specialization& spec) {
+            return std::ranges::all_of(spec.entries, [&spec](const spec_entry& e) {
+                return e.offset <= spec.data.size() && e.size <= spec.data.size() - e.offset;
+            });
+        };
+
+        // As in Vulkan, a stage of a part the pipeline does not define itself is ignored.
+        std::vector<const pipeline_stage*> defined_stages{};
+        std::vector<VkShaderModule> stage_modules{};
+        uint32_t given_stages = 0;
+        for (const pipeline_stage& stage : desc.stages)
+        {
+            const uint32_t part = stage_part(stage.stage);
+            if (part == 0 || (given_stages & stage.stage) != 0 || !valid_spec(stage.spec))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            given_stages |= stage.stage;
+            if ((desc.library_parts & part) == 0)
+            {
+                continue;
+            }
+
+            VkShaderModule module{};
+            if (!resolve_stage(stage.source, module))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            defined_stages.push_back(&stage);
+            stage_modules.push_back(module);
+        }
+        if (pre_rasterization_part && (given_stages & VK_SHADER_STAGE_VERTEX_BIT) == 0)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -11206,80 +11261,43 @@ namespace sogen
             color_count = rp->second.create.description.subpasses[desc.subpass].color_count;
         }
 
-        // Rebuild a VkSpecializationInfo per stage from the forwarded entries/data. The map-entry vectors and
-        // the two info structs must outlive the vkCreateGraphicsPipelines call below.
-        std::array<std::vector<VkSpecializationMapEntry>, 2> spec_map_entries;
-        std::array<VkSpecializationInfo, 2> spec_infos{};
+        std::vector<std::vector<VkSpecializationMapEntry>> spec_map_entries(defined_stages.size());
+        std::vector<VkSpecializationInfo> spec_infos(defined_stages.size());
+        std::vector<VkPipelineShaderStageModuleIdentifierCreateInfoEXT> stage_identifiers(defined_stages.size());
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+        std::vector<VkPipelineShaderStageCreateInfo> stages(defined_stages.size());
+        for (size_t i = 0; i < defined_stages.size(); ++i)
+        {
+            const pipeline_stage& source = *defined_stages[i];
+            VkPipelineShaderStageCreateInfo& stage = stages[i];
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.stage = static_cast<VkShaderStageFlagBits>(source.stage);
+            stage.module = stage_modules[i];
+            stage.pName = "main";
 
-        const auto valid_spec = [](const specialization& spec) {
-            for (const auto& e : spec.entries)
+            if (!source.source.identifier.empty())
             {
-                if (e.offset > spec.data.size() || e.size > spec.data.size() - e.offset)
+                auto& identifier = stage_identifiers[i];
+                identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
+                identifier.identifierSize = static_cast<uint32_t>(source.source.identifier.size());
+                identifier.pIdentifier = source.source.identifier.data();
+                stage.pNext = &identifier;
+            }
+
+            if (!source.spec.entries.empty() && !source.spec.data.empty())
+            {
+                auto& entries = spec_map_entries[i];
+                entries.reserve(source.spec.entries.size());
+                for (const spec_entry& e : source.spec.entries)
                 {
-                    return false;
+                    entries.push_back({.constantID = e.constant_id, .offset = e.offset, .size = e.size});
                 }
+                spec_infos[i] = {.mapEntryCount = static_cast<uint32_t>(entries.size()),
+                                 .pMapEntries = entries.data(),
+                                 .dataSize = source.spec.data.size(),
+                                 .pData = source.spec.data.data()};
+                stage.pSpecializationInfo = &spec_infos[i];
             }
-            return true;
-        };
-
-        if (!valid_spec(desc.vs_spec) || !valid_spec(desc.fs_spec))
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        const auto build_spec = [&](const specialization& spec, size_t idx) -> const VkSpecializationInfo* {
-            if (spec.entries.empty() || spec.data.empty())
-            {
-                return nullptr;
-            }
-            auto& entries = spec_map_entries[idx];
-            entries.reserve(spec.entries.size());
-            for (const spec_entry& e : spec.entries)
-            {
-                entries.push_back({.constantID = e.constant_id, .offset = e.offset, .size = e.size});
-            }
-            spec_infos[idx].mapEntryCount = static_cast<uint32_t>(entries.size());
-            spec_infos[idx].pMapEntries = entries.data();
-            spec_infos[idx].dataSize = spec.data.size();
-            spec_infos[idx].pData = spec.data.data();
-            return &spec_infos[idx];
-        };
-
-        std::array<VkPipelineShaderStageModuleIdentifierCreateInfoEXT, 2> stage_identifiers{};
-        const auto initialize_identifier = [&](size_t index, const shader_stage_source& source) -> const void* {
-            if (source.identifier.empty())
-            {
-                return nullptr;
-            }
-            auto& identifier = stage_identifiers[index];
-            identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
-            identifier.identifierSize = static_cast<uint32_t>(source.identifier.size());
-            identifier.pIdentifier = source.identifier.data();
-            return &identifier;
-        };
-
-        std::vector<VkPipelineShaderStageCreateInfo> stages{};
-        if (pre_rasterization_part)
-        {
-            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
-            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage.pNext = initialize_identifier(0, desc.vertex_shader);
-            stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-            stage.module = vertex_module;
-            stage.pName = "main";
-            stage.pSpecializationInfo = build_spec(desc.vs_spec, 0);
-        }
-        if (has_fragment_stage)
-        {
-            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
-            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage.pNext = initialize_identifier(1, desc.fragment_shader);
-            stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-            stage.module = fragment_module;
-            stage.pName = "main";
-            stage.pSpecializationInfo = build_spec(desc.fs_spec, 1);
         }
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
@@ -11446,6 +11464,16 @@ namespace sogen
         depth_stencil.minDepthBounds = ds.min_depth_bounds;
         depth_stencil.maxDepthBounds = ds.max_depth_bounds;
 
+        VkPipelineTessellationDomainOriginStateCreateInfo domain_origin{};
+        domain_origin.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO;
+        domain_origin.domainOrigin = static_cast<VkTessellationDomainOrigin>(desc.tessellation.domain_origin);
+
+        VkPipelineTessellationStateCreateInfo tessellation{};
+        tessellation.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+        tessellation.pNext = desc.tessellation.domain_origin_present ? &domain_origin : nullptr;
+        tessellation.flags = static_cast<VkPipelineTessellationStateCreateFlags>(desc.tessellation.flags);
+        tessellation.patchControlPoints = desc.tessellation.patch_control_points;
+
         const auto* next = static_cast<const void*>(nullptr);
         const auto chain = [&next](auto& structure) {
             structure.pNext = next;
@@ -11505,6 +11533,7 @@ namespace sogen
         info.pInputAssemblyState = vertex_input_part ? &input_assembly : nullptr;
         info.pViewportState = pre_rasterization_part ? &viewport_state : nullptr;
         info.pRasterizationState = pre_rasterization_part ? &rasterization : nullptr;
+        info.pTessellationState = pre_rasterization_part && desc.tessellation.present ? &tessellation : nullptr;
         info.pMultisampleState = fragment_shader_part || fragment_output_part ? &multisample : nullptr;
         info.pColorBlendState = fragment_output_part ? &color_blend : nullptr;
         info.pDepthStencilState = fragment_shader_part && ds.present ? &depth_stencil : nullptr;
@@ -11523,8 +11552,14 @@ namespace sogen
         create.subpass = desc.subpass;
         create.pipeline_layout = desc.pipeline_layout;
         create.layout_create = std::move(layout_create);
-        create.vertex = this->impl_->stage_params(desc.vertex_shader);
-        create.fragment = this->impl_->stage_params(desc.fragment_shader);
+        for (const pipeline_stage& stage : desc.stages)
+        {
+            create.stages.push_back({.stage = stage.stage,
+                                     .shader = this->impl_->stage_params(stage.source),
+                                     .spec = {.entries = {stage.spec.entries.begin(), stage.spec.entries.end()},
+                                              .data = {stage.spec.data.begin(), stage.spec.data.end()}}});
+        }
+        create.tessellation = desc.tessellation;
         create.flags = desc.flags;
         create.library_parts = desc.library_parts;
         create.libraries.assign(desc.libraries.begin(), desc.libraries.end());
@@ -11544,10 +11579,6 @@ namespace sogen
         create.rasterization_stream = desc.rasterization_stream;
         create.rasterization_stream_flags = desc.rasterization_stream_flags;
         create.dynamic_states.assign(desc.dynamic_states.begin(), desc.dynamic_states.end());
-        create.vs_spec = {.entries = {desc.vs_spec.entries.begin(), desc.vs_spec.entries.end()},
-                          .data = {desc.vs_spec.data.begin(), desc.vs_spec.data.end()}};
-        create.fs_spec = {.entries = {desc.fs_spec.entries.begin(), desc.fs_spec.entries.end()},
-                          .data = {desc.fs_spec.data.begin(), desc.fs_spec.data.end()}};
         create.blend_attachments.assign(desc.blend_attachments.begin(), desc.blend_attachments.end());
 
         // Compiling takes long enough to stall every other vCPU if it held the caller's locks. The device lock is released
@@ -11657,7 +11688,7 @@ namespace sogen
         create.pipeline_cache = pipeline_cache;
         create.pipeline_layout = pipeline_layout;
         create.layout_create = layout->second.create;
-        create.vertex = this->impl_->stage_params(shader);
+        create.stages = {{.stage = VK_SHADER_STAGE_COMPUTE_BIT, .shader = this->impl_->stage_params(shader)}};
         create.flags = flags;
         this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
@@ -14431,12 +14462,9 @@ namespace sogen
                 return stage.code != nullptr || impl.shader_modules.contains(stage.module);
             };
 
-            const auto absent = [](const impl::shader_stage_params& stage) {
-                return stage.module == 0 && stage.identifier.empty() && stage.code == nullptr;
-            };
-
-            if (!restorable(pipeline.create.vertex) ||
-                (!pipeline.create.compute && !absent(pipeline.create.fragment) && !restorable(pipeline.create.fragment)))
+            if (pipeline.create.stages.empty() ||
+                !std::ranges::all_of(pipeline.create.stages,
+                                     [&](const impl::pipeline_stage_params& stage) { return restorable(stage.shader); }))
             {
                 throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
             }
@@ -15254,14 +15282,23 @@ namespace sogen
                 libraries.push_back(ensure_graphics_pipeline(device, create.libraries[i], *create.library_creates[i]));
             }
 
+            std::vector<pipeline_stage> stages{};
+            stages.reserve(create.stages.size());
+            for (const impl::pipeline_stage_params& stage : create.stages)
+            {
+                stages.push_back({.stage = stage.stage,
+                                  .source = stage_source(device, stage.shader),
+                                  .spec = {.entries = stage.spec.entries, .data = stage.spec.data}});
+            }
+
             const graphics_pipeline_desc desc{
                 .device = device,
                 .pipeline_cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0,
                 .render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create),
                 .subpass = create.subpass,
                 .pipeline_layout = create.layout_create ? ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create) : 0,
-                .vertex_shader = stage_source(device, create.vertex),
-                .fragment_shader = stage_source(device, create.fragment),
+                .stages = stages,
+                .tessellation = create.tessellation,
                 .flags = create.flags,
                 .library_parts = create.library_parts,
                 .libraries = libraries,
@@ -15280,8 +15317,6 @@ namespace sogen
                 .rasterization_stream = create.rasterization_stream,
                 .rasterization_stream_flags = create.rasterization_stream_flags,
                 .dynamic_states = create.dynamic_states,
-                .vs_spec = {.entries = create.vs_spec.entries, .data = create.vs_spec.data},
-                .fs_spec = {.entries = create.fs_spec.entries, .data = create.fs_spec.data},
                 .blend_attachments = create.blend_attachments,
             };
             if (forced_id)
@@ -15318,7 +15353,7 @@ namespace sogen
             {
                 const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
                 const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
-                const auto shader = stage_source(device, create.vertex);
+                const auto shader = stage_source(device, create.stages.front().shader);
                 impl.forced_ids = {id};
                 result = this->create_compute_pipeline(device, cache, layout, shader, create.flags, pipeline);
             }

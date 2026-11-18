@@ -3171,13 +3171,24 @@ namespace sogen
                     std::memcpy(dynamic_states.data(), trailer.data() + vertex_input_bytes, dynamic_bytes);
                 }
 
-                // The two per-stage specialization-constant blocks (vertex then fragment) trail the dynamic
-                // states: each is `entry_count` specialization_map_entry records followed by `data_size` bytes.
+                // The stages trail the dynamic states, then each stage's specialization constants: `spec_entry_count`
+                // specialization_map_entry records followed by `spec_data_size` bytes.
+                constexpr uint32_t max_graphics_stages = 5;
                 size_t spec_cursor = vertex_input_bytes + dynamic_bytes;
-                std::vector<vulkan_host::spec_entry> vs_entries;
-                std::vector<vulkan_host::spec_entry> fs_entries;
-                std::vector<uint8_t> vs_data;
-                std::vector<uint8_t> fs_data;
+                const size_t stages_bytes = static_cast<size_t>(request.stage_count) * sizeof(gpu_bridge::pipeline_shader_stage);
+                if (request.stage_count > max_graphics_stages || stages_bytes > trailer.size() - spec_cursor)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                std::vector<gpu_bridge::pipeline_shader_stage> wire_stages(request.stage_count);
+                if (request.stage_count > 0)
+                {
+                    std::memcpy(wire_stages.data(), trailer.data() + spec_cursor, stages_bytes);
+                }
+                spec_cursor += stages_bytes;
+
+                std::vector<std::vector<vulkan_host::spec_entry>> stage_spec_entries(wire_stages.size());
+                std::vector<std::vector<uint8_t>> stage_spec_data(wire_stages.size());
                 const auto parse_spec = [&](uint32_t entry_count, uint32_t data_size, std::vector<vulkan_host::spec_entry>& entries,
                                             std::vector<uint8_t>& data) -> bool {
                     const size_t entries_bytes = static_cast<size_t>(entry_count) * sizeof(gpu_bridge::specialization_map_entry);
@@ -3206,10 +3217,21 @@ namespace sogen
                     }
                     return true;
                 };
-                if (!parse_spec(request.vs_spec_entry_count, request.vs_spec_data_size, vs_entries, vs_data) ||
-                    !parse_spec(request.fs_spec_entry_count, request.fs_spec_data_size, fs_entries, fs_data))
+
+                std::vector<vulkan_host::pipeline_stage> stages(wire_stages.size());
+                for (size_t i = 0; i < wire_stages.size(); ++i)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    const gpu_bridge::pipeline_shader_stage& wire = wire_stages[i];
+                    if (wire.source.identifier_size > gpu_bridge::max_shader_module_identifier_size ||
+                        !parse_spec(wire.spec_entry_count, wire.spec_data_size, stage_spec_entries[i], stage_spec_data[i]))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    stages[i] = {
+                        .stage = wire.stage,
+                        .source = {.module = wire.source.module,
+                                   .identifier = std::span<const uint8_t>{wire.source.identifier.data(), wire.source.identifier_size}},
+                        .spec = {.entries = stage_spec_entries[i], .data = stage_spec_data[i]}};
                 }
 
                 const size_t libraries_bytes = static_cast<size_t>(request.library_count) * sizeof(gpu_bridge::object_id);
@@ -3248,9 +3270,6 @@ namespace sogen
                 const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
                 const std::span<const uint32_t> color_formats{request.color_formats.data(), color_count};
 
-                const vulkan_host::specialization vs_spec{.entries = vs_entries, .data = vs_data};
-                const vulkan_host::specialization fs_spec{.entries = fs_entries, .data = fs_data};
-
                 const uint32_t blend_count = std::min<uint32_t>(request.blend_attachment_count, gpu_bridge::max_color_attachments);
                 std::vector<vulkan_host::color_blend_attachment> blend_attachments(blend_count);
                 for (uint32_t i = 0; i < blend_count; ++i)
@@ -3266,21 +3285,12 @@ namespace sogen
                                                .color_write_mask = b.color_write_mask};
                 }
 
-                if (request.vertex_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size ||
-                    request.fragment_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size)
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-                const uint32_t vertex_identifier_size = request.vertex_shader.identifier_size;
-                const uint32_t fragment_identifier_size = request.fragment_shader.identifier_size;
-                const vulkan_host::shader_stage_source vertex_shader{
-                    .module = request.vertex_shader.module,
-                    .identifier = std::span<const uint8_t>{request.vertex_shader.identifier.data(), vertex_identifier_size},
-                };
-                const vulkan_host::shader_stage_source fragment_shader{
-                    .module = request.fragment_shader.module,
-                    .identifier = std::span<const uint8_t>{request.fragment_shader.identifier.data(), fragment_identifier_size},
-                };
+                const gpu_bridge::pipeline_tessellation_state& ts = request.tessellation;
+                const vulkan_host::tessellation_state tessellation{.present = ts.present != 0,
+                                                                   .flags = ts.flags,
+                                                                   .patch_control_points = ts.patch_control_points,
+                                                                   .domain_origin_present = ts.domain_origin_present != 0,
+                                                                   .domain_origin = ts.domain_origin};
 
                 uint64_t pipeline = gpu_bridge::null_object;
                 const vulkan_host::graphics_pipeline_desc desc{
@@ -3289,8 +3299,8 @@ namespace sogen
                     .render_pass = request.render_pass,
                     .subpass = request.subpass,
                     .pipeline_layout = request.pipeline_layout,
-                    .vertex_shader = vertex_shader,
-                    .fragment_shader = fragment_shader,
+                    .stages = stages,
+                    .tessellation = tessellation,
                     .flags = request.flags,
                     .library_parts = request.library_parts,
                     .libraries = libraries,
@@ -3309,8 +3319,6 @@ namespace sogen
                     .rasterization_stream = request.rasterization_stream,
                     .rasterization_stream_flags = request.rasterization_stream_flags,
                     .dynamic_states = dynamic_states,
-                    .vs_spec = vs_spec,
-                    .fs_spec = fs_spec,
                     .blend_attachments = blend_attachments,
                 };
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
@@ -3319,10 +3327,9 @@ namespace sogen
                 if (result != 0)
                 {
                     win_emu.log.error(
-                        "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx vs=0x%llx fs=0x%llx %ux%u)\n", result,
+                        "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx stages=%u parts=0x%x %ux%u)\n", result,
                         static_cast<unsigned long long>(request.render_pass), static_cast<unsigned long long>(request.pipeline_layout),
-                        static_cast<unsigned long long>(request.vertex_shader.module),
-                        static_cast<unsigned long long>(request.fragment_shader.module), request.width, request.height);
+                        request.stage_count, request.library_parts, request.width, request.height);
                 }
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }

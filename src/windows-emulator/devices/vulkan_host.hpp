@@ -788,6 +788,22 @@ namespace sogen
             std::span<const uint8_t> identifier;
         };
 
+        struct pipeline_stage
+        {
+            uint32_t stage; // VkShaderStageFlagBits
+            shader_stage_source source;
+            specialization spec;
+        };
+
+        struct tessellation_state
+        {
+            bool present;
+            uint32_t flags;
+            uint32_t patch_control_points;
+            bool domain_origin_present;
+            uint32_t domain_origin;
+        };
+
         int32_t create_pipeline_cache(uint64_t device, uint32_t flags, std::span<const uint8_t> initial_data, uint64_t& out_pipeline_cache);
         void destroy_pipeline_cache(uint64_t device, uint64_t pipeline_cache);
         int32_t get_pipeline_cache_data(uint64_t device, uint64_t pipeline_cache, void* out, size_t out_size, bool has_data,
@@ -805,8 +821,8 @@ namespace sogen
             uint64_t render_pass{};
             uint32_t subpass{};
             uint64_t pipeline_layout{};
-            shader_stage_source vertex_shader{};
-            shader_stage_source fragment_shader{};
+            std::span<const pipeline_stage> stages{};
+            tessellation_state tessellation{};
             uint64_t flags{};         // VkPipelineCreateFlags2
             uint32_t library_parts{}; // VkGraphicsPipelineLibraryFlagsEXT this pipeline defines
             std::span<const uint64_t> libraries{};
@@ -825,8 +841,6 @@ namespace sogen
             uint32_t rasterization_stream{};
             uint32_t rasterization_stream_flags{};
             std::span<const uint32_t> dynamic_states{};
-            specialization vs_spec{};
-            specialization fs_spec{};
             std::span<const color_blend_attachment> blend_attachments{};
         };
 

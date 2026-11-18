@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 47;
+    inline constexpr uint32_t protocol_version = 48;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -2009,14 +2009,36 @@ namespace sogen::gpu_bridge
         float max_depth_bounds;
     };
 
+    // One shader stage of a graphics pipeline (trailing element of create_graphics_pipeline).
+    struct pipeline_shader_stage
+    {
+        uint32_t stage; // VkShaderStageFlagBits
+        uint32_t spec_entry_count;
+        uint32_t spec_data_size;
+        uint32_t reserved;
+        shader_stage_source source;
+    };
+
+    // VkPipelineTessellationStateCreateInfo with its optional VkPipelineTessellationDomainOriginStateCreateInfo.
+    struct pipeline_tessellation_state
+    {
+        uint32_t present;
+        uint32_t flags; // VkPipelineTessellationStateCreateFlags
+        uint32_t patch_control_points;
+        uint32_t domain_origin_present;
+        uint32_t domain_origin; // VkTessellationDomainOrigin
+        uint32_t reserved;
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
         object_id pipeline_cache; // null_object => VK_NULL_HANDLE
         object_id render_pass;    // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
         object_id pipeline_layout;
-        shader_stage_source vertex_shader;
-        shader_stage_source fragment_shader;
+        uint32_t stage_count; // number of pipeline_shader_stage entries that follow the dynamic states
+        uint32_t reserved_stage_count;
+        pipeline_tessellation_state tessellation;
         uint32_t library_parts; // VkGraphicsPipelineLibraryFlagsEXT this call defines; all of them for a complete pipeline
         uint32_t width;
         uint32_t height;
@@ -2036,11 +2058,6 @@ namespace sogen::gpu_bridge
         uint32_t primitive_restart_enable;
         uint32_t rasterization_stream;
         uint32_t rasterization_stream_flags;
-        // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
-        uint32_t vs_spec_entry_count;
-        uint32_t vs_spec_data_size;
-        uint32_t fs_spec_entry_count;
-        uint32_t fs_spec_data_size;
         // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
         // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
         uint32_t blend_attachment_count;
@@ -2055,10 +2072,8 @@ namespace sogen::gpu_bridge
         // vertex_input_attribute attributes[attribute_count];
         // vertex_input_divisor divisors[divisor_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline
-        // specialization_map_entry vs_spec_entries[vs_spec_entry_count];
-        // uint8_t vs_spec_data[vs_spec_data_size];
-        // specialization_map_entry fs_spec_entries[fs_spec_entry_count];
-        // uint8_t fs_spec_data[fs_spec_data_size];
+        // pipeline_shader_stage stages[stage_count];
+        // per stage, in order: specialization_map_entry spec_entries[spec_entry_count]; uint8_t spec_data[spec_data_size];
         // object_id libraries[library_count];
     };
 
@@ -2703,7 +2718,9 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
     static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 616, "wire layout drift");
+    static_assert(sizeof(pipeline_shader_stage) == 64, "wire layout drift");
+    static_assert(sizeof(pipeline_tessellation_state) == 24, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 536, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");
