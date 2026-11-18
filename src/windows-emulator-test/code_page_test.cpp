@@ -262,7 +262,8 @@ namespace sogen::test
         ASSERT_GT(length, 0u);
         ASSERT_LT(length, directory.size());
 
-        for (const uint16_t id : {uint16_t{437}, uint16_t{850}, uint16_t{932}, uint16_t{936}, uint16_t{950}, uint16_t{1251}, uint16_t{1252}})
+        for (const uint16_t id :
+             {uint16_t{437}, uint16_t{850}, uint16_t{932}, uint16_t{936}, uint16_t{950}, uint16_t{1251}, uint16_t{1252}})
         {
             SCOPED_TRACE(id);
             auto data = utils::io::read_file(std::filesystem::path{directory.data()} / ("c_" + std::to_string(id) + ".nls"));
