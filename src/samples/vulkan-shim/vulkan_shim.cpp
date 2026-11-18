@@ -6319,14 +6319,14 @@ namespace
 
     gb::pipeline_tessellation_state to_wire(const VkPipelineTessellationStateCreateInfo& state)
     {
-        gb::pipeline_tessellation_state wire{.present = 1, .flags = state.flags, .patch_control_points = state.patchControlPoints};
-        if (const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
-                state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO))
-        {
-            wire.domain_origin_present = 1;
-            wire.domain_origin = static_cast<uint32_t>(origin->domainOrigin);
-        }
-        return wire;
+        const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
+            state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO);
+        return {.present = 1,
+                .flags = state.flags,
+                .patch_control_points = state.patchControlPoints,
+                .domain_origin_present = origin ? 1U : 0U,
+                .domain_origin = origin ? static_cast<uint32_t>(origin->domainOrigin) : 0U,
+                .reserved = 0};
     }
 
     struct graphics_pipeline_stage
