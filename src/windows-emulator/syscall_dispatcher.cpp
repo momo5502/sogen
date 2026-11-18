@@ -13,18 +13,19 @@ namespace sogen
 
     namespace
     {
-#ifdef _WIN32
+#ifdef _MSC_VER
         // Under /EHa a structured exception, such as a host access violation, reaches catch (...) only after the frames
         // that raised it are gone. The filter records where it happened while they are still on the stack.
         struct host_fault
         {
+            // The rest is written only by the filter, which sets this.
             bool captured{};
-            DWORD code{};
-            const void* address{};
-            std::array<ULONG_PTR, EXCEPTION_MAXIMUM_PARAMETERS> information{};
-            DWORD information_count{};
-            std::array<void*, 48> frames{};
-            USHORT frame_count{};
+            DWORD code;
+            const void* address;
+            std::array<ULONG_PTR, EXCEPTION_MAXIMUM_PARAMETERS> information;
+            DWORD information_count;
+            std::array<void*, 48> frames;
+            USHORT frame_count;
         };
 
         int record_host_fault(const EXCEPTION_POINTERS* pointers, host_fault& fault)
@@ -182,7 +183,7 @@ namespace sogen
             .trap_stack_pointer = emu.read_stack_pointer(),
         };
 
-        host_fault fault{};
+        host_fault fault;
         try
         {
             const auto body = [&] {
@@ -248,7 +249,7 @@ namespace sogen
         {
             win_emu.log.error("Syscall %s threw an unknown exception: 0x%X (raw: 0x%X) (0x%" PRIx64 ")\n", syscall_name, syscall_id,
                               raw_syscall_id, address);
-#ifdef _WIN32
+#ifdef _MSC_VER
             if (fault.captured)
             {
                 win_emu.log.error("Syscall %s: %s\n", syscall_name, describe_host_fault(fault).c_str());
