@@ -1547,6 +1547,23 @@ namespace sogen
         return ref_counted_object::deleter(t) && t.can_be_deleted();
     }
 
+    void emulator_thread::end_alertable_wait(NTSTATUS status)
+    {
+        // A user APC or alert ends NtRemoveIoCompletionEx's alertable wait with KeRemoveQueueEx's one entry, the wait
+        // status, whose count the call stores under try.
+        if (const auto& wait = this->await_io_completion;
+            wait && wait->type == io_completion_wait_type::remove_multiple && !wait->worker_factory)
+        {
+            if (const auto stored = io_completion_wait::write_status_entry_count(*this->memory_ptr, this, wait->entries_removed_ptr);
+                stored != STATUS_SUCCESS)
+            {
+                status = stored;
+            }
+        }
+
+        this->mark_as_ready(status);
+    }
+
     bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
     {
         if (this->is_terminated() || this->suspended > 0)
@@ -1554,11 +1571,27 @@ namespace sogen
             return false;
         }
 
+        if (this->is_wait_satisfied(win_emu))
+        {
+            return true;
+        }
+
+        if (!this->apc_alertable || !this->test_user_mode_alert())
+        {
+            return false;
+        }
+
+        this->end_alertable_wait(STATUS_ALERTED);
+        return true;
+    }
+
+    bool emulator_thread::is_wait_satisfied(windows_emulator& win_emu)
+    {
         auto& process = win_emu.process;
         auto& clock = win_emu.clock();
 
         const auto complete_if_timed_out = [&](const NTSTATUS status) {
-            if (!this->is_await_time_over(clock) || this->has_pending_alertable_apc())
+            if (!this->is_await_time_over(clock) || this->can_end_alertable_wait())
             {
                 return false;
             }
@@ -1752,7 +1785,7 @@ namespace sogen
             // when this one was suspended.
             if (completion->queue.empty())
             {
-                if (timeout_expired(wait) && !this->has_pending_alertable_apc())
+                if (timeout_expired(wait) && !this->can_end_alertable_wait())
                 {
                     // NtRemoveIoCompletionEx stores the count of KeRemoveQueueEx's one entry, STATUS_TIMEOUT, under try;
                     // NtWaitForWorkViaWorkerFactory stores its count only when it succeeds (19041).

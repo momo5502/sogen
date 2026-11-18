@@ -1243,6 +1243,35 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtAlertThread(const syscall_context& c, const handle thread_handle)
+        {
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!thread)
+            {
+                return get_unresolved_handle_status(thread_handle, handle_types::thread);
+            }
+
+            thread->user_mode_alerted = true;
+            c.win_emu.wake_idle_vcpu();
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtAlertResumeThread(const syscall_context& c, const handle thread_handle,
+                                            const emulator_object<ULONG> previous_suspend_count)
+        {
+            // The alert state of another emulated process's thread lives in that process's emulator, which only
+            // takes suspend and resume requests.
+            if (!c.proc.managed_threads.get(thread_handle))
+            {
+                if (const auto status = handle_NtAlertThread(c, thread_handle); !NT_SUCCESS(status))
+                {
+                    return status;
+                }
+            }
+
+            return handle_NtResumeThread(c, thread_handle, previous_suspend_count);
+        }
+
         NTSTATUS handle_NtCreateThreadStateChange(const syscall_context& c, const emulator_object<handle> state_change_handle,
                                                   const ACCESS_MASK /*desired_access*/, const uint64_t /*object_attributes*/,
                                                   const handle thread_handle, const uint64_t /*reserved*/)
@@ -1333,7 +1362,7 @@ namespace sogen
                 cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context));
             }
 
-            if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
+            if ((argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT) && !c.thread().test_user_mode_alert())
             {
                 c.win_emu.yield_thread(c.vcpu, true);
             }
