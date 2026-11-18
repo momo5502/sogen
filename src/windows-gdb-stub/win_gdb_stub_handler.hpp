@@ -358,7 +358,7 @@ namespace sogen
             auto& thread = vcpu.thread();
 
             // If the wait is over, is_thread_ready sets the wait status, and setup_if_necessary writes it to the return register.
-            if (!this->win_emu_->synchronize([&] { return thread.is_thread_ready(*this->win_emu_); }))
+            if (!this->is_thread_ready(thread))
             {
                 return;
             }
@@ -379,10 +379,24 @@ namespace sogen
                     break;
                 }
 
-                // A thread switch (for example the yield of a wait) needs the scheduler, and a module load needs a library stop.
-                if (vcpu.switch_thread || module_event_)
+                // A module load needs a library stop.
+                if (module_event_)
                 {
                     break;
+                }
+
+                // A wait yields, and the scheduler must run the thread again. The time slice and the wake of another thread also
+                // request a thread switch, but the thread can still run. The step continues then, because the CPU can be in
+                // wow64cpu before the 32-bit context is saved.
+                if (vcpu.switch_thread)
+                {
+                    if (!this->is_thread_ready(thread))
+                    {
+                        break;
+                    }
+
+                    vcpu.switch_thread = false;
+                    thread.setup_if_necessary(vcpu.cpu, this->win_emu_->process);
                 }
 
                 // The step ends in 32-bit code after one 32-bit instruction or after a stop in 64-bit code. A breakpoint, watchpoint
@@ -392,6 +406,11 @@ namespace sogen
                     break;
                 }
             }
+        }
+
+        bool is_thread_ready(emulator_thread& thread)
+        {
+            return this->win_emu_->synchronize([&] { return thread.is_thread_ready(*this->win_emu_); });
         }
 
         size_t read_saved_wow64_register(const size_t reg, void* data, const size_t max_length)
