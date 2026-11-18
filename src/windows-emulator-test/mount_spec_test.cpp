@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <filesystem/mount_spec.hpp>
-
 namespace sogen::test
 {
     TEST(MountSpecTest, ParsesHostGuestAndMode)

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <io_device.hpp>
-
 namespace sogen::test
 {
     namespace

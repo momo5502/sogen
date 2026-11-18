@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <apiset/apiset.hpp>
-#include <memory_manager.hpp>
 #include <binary_writer.hpp>
 
 namespace sogen::test

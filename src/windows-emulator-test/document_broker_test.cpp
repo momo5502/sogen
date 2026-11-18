@@ -2,7 +2,6 @@
 
 #if defined(__linux__)
 
-#include <emulator_utils.hpp>
 #include <filesystem/document_broker.hpp>
 
 #include <fcntl.h>

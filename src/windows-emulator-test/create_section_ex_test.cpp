@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtCreateSectionEx(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK desired_access,

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, uint64_t information, DWORD length,

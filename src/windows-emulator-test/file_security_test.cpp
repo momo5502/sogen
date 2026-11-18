@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle h, SECURITY_INFORMATION security_information,

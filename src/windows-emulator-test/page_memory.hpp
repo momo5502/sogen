@@ -1,7 +1,5 @@
 #pragma once
 
-#include <memory_interface.hpp>
-
 namespace sogen::test
 {
     class page_memory final : public memory_interface

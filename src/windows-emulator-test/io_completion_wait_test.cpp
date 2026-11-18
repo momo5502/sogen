@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 
 #include <io_completion_wait.hpp>
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {

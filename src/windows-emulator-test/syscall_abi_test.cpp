@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <arch/syscall_abi.hpp>
-
 #include <cstring>
 
 namespace sogen::test

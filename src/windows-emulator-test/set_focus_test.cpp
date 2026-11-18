@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_dispatcher.hpp>
-#include <syscall_utils.hpp>
 #include <user_callback_dispatch.hpp>
 
 namespace sogen::syscalls

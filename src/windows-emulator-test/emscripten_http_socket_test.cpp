@@ -1,12 +1,7 @@
 #include "std_include.hpp"
 
-#include <platform/compiler.hpp>
-
 #ifdef OS_EMSCRIPTEN
 
-#include <network/dns_lookup.hpp>
-#include <network/socket_factory.hpp>
-#include <utils/finally.hpp>
 #include <emscripten.h>
 
 #include <algorithm>

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <utils/finally.hpp>
-
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
 #include <cstdio>
 #include <fcntl.h>

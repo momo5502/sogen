@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "module/module_manager.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <cstring>

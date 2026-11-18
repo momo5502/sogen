@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <logger.hpp>
 #include <queued_file_writer.hpp>
 
 #include <cstdio>

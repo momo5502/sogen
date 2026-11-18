@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,

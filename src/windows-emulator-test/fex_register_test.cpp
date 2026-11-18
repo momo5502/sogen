@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 
 #if defined(__ANDROID__) || defined(__APPLE__)
-#include <memory_manager.hpp>
 
 #include <algorithm>
 #endif

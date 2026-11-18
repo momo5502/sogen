@@ -4,10 +4,7 @@
 
 #include <cstddef>
 
-#include <io_device.hpp>
 #include <devices/console.hpp>
-#include <syscall_utils.hpp>
-#include <utils/finally.hpp>
 
 namespace sogen::syscalls
 {

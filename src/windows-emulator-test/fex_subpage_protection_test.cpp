@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 
 #ifdef __APPLE__
-#include <memory_manager.hpp>
 #include <utils/host_watchpoints.hpp>
 
 namespace sogen::test

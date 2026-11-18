@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 
 #include <exception_dispatch.hpp>
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {

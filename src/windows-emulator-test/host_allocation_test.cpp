@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <memory_manager.hpp>
-
 #include <algorithm>
 
 namespace sogen::test

@@ -2,7 +2,6 @@
 
 #include <devices/afd_types.hpp>
 #include <filesystem/host_directory_provider.hpp>
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {

@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 
 #include <utils/compression.hpp>
-#include <utils/serialization.hpp>
 
 #include <algorithm>
 #include <cstdint>

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     BOOL handle_NtUserUpdateLayeredWindow(const syscall_context& c, hwnd window, hdc destination_dc, emulator_object<POINT> destination,

@@ -1,9 +1,6 @@
 #include "std_include.hpp"
 
-#include <network/dns_lookup.hpp>
-#include <network/socket_factory.hpp>
 #include <network/tcp_server_socket.hpp>
-#include <platform/compiler.hpp>
 
 namespace sogen::test
 {

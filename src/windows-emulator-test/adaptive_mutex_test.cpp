@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <adaptive_mutex.hpp>
-
 #include <cstdint>
 
 #ifdef _MSC_VER

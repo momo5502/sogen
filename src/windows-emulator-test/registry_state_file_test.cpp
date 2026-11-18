@@ -3,7 +3,6 @@
 #include <registry/registry_file.hpp>
 #include <registry/registry_state_file.hpp>
 #include <utils/io.hpp>
-#include <utils/finally.hpp>
 
 #ifndef OS_WINDOWS
 #include <csignal>

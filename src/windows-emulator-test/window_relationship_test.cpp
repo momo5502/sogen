@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 #include <tuple>
 
 namespace sogen::syscalls

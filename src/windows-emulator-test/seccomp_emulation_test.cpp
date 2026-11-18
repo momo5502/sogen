@@ -6,11 +6,9 @@
 
 #ifdef SOGEN_ENABLE_SECCOMP
 #include <asm/hwcap.h>
-#include <platform/arm64_context.hpp>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <ucontext.h>
-#include <utils/finally.hpp>
 
 #include <cerrno>
 #include <csignal>

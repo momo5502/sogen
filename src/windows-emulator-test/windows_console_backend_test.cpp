@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <utils/finally.hpp>
-#include <utils/nt_handle.hpp>
 #include <utils/nt_thread.hpp>
 
 #ifdef OS_WINDOWS

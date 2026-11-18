@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtQueryWnfStateData(const syscall_context&, emulator_object<uint64_t> state_name, emulator_pointer type_id,

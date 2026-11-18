@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c, emulator_pointer log_palette, uint32_t entry_count);

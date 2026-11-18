@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
 #include <window_show_orchestrator.hpp>
 
 namespace sogen::test

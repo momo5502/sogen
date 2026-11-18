@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <syscall_utils.hpp>
-
 namespace sogen::syscalls
 {
     uint64_t handle_NtUserCreateWindowStation(const syscall_context& c,
