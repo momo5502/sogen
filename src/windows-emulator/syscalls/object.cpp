@@ -1185,6 +1185,7 @@ namespace sogen
             t.await_objects = {};
             t.await_any = false;
             t.await_msg_mask = {};
+            t.await_msg_ready_status = {};
             t.await_time = {};
             t.await_time_absolute = false; // the timeout is milliseconds, an interval
 

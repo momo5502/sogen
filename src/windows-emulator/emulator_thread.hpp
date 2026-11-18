@@ -571,6 +571,7 @@ namespace sogen
         bool await_time_absolute{};
         std::optional<pending_msg> await_msg{};
         std::optional<DWORD> await_msg_mask{};
+        std::optional<NTSTATUS> await_msg_ready_status{};
         std::optional<pending_io_completion_wait> await_io_completion{};
         std::optional<pending_debug_event_wait> await_debug_event{};
         std::optional<emulator_pointer> await_file_io{};
@@ -784,6 +785,7 @@ namespace sogen
             buffer.write(this->await_time_absolute);
             buffer.write_optional(this->await_msg);
             buffer.write_optional(this->await_msg_mask);
+            buffer.write_optional(this->await_msg_ready_status);
             buffer.write_optional(this->await_io_completion);
             buffer.write_optional(this->await_debug_event);
             buffer.write_optional(this->await_file_io);
@@ -877,6 +879,7 @@ namespace sogen
             buffer.read(this->await_time_absolute);
             buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
             buffer.read_optional(this->await_msg_mask);
+            buffer.read_optional(this->await_msg_ready_status);
             buffer.read_optional(this->await_io_completion, [] { return pending_io_completion_wait{}; });
             buffer.read_optional(this->await_debug_event, [] { return pending_debug_event_wait{}; });
             buffer.read_optional(this->await_file_io);

@@ -1071,6 +1071,7 @@ namespace sogen
         this->await_objects = {};
         this->await_msg = {};
         this->await_msg_mask = {};
+        this->await_msg_ready_status = {};
         this->await_io_completion = {};
         this->await_debug_event = {};
         this->await_file_io = {};
@@ -1654,7 +1655,9 @@ namespace sogen
 
             if (this->await_msg_mask.has_value() && message_ready && (this->await_any || this->await_objects.empty()))
             {
-                this->mark_as_ready(static_cast<NTSTATUS>(STATUS_WAIT_0 + this->await_objects.size()));
+                const auto status =
+                    this->await_msg_ready_status.value_or(static_cast<NTSTATUS>(STATUS_WAIT_0 + this->await_objects.size()));
+                this->mark_as_ready(status);
                 return true;
             }
 

@@ -5554,6 +5554,7 @@ namespace sogen
             }
 
             t.await_msg_mask = QS_ALLINPUT;
+            t.await_msg_ready_status = TRUE;
             t.remember_message_wait(c.emu, c.win_emu.abi());
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
