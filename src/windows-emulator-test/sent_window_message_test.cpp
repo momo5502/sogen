@@ -1,5 +1,10 @@
 #include "std_include.hpp"
 
+namespace sogen::syscalls
+{
+    BOOL handle_NtUserReplyMessage(const syscall_context& c, uint64_t result);
+}
+
 namespace sogen::test
 {
     namespace
@@ -62,5 +67,22 @@ namespace sogen::test
         EXPECT_EQ(0u, queued.current_sent_message_wait()->result);
         EXPECT_EQ(0u, active.current_sent_message_wait()->result);
         EXPECT_EQ(23u, replied.current_sent_message_wait()->result);
+    }
+
+    TEST_F(SentWindowMessageTest, ReplyMessageOnlySucceedsOnceForActiveSend)
+    {
+        auto& receiver = this->create_thread(8);
+        auto& sender = this->create_thread(12);
+        this->emu.vcpu(0).set_active_thread(&receiver);
+        sender.sent_message_waits.emplace_back();
+        receiver.active_sent_messages.push_back({.sender_thread_id = sender.id});
+        const syscall_context c{.win_emu = this->emu, .emu = this->emu.vcpu(0).cpu, .vcpu = this->emu.vcpu(0), .proc = this->emu.process};
+
+        EXPECT_EQ(TRUE, syscalls::handle_NtUserReplyMessage(c, 123));
+        ASSERT_TRUE(receiver.active_sent_messages.back().replied);
+        ASSERT_EQ(123u, sender.current_sent_message_wait()->result);
+
+        EXPECT_EQ(FALSE, syscalls::handle_NtUserReplyMessage(c, 456));
+        EXPECT_EQ(123u, sender.current_sent_message_wait()->result);
     }
 }

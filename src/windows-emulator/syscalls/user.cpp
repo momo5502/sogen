@@ -5577,11 +5577,13 @@ namespace sogen
             // Windows replies to the innermost active cross-thread send even when a nested same-thread
             // window procedure calls ReplyMessage.
             auto& message = messages.back();
-            if (!message.replied)
+            if (message.replied)
             {
-                copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
-                complete_sent_window_message(c, message, result);
+                return FALSE;
             }
+
+            copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
+            complete_sent_window_message(c, message, result);
             return TRUE;
         }
 
