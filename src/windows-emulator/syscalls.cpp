@@ -470,6 +470,8 @@ namespace sogen
                                             uint32_t state_change_type, uint64_t extended_information, uint64_t extended_information_length,
                                             uint64_t reserved);
         NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
+        NTSTATUS handle_NtAlertThread(const syscall_context& c, handle thread_handle);
+        NTSTATUS handle_NtAlertResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtContinue(const syscall_context& c, uint64_t thread_context, BOOLEAN raise_alert);
         NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
         NTSTATUS handle_NtGetNextThread(const syscall_context& c, handle process_handle, handle thread_handle,
@@ -1316,6 +1318,11 @@ namespace sogen
 
         NTSTATUS handle_NtTestAlert(const syscall_context& c)
         {
+            if (c.thread().test_user_mode_alert())
+            {
+                return STATUS_ALERTED;
+            }
+
             c.win_emu.yield_thread(c.vcpu, true);
             return STATUS_SUCCESS;
         }
@@ -2106,6 +2113,8 @@ namespace sogen
         add_handler(NtCreateThreadStateChange);
         add_handler(NtChangeThreadState);
         add_handler(NtResumeThread);
+        add_handler(NtAlertThread);
+        add_handler(NtAlertResumeThread);
         add_handler(NtClearEvent);
         add_handler(NtResetEvent);
         add_handler(NtTraceControl);

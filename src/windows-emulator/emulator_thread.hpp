@@ -525,6 +525,8 @@ namespace sogen
 
         bool apc_alertable{false};
         std::vector<pending_apc> pending_apcs{};
+        // KTHREAD Alerted[UserMode], set by NtAlertThread. Unrelated to `alerted`, which is NtAlertThreadByThreadId's.
+        bool user_mode_alerted{false};
 
         std::optional<NTSTATUS> pending_status{};
 
@@ -610,10 +612,17 @@ namespace sogen
             }
         }
 
-        bool has_pending_alertable_apc() const
+        bool can_end_alertable_wait() const
         {
-            return this->apc_alertable && !this->pending_apcs.empty();
+            return this->apc_alertable && (this->user_mode_alerted || !this->pending_apcs.empty());
         }
+
+        bool test_user_mode_alert()
+        {
+            return std::exchange(this->user_mode_alerted, false);
+        }
+
+        void end_alertable_wait(NTSTATUS status);
 
         void record_current_message(const msg& message)
         {
@@ -718,6 +727,7 @@ namespace sogen
 
             buffer.write(this->apc_alertable);
             buffer.write_vector(this->pending_apcs);
+            buffer.write(this->user_mode_alerted);
 
             buffer.write_optional(this->pending_status);
             buffer.write(this->win32k_thread_info);
@@ -809,6 +819,7 @@ namespace sogen
 
             buffer.read(this->apc_alertable);
             buffer.read_vector(this->pending_apcs);
+            buffer.read(this->user_mode_alerted);
 
             buffer.read_optional(this->pending_status);
             buffer.read(this->win32k_thread_info);
@@ -877,6 +888,8 @@ namespace sogen
                                                   bool remove);
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
+
+        bool is_wait_satisfied(windows_emulator& win_emu);
 
         void setup_registers(cpu_interface& emu, const process_context& context) const;
         void setup_wow64_registers(x86_64_cpu& emu, const process_context& context) const;
