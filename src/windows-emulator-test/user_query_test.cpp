@@ -29,6 +29,7 @@ namespace sogen::test
     {
         constexpr DWORD untouched_error = 0xDEAD;
         constexpr DWORD untouched_value = 0xAAAAAAAA;
+        constexpr UINT k_wm_app = 0x8000;
         constexpr uint32_t k_overlapped_window = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
         class UserQueryTest : public testing::Test
@@ -605,11 +606,11 @@ namespace sogen::test
         EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
         EXPECT_EQ(11, this->emu.memory.read_memory<RAWMOUSE32>(data + header_size).lLastX);
 
-        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = WM_APP});
+        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = k_wm_app});
         const emulator_object<msg> ordinary{this->emu.memory, this->storage + 0x100};
-        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, WM_APP, WM_APP, PM_NOREMOVE));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, k_wm_app, k_wm_app, PM_NOREMOVE));
         EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
-        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, WM_APP, WM_APP, PM_REMOVE));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, k_wm_app, k_wm_app, PM_REMOVE));
         EXPECT_EQ(UINT32_MAX, this->read_raw_input(removed->lParam, RID_INPUT, data));
         EXPECT_EQ(6u, this->last_error());
     }
