@@ -2311,6 +2311,8 @@ namespace sogen
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
         {
+            // TODO: Native GDI doesn't require ReleaseDC for window-DC writes to become visible; presenting here is only
+            //       a Sogen flush boundary. Move presentation into the relevant window-DC drawing paths once unified.
             uint32_t present_handle = 0;
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
