@@ -5317,7 +5317,7 @@ namespace sogen
 
             auto& t = c.thread();
 
-            if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, message_retrieval_mode::get))
             {
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
@@ -5361,7 +5361,8 @@ namespace sogen
             auto& t = c.thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, should_remove);
+            const auto mode = should_remove ? message_retrieval_mode::remove : message_retrieval_mode::peek;
+            std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, mode);
 
             if (pending_msg)
             {

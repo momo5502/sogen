@@ -424,6 +424,13 @@ namespace sogen
         overflow,
     };
 
+    enum class message_retrieval_mode
+    {
+        peek,
+        remove,
+        get,
+    };
+
     class emulator_thread : public ref_counted_object
     {
       public:
@@ -625,7 +632,7 @@ namespace sogen
 
         uint32_t get_message_queue_status(windows_emulator& win_emu);
         std::optional<msg> peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0,
-                                                bool remove = false);
+                                                message_retrieval_mode mode = message_retrieval_mode::peek);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
         void post_raw_input(windows_emulator& win_emu, hwnd window, uint32_t token, const raw_input_payload& payload);
         const raw_input_payload* find_raw_input(emulator_pointer token) const;
@@ -866,6 +873,8 @@ namespace sogen
         std::optional<retrieved_raw_input> last_raw_input_{};
 
         bool can_coalesce_message(const msg& msg) const;
+        std::optional<msg> select_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                  bool remove);
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
 

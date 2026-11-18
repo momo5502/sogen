@@ -16,6 +16,7 @@ namespace sogen::syscalls
                                                        uint32_t size);
     uint32_t handle_NtUserGetRawInputData(const syscall_context& c, emulator_pointer raw_input, uint32_t command, emulator_pointer data,
                                           emulator_object<uint32_t> size, uint32_t header_size);
+    BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max);
     BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max,
                                   UINT remove);
     uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
@@ -567,7 +568,7 @@ namespace sogen::test
         EXPECT_EQ(87u, this->last_error()); // ERROR_INVALID_PARAMETER
     }
 
-    TEST_F(UserQueryTest, RawInputCanBeReadRepeatedlyUntilTheNextRawMessageIsRemoved)
+    TEST_F(UserQueryTest, RawInputCanBeReadRepeatedlyUntilAnotherOrdinaryMessageIsRemoved)
     {
         const auto window = this->create_top_level_window();
         this->emu.deliver_raw_input({.dx = -3, .dy = 7}, window);
@@ -603,6 +604,46 @@ namespace sogen::test
         EXPECT_EQ(6u, this->last_error());
         EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
         EXPECT_EQ(11, this->emu.memory.read_memory<RAWMOUSE32>(data + header_size).lLastX);
+
+        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = WM_APP});
+        const emulator_object<msg> ordinary{this->emu.memory, this->storage + 0x100};
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, WM_APP, WM_APP, PM_NOREMOVE));
+        EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, WM_APP, WM_APP, PM_REMOVE));
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(removed->lParam, RID_INPUT, data));
+        EXPECT_EQ(6u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, RawInputExpiresWhenPaintIsRemoved)
+    {
+        const auto window = this->create_top_level_window(0, WS_VISIBLE);
+        this->emu.deliver_raw_input({}, window);
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        this->emu.process.windows.get(window)->update_pending = true;
+        const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, window, WM_PAINT, WM_PAINT, PM_NOREMOVE));
+        EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, window, WM_PAINT, WM_PAINT, PM_REMOVE));
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0));
+    }
+
+    TEST_F(UserQueryTest, RawInputSurvivesGetMessageQuitButNotPeekMessageQuit)
+    {
+        const auto window = this->create_top_level_window();
+        this->emu.deliver_raw_input({}, window);
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        auto& thread = *this->emu.vcpu(0).active_thread;
+        const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
+        thread.post_message(this->emu, {.message = WM_QUIT});
+        EXPECT_FALSE(syscalls::handle_NtUserGetMessage(this->context(), message, 0, 0, 0));
+        EXPECT_EQ(WM_QUIT, message.read().message);
+        EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
+        thread.post_message(this->emu, {.message = WM_QUIT});
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, 0, 0, 0, PM_REMOVE));
+        EXPECT_EQ(WM_QUIT, message.read().message);
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0));
     }
 
     TEST_F(UserQueryTest, RawInputReportsRequiredSizeWithoutWritingAShortBuffer)

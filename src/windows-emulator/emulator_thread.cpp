@@ -1264,19 +1264,6 @@ namespace sogen
             auto msg = *it;
             if (remove)
             {
-                if (msg.message == WM_INPUT)
-                {
-                    const auto input = this->queued_raw_inputs_.extract(msg.lParam);
-                    if (input)
-                    {
-                        // The WM_INPUT documentation calls for DefWindowProc to clean up foreground input. Our Windows x64 and WoW64
-                        // probe could still read the token after both DefWindowProc and DispatchMessageW returned. We deliberately
-                        // follow the observed lifetime: PM_NOREMOVE leaves the last dequeued token valid, while PM_REMOVE of the next
-                        // raw input invalidates it immediately, even during nested dispatch. Other threads cannot read the token.
-                        this->last_raw_input_ = retrieved_raw_input{.token = input.key(), .payload = input.mapped()};
-                    }
-                }
-
                 const auto removed_bits = get_message_queue_status_bits(msg);
 
                 for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
@@ -1300,8 +1287,8 @@ namespace sogen
         return std::nullopt;
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
-                                                             bool remove)
+    std::optional<msg> emulator_thread::select_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min,
+                                                               UINT filter_max, bool remove)
     {
         if (auto queued_message = this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove))
         {
@@ -1346,6 +1333,30 @@ namespace sogen
         }
 
         return std::nullopt;
+    }
+
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             message_retrieval_mode mode)
+    {
+        const bool remove = mode != message_retrieval_mode::peek;
+        const auto message = this->select_pending_message(win_emu, hwnd_filter, filter_min, filter_max, remove);
+
+        // Native Windows keeps this token through dispatch, but invalidates it on the next removal,
+        // except when GetMessage retrieves WM_QUIT.
+        if (message && remove && !(mode == message_retrieval_mode::get && message->message == WM_QUIT))
+        {
+            this->last_raw_input_.reset();
+            if (message->message == WM_INPUT)
+            {
+                const auto input = this->queued_raw_inputs_.extract(message->lParam);
+                if (input)
+                {
+                    this->last_raw_input_ = retrieved_raw_input{.token = input.key(), .payload = input.mapped()};
+                }
+            }
+        }
+
+        return message;
     }
 
     bool emulator_thread::can_coalesce_message(const msg& msg) const
@@ -1798,7 +1809,7 @@ namespace sogen
             }
 
             if (const auto m = this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min,
-                                                          this->await_msg->filter_max, true))
+                                                          this->await_msg->filter_max, message_retrieval_mode::get))
             {
                 this->await_msg->message.write(*m);
                 this->record_current_message(*m);
