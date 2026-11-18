@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
 #if defined(__ANDROID__) || defined(__APPLE__)
 #include <memory_manager.hpp>
 

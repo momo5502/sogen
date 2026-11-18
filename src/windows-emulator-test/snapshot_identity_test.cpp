@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <emulator_utils.hpp>
 #include <snapshot.hpp>
 #include <sogen_version.hpp>

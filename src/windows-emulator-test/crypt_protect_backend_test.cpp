@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <platform/crypt_protect_backend.hpp>
 #include "crypt_backends/dpapi_primitives.hpp"
 

@@ -1,10 +1,7 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include <io_completion_wait.hpp>
 #include <syscall_utils.hpp>
-
-#include <gtest/gtest.h>
 
 namespace sogen::syscalls
 {

@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include <io_device.hpp>
 
 #include <algorithm>

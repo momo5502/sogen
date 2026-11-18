@@ -4,7 +4,6 @@
 #include <utils/finally.hpp>
 #include <utils/serialization.hpp>
 #include <network/tcp_server_socket.hpp>
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <stdexcept>

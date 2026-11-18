@@ -4,7 +4,6 @@
 #include <network/socket_factory.hpp>
 #include <network/tcp_server_socket.hpp>
 #include <platform/compiler.hpp>
-#include <gtest/gtest.h>
 
 #include <array>
 #include <stdexcept>

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <gdi_clip.hpp>
 
 #include <map>

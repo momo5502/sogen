@@ -7,7 +7,6 @@
 #include <network/dns_lookup.hpp>
 #include <network/socket_factory.hpp>
 #include <utils/finally.hpp>
-#include <gtest/gtest.h>
 #include <emscripten.h>
 
 #include <algorithm>

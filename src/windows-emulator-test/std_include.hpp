@@ -9,3 +9,5 @@
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 #include <backend_selection.hpp>
+
+#include "emulation_test_utils.hpp"

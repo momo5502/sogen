@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <devices/spirv_clip_distance.hpp>
 
 #include <algorithm>

@@ -1,9 +1,6 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include "module/module_manager.hpp"
-
-#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstddef>

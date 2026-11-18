@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <adaptive_mutex.hpp>
 
 #include <atomic>

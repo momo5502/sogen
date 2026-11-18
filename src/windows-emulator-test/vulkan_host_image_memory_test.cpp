@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <devices/vulkan_host.hpp>
 #include <vulkan/vulkan_core.h>
 

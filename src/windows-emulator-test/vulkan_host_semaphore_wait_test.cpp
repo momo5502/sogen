@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <devices/vulkan_host.hpp>
 #include <gpu_bridge_protocol.hpp>
 #include <vk_feature_chain.hpp>

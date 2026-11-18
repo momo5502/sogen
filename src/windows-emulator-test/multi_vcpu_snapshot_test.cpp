@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
 namespace sogen::test
 {
     // A WHP partition with several vCPUs saves and restores vCPU 0, which runs the one thread a snapshot keeps.

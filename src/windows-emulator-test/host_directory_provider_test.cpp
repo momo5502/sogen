@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <filesystem/host_directory_provider.hpp>
 
 #include <fstream>

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
 #include <snapshot.hpp>
 #include <syscall_utils.hpp>
 #include <utils/io.hpp>

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <windows_objects.hpp>
 
 namespace sogen::test

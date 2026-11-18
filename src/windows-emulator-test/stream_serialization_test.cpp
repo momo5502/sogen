@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <utils/compression.hpp>
 #include <utils/serialization.hpp>
 

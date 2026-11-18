@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include "module/module_mapping.hpp"
 
 namespace sogen::test

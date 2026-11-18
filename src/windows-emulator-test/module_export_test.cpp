@@ -5,8 +5,6 @@
 
 #include "page_memory.hpp"
 
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstring>
 #include <vector>

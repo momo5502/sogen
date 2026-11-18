@@ -1,6 +1,5 @@
 #pragma once
 
-#include "emulation_test_utils.hpp"
 #include <binary_writer.hpp>
 #include <port.hpp>
 

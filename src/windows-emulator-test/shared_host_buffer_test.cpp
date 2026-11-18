@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <utils/shared_host_buffer.hpp>
 
 #include <cstring>

@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
 #include <code_page.hpp>
 
 #include <vector>

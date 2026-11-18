@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include <syscall_utils.hpp>
 
 #include <array>
@@ -9,7 +8,6 @@
 #include <span>
 #include <utility>
 #include <vector>
-#include <gtest/gtest.h>
 
 namespace sogen::syscalls
 {

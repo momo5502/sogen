@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <logger.hpp>
 #include <queued_file_writer.hpp>
 

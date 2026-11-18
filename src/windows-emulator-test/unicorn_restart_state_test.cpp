@@ -1,9 +1,6 @@
 #include "std_include.hpp"
 
-#include <backend_selection.hpp>
 #include <memory_manager.hpp>
-
-#include <gtest/gtest.h>
 
 #include <array>
 

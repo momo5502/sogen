@@ -2,7 +2,6 @@
 
 #ifndef __EMSCRIPTEN__
 
-#include "emulation_test_utils.hpp"
 #include <subprocess_process_manager.hpp>
 #include <network/tcp_server_socket.hpp>
 

@@ -2,8 +2,6 @@
 
 #if defined(__linux__)
 
-#include <gtest/gtest.h>
-
 #include <emulator_utils.hpp>
 #include <filesystem/document_broker.hpp>
 

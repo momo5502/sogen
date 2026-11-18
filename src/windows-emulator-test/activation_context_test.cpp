@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <sxs/activation_context.hpp>
 
 #include <fstream>

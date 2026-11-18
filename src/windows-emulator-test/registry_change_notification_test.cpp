@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include <devices/named_pipe.hpp>
 #include <syscall_utils.hpp>
 

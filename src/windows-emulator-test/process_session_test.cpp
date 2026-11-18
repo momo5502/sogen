@@ -13,7 +13,6 @@
 #include <set>
 #include <atomic>
 #include <chrono>
-#include <gtest/gtest.h>
 #include <condition_variable>
 #include <thread>
 #include <process_protocol_utils.hpp>

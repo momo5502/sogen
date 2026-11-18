@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
 #include <syscall_utils.hpp>
 
 namespace sogen::test

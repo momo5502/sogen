@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
 #ifdef __APPLE__
 #include <memory_manager.hpp>
 #include <utils/host_watchpoints.hpp>

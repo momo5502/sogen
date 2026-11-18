@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
 #include <utils/finally.hpp>
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)

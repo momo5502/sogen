@@ -4,7 +4,6 @@
 
 #ifdef OS_EMSCRIPTEN
 
-#include <gtest/gtest.h>
 #include <emscripten.h>
 
 int main(int argc, char** argv)

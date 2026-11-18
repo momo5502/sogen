@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
 namespace sogen::test
 {
     TEST(ExceptionTest, SecondChanceExceptionCodeBecomesExitStatus)

@@ -1,9 +1,5 @@
 #include "std_include.hpp"
 
-#include "emulation_test_utils.hpp"
-
-#include <gtest/gtest.h>
-
 namespace sogen::test
 {
     // TscScale read from the reference TSC page of a Hyper-V root whose TSC runs at 3,494,402,315 Hz.

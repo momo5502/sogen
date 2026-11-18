@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <gtest/gtest.h>
-
 #include <emulator_utils.hpp>
 #include <filesystem/document_tree_provider.hpp>
 #include <filesystem/layered_provider.hpp>

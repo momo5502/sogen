@@ -6,15 +6,10 @@
 #include <chrono>
 #include <cstddef>
 
-#include <backend_selection.hpp>
 #include <io_device.hpp>
 #include <devices/console.hpp>
 #include <syscall_utils.hpp>
-#include <windows_emulator.hpp>
 #include <utils/finally.hpp>
-
-#include <gtest/gtest.h>
-#include "emulation_test_utils.hpp"
 
 namespace sogen::syscalls
 {
