@@ -2946,24 +2946,58 @@ extern "C"
 
     namespace
     {
-        void record_pipeline_barrier(const VkCommandBuffer command_buffer, const VkDependencyFlags dependency_flags,
-                                     const std::span<const gb::barrier_masks> memory_barriers,
-                                     const std::span<const gb::buffer_memory_barrier> buffer_barriers,
-                                     const std::span<const gb::image_memory_barrier> image_barriers)
+        // A cmd_pipeline_barrier record, sized up front from its barrier counts.
+        class pipeline_barrier_record
         {
-            const gb::cmd_pipeline_barrier_request header{.command_buffer = to_object_id(command_buffer),
-                                                          .dependency_flags = dependency_flags,
-                                                          .memory_barrier_count = static_cast<uint32_t>(memory_barriers.size()),
-                                                          .buffer_barrier_count = static_cast<uint32_t>(buffer_barriers.size()),
-                                                          .image_barrier_count = static_cast<uint32_t>(image_barriers.size())};
-            std::vector<uint8_t> message{};
-            message.reserve(sizeof(header) + memory_barriers.size_bytes() + buffer_barriers.size_bytes() + image_barriers.size_bytes());
-            append_bytes(message, &header, sizeof(header));
-            append_bytes(message, memory_barriers.data(), memory_barriers.size_bytes());
-            append_bytes(message, buffer_barriers.data(), buffer_barriers.size_bytes());
-            append_bytes(message, image_barriers.data(), image_barriers.size_bytes());
-            record_command(header.command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
-        }
+          public:
+            pipeline_barrier_record(const VkCommandBuffer command_buffer, const VkDependencyFlags dependency_flags,
+                                    const uint32_t memory_barrier_count, const uint32_t buffer_barrier_count,
+                                    const uint32_t image_barrier_count)
+                : message_(sizeof(gb::cmd_pipeline_barrier_request) + memory_barrier_count * sizeof(gb::barrier_masks) +
+                           buffer_barrier_count * sizeof(gb::buffer_memory_barrier) +
+                           image_barrier_count * sizeof(gb::image_memory_barrier))
+            {
+                const gb::cmd_pipeline_barrier_request header{.command_buffer = to_object_id(command_buffer),
+                                                              .dependency_flags = dependency_flags,
+                                                              .memory_barrier_count = memory_barrier_count,
+                                                              .buffer_barrier_count = buffer_barrier_count,
+                                                              .image_barrier_count = image_barrier_count};
+                this->command_buffer_ = header.command_buffer;
+                this->put(&header, sizeof(header));
+            }
+
+            // Memory barriers first, then buffer barriers, then image barriers.
+            void add(const gb::barrier_masks& barrier)
+            {
+                this->put(&barrier, sizeof(barrier));
+            }
+
+            void add(const gb::buffer_memory_barrier& barrier)
+            {
+                this->put(&barrier, sizeof(barrier));
+            }
+
+            void add(const gb::image_memory_barrier& barrier)
+            {
+                this->put(&barrier, sizeof(barrier));
+            }
+
+            void record() const
+            {
+                record_command(this->command_buffer_, gb::command::cmd_pipeline_barrier, this->message_.data(), this->message_.size());
+            }
+
+          private:
+            void put(const void* data, const size_t size)
+            {
+                std::memcpy(this->message_.data() + this->cursor_, data, size);
+                this->cursor_ += size;
+            }
+
+            std::vector<uint8_t> message_{};
+            size_t cursor_{};
+            gb::object_id command_buffer_{};
+        };
 
         gb::buffer_memory_barrier to_wire_buffer_barrier(const gb::barrier_masks& masks, const uint32_t src_queue_family_index,
                                                          const uint32_t dst_queue_family_index, const VkBuffer buffer,
@@ -3006,32 +3040,29 @@ extern "C"
                                      .dst_access_mask = dst_access};
         };
 
-        std::vector<gb::barrier_masks> memory_barriers{};
+        // Without barriers, the call still orders the source stages before the destination stages.
+        const bool stages_only = memoryBarrierCount == 0 && bufferMemoryBarrierCount == 0 && imageMemoryBarrierCount == 0;
+        pipeline_barrier_record record(commandBuffer, dependencyFlags, stages_only ? 1 : memoryBarrierCount, bufferMemoryBarrierCount,
+                                       imageMemoryBarrierCount);
+        if (stages_only)
+        {
+            record.add(masks(0, 0));
+        }
         for (const VkMemoryBarrier& b : std::span(pMemoryBarriers, memoryBarrierCount))
         {
-            memory_barriers.push_back(masks(b.srcAccessMask, b.dstAccessMask));
+            record.add(masks(b.srcAccessMask, b.dstAccessMask));
         }
-        // Without barriers, the call still orders the source stages before the destination stages.
-        if (memoryBarrierCount == 0 && bufferMemoryBarrierCount == 0 && imageMemoryBarrierCount == 0)
-        {
-            memory_barriers.push_back(masks(0, 0));
-        }
-
-        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
         for (const VkBufferMemoryBarrier& b : std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount))
         {
-            buffer_barriers.push_back(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex,
-                                                             b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+            record.add(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex,
+                                              b.buffer, b.offset, b.size));
         }
-
-        std::vector<gb::image_memory_barrier> image_barriers{};
         for (const VkImageMemoryBarrier& b : std::span(pImageMemoryBarriers, imageMemoryBarrierCount))
         {
-            image_barriers.push_back(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout,
-                                                           b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image, b.subresourceRange));
+            record.add(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex,
+                                             b.dstQueueFamilyIndex, b.image, b.subresourceRange));
         }
-
-        record_pipeline_barrier(commandBuffer, dependencyFlags, memory_barriers, buffer_barriers, image_barriers);
+        record.record();
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer,
@@ -3044,27 +3075,23 @@ extern "C"
                                      .dst_access_mask = b.dstAccessMask};
         };
 
-        std::vector<gb::barrier_masks> memory_barriers{};
-        for (const VkMemoryBarrier2& b : std::span(pDependencyInfo->pMemoryBarriers, pDependencyInfo->memoryBarrierCount))
+        const VkDependencyInfo& info = *pDependencyInfo;
+        pipeline_barrier_record record(commandBuffer, info.dependencyFlags, info.memoryBarrierCount, info.bufferMemoryBarrierCount,
+                                       info.imageMemoryBarrierCount);
+        for (const VkMemoryBarrier2& b : std::span(info.pMemoryBarriers, info.memoryBarrierCount))
         {
-            memory_barriers.push_back(masks(b));
+            record.add(masks(b));
         }
-
-        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
-        for (const VkBufferMemoryBarrier2& b : std::span(pDependencyInfo->pBufferMemoryBarriers, pDependencyInfo->bufferMemoryBarrierCount))
+        for (const VkBufferMemoryBarrier2& b : std::span(info.pBufferMemoryBarriers, info.bufferMemoryBarrierCount))
         {
-            buffer_barriers.push_back(
-                to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+            record.add(to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
         }
-
-        std::vector<gb::image_memory_barrier> image_barriers{};
-        for (const VkImageMemoryBarrier2& b : std::span(pDependencyInfo->pImageMemoryBarriers, pDependencyInfo->imageMemoryBarrierCount))
+        for (const VkImageMemoryBarrier2& b : std::span(info.pImageMemoryBarriers, info.imageMemoryBarrierCount))
         {
-            image_barriers.push_back(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex, b.dstQueueFamilyIndex,
-                                                           b.image, b.subresourceRange));
+            record.add(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image,
+                                             b.subresourceRange));
         }
-
-        record_pipeline_barrier(commandBuffer, pDependencyInfo->dependencyFlags, memory_barriers, buffer_barriers, image_barriers);
+        record.record();
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,

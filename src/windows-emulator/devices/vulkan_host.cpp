@@ -2546,6 +2546,7 @@ namespace sogen
             for (const VkMemoryBarrier2& barrier : memory_barriers)
             {
                 const VkMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                             .pNext = nullptr,
                                              .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                                              .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
                 record(barrier, &legacy, nullptr, nullptr);
@@ -2553,6 +2554,7 @@ namespace sogen
             for (const VkBufferMemoryBarrier2& barrier : buffer_barriers)
             {
                 const VkBufferMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                                                   .pNext = nullptr,
                                                    .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                                                    .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
                                                    .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
@@ -2565,6 +2567,7 @@ namespace sogen
             for (const VkImageMemoryBarrier2& barrier : image_barriers)
             {
                 const VkImageMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                                  .pNext = nullptr,
                                                   .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                                                   .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
                                                   .oldLayout = barrier.oldLayout,
@@ -8322,6 +8325,7 @@ namespace sogen
         for (const barrier_masks& masks : memory_barriers)
         {
             vk_memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                          .pNext = nullptr,
                                           .srcStageMask = masks.src_stage_mask,
                                           .srcAccessMask = masks.src_access_mask,
                                           .dstStageMask = masks.dst_stage_mask,
@@ -8338,6 +8342,7 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             vk_buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                          .pNext = nullptr,
                                           .srcStageMask = barrier.masks.src_stage_mask,
                                           .srcAccessMask = barrier.masks.src_access_mask,
                                           .dstStageMask = barrier.masks.dst_stage_mask,
@@ -8359,6 +8364,7 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             vk_image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                         .pNext = nullptr,
                                          .srcStageMask = barrier.masks.src_stage_mask,
                                          .srcAccessMask = barrier.masks.src_access_mask,
                                          .dstStageMask = barrier.masks.dst_stage_mask,
@@ -8374,6 +8380,7 @@ namespace sogen
         if (dev->second.cmd_pipeline_barrier2)
         {
             const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .pNext = nullptr,
                                               .dependencyFlags = dependency_flags,
                                               .memoryBarrierCount = static_cast<uint32_t>(vk_memory_barriers.size()),
                                               .pMemoryBarriers = vk_memory_barriers.data(),
