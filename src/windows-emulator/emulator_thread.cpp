@@ -23,6 +23,8 @@ namespace sogen
 
     namespace
     {
+        constexpr uint32_t k_client_thread_info_sending_message = 0x2;
+
         enum class wait_state
         {
             not_signaled,
@@ -1509,6 +1511,8 @@ namespace sogen
         }
 
         this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
+            info.flags = (info.flags & ~k_client_thread_info_sending_message) |
+                         (this->active_sent_messages.empty() ? 0 : k_client_thread_info_sending_message);
             info.change_bits = static_cast<uint16_t>(this->queue_status_changed_bits);
             info.wake_bits =
                 static_cast<uint16_t>(this->message_queue_status_bits | (this->pending_sent_messages.empty() ? 0 : QS_SENDMESSAGE));

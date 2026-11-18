@@ -21,9 +21,12 @@ namespace sogen
     namespace
     {
         constexpr ULONG k_thread_state_capture_window = 0x2;
+        constexpr ULONG k_thread_state_send_message = 0x8;
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr ULONG k_thread_state_message_time = 0x9;
+        constexpr uint32_t k_ismex_send = 0x1;
+        constexpr uint32_t k_ismex_replied = 0x8;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
         constexpr uint32_t k_client_setup_callback_id = 0x54;
@@ -1927,6 +1930,17 @@ namespace sogen
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
+            if (routine == k_thread_state_send_message)
+            {
+                const auto* thread = c.vcpu.active_thread;
+                if (!thread || thread->active_sent_messages.empty())
+                {
+                    return 0;
+                }
+
+                return k_ismex_send | (thread->active_sent_messages.back().replied ? k_ismex_replied : 0);
+            }
+
             if (routine == k_thread_state_message_time)
             {
                 return c.vcpu.active_thread ? c.vcpu.active_thread->current_message_time : 0;
@@ -4996,6 +5010,7 @@ namespace sogen
                 }
                 message.scratch_text = prepare_message_text(c, *win, message.message, message.w_param, message.l_param, message.ansi);
                 thread.active_sent_messages.push_back(message);
+                thread.publish_client_thread_info();
                 const auto param = message.scratch_text != 0 ? message.scratch_text : message.l_param;
                 if (completion_callback == callback_id::NtUserMessageCall)
                 {
@@ -5023,6 +5038,7 @@ namespace sogen
             }
             auto message = messages.back();
             messages.pop_back();
+            c.thread().publish_client_thread_info();
             if (!message.replied)
             {
                 const auto converted =
