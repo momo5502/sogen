@@ -764,7 +764,7 @@ namespace sogen
                                                     int x, int y, int width, int height, UINT flags, uint32_t band, BOOL use_band);
         BOOL handle_NtUserEndDeferWindowPosEx(const syscall_context& c, uint64_t batch_handle, BOOL async);
         BOOL completion_NtUserEndDeferWindowPosEx(const syscall_context& c, uint64_t batch_handle, BOOL async);
-        NTSTATUS handle_NtUserSetForegroundWindow();
+        BOOL handle_NtUserSetForegroundWindow(const syscall_context& c, hwnd hwnd);
         hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         hwnd completion_NtUserSetFocus(const syscall_context& c, hwnd hwnd);

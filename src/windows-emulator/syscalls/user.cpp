@@ -3879,18 +3879,6 @@ namespace sogen
             return c.proc.desktops.erase(desktop_handle) ? TRUE : FALSE;
         }
 
-        BOOL set_foreground_window(const syscall_context& c, const hwnd hwnd)
-        {
-            if (!c.proc.windows.get(hwnd))
-            {
-                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
-                return FALSE;
-            }
-
-            c.win_emu.set_foreground_window(hwnd);
-            return TRUE;
-        }
-
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
@@ -6291,9 +6279,22 @@ namespace sogen
             return advance_deferred_window_positions(c, state);
         }
 
-        NTSTATUS handle_NtUserSetForegroundWindow()
+        BOOL handle_NtUserSetForegroundWindow(const syscall_context& c, const hwnd hwnd)
         {
-            return STATUS_SUCCESS;
+            const auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            if ((win->style & WS_CHILD) != 0 && (win->style & WS_POPUP) == 0)
+            {
+                return FALSE;
+            }
+
+            c.win_emu.set_foreground_window(hwnd);
+            return TRUE;
         }
 
         hwnd find_foreground_window(const syscall_context& c)
@@ -9674,7 +9675,7 @@ namespace sogen
 
                 if (routine == user_call_set_foreground_window)
                 {
-                    return set_foreground_window(c, hwnd);
+                    return handle_NtUserSetForegroundWindow(c, hwnd);
                 }
 
                 if (routine == user_call_set_sys_menu)
