@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <utility>
-
 namespace sogen::syscalls
 {
     BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars, UINT flags,

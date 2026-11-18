@@ -2,9 +2,6 @@
 
 #include <utils/compression.hpp>
 
-#include <cstdint>
-#include <cstring>
-
 namespace sogen::test
 {
     namespace

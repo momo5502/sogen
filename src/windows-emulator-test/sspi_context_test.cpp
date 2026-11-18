@@ -2,8 +2,6 @@
 
 #include "../windows-emulator/ports/sspi_context.hpp"
 
-#include <cstring>
-
 namespace
 {
     template <typename T>

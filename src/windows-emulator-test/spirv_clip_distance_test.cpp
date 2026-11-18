@@ -2,9 +2,6 @@
 
 #include <devices/spirv_clip_distance.hpp>
 
-#include <cstdint>
-#include <initializer_list>
-
 namespace sogen::test
 {
     namespace

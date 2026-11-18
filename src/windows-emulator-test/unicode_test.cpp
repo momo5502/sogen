@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstring>
-
 namespace sogen::test
 {
     const std::vector<std::pair<const char*, const char16_t*>> good_strings = {

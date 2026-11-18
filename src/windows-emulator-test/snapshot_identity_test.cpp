@@ -3,9 +3,6 @@
 #include <snapshot.hpp>
 #include <sogen_version.hpp>
 
-#include <cstring>
-#include <random>
-
 namespace sogen::test
 {
     namespace

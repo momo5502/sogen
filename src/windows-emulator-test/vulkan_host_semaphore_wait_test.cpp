@@ -4,9 +4,6 @@
 #include <gpu_bridge_protocol.hpp>
 #include <vk_feature_chain.hpp>
 
-#include <cstring>
-#include <future>
-
 namespace sogen::test
 {
     // An async semaphore wait ends when the GPU signals, or with VK_TIMEOUT once its timeout passes, as vkWaitSemaphores

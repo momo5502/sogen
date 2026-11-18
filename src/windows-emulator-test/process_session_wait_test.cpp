@@ -9,7 +9,6 @@
 #undef exception_info
 #include <process_protocol_utils.hpp>
 #include <process_session_registry.hpp>
-#include <future>
 
 namespace sogen::test
 {

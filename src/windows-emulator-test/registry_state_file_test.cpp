@@ -5,7 +5,6 @@
 #include <utils/io.hpp>
 
 #ifndef OS_WINDOWS
-#include <csignal>
 #include <sys/resource.h>
 #endif
 

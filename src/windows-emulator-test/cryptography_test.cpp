@@ -1,8 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstring>
-#include <limits>
-
 namespace sogen::test
 {
     namespace

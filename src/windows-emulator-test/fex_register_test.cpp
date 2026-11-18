@@ -1,15 +1,9 @@
 #include "std_include.hpp"
 
-#if defined(__ANDROID__) || defined(__APPLE__)
-
-#endif
-
 #ifdef __APPLE__
 #ifdef SOGEN_ENABLE_FEX
 #include <fex_x86_64_emulator.hpp>
 #endif
-
-#include <cstring>
 
 #include <sys/mman.h>
 #endif

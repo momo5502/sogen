@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <cwctype>
-
 namespace sogen::syscalls
 {
     BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> name);

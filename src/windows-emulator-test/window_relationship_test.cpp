@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <tuple>
-
 namespace sogen::syscalls
 {
     hwnd handle_NtUserSetParent(const syscall_context& c, hwnd hwnd_child, hwnd hwnd_new_parent);

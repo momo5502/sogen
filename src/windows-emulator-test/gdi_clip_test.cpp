@@ -2,8 +2,6 @@
 
 #include <gdi_clip.hpp>
 
-#include <utility>
-
 namespace sogen::test
 {
     namespace

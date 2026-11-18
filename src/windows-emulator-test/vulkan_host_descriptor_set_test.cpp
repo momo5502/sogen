@@ -4,8 +4,6 @@
 #include <gpu_bridge_protocol.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include <cstdint>
-
 namespace sogen::test
 {
     // The shim answers vkAllocateDescriptorSets itself for pools that cannot free single sets, counting only maxSets, and the

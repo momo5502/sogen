@@ -1,8 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstring>
-#include <utility>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,

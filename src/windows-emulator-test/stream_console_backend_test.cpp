@@ -1,9 +1,7 @@
 #include "std_include.hpp"
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
-#include <cstdio>
 #include <fcntl.h>
-#include <iostream>
 #include <unistd.h>
 #endif
 

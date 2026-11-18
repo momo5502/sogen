@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <future>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle, emulator_object<CONTEXT64> thread_context);

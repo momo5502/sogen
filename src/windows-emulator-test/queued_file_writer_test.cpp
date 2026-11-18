@@ -2,10 +2,6 @@
 
 #include <queued_file_writer.hpp>
 
-#include <cstdio>
-#include <cstring>
-#include <iterator>
-
 namespace sogen::test
 {
     namespace

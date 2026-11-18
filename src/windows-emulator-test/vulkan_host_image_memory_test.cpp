@@ -3,9 +3,6 @@
 #include <devices/vulkan_host.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include <cstddef>
-#include <cstdint>
-
 namespace sogen::test
 {
     namespace

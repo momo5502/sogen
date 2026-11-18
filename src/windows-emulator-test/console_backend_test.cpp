@@ -2,8 +2,6 @@
 
 #include <console_backends/buffered_console_backend.hpp>
 
-#include <cstddef>
-
 #include <devices/console.hpp>
 
 namespace sogen::syscalls

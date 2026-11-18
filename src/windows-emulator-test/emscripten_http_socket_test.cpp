@@ -4,8 +4,6 @@
 
 #include <emscripten.h>
 
-#include <cctype>
-
 namespace sogen::test
 {
     namespace

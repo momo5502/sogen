@@ -1,8 +1,5 @@
 #include "std_include.hpp"
 
-#include <initializer_list>
-#include <tuple>
-
 namespace sogen::syscalls
 {
     hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);

@@ -4,8 +4,6 @@
 
 #include "page_memory.hpp"
 
-#include <cstring>
-
 namespace sogen::test
 {
     namespace

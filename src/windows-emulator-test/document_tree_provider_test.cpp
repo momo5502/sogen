@@ -3,8 +3,6 @@
 #include <filesystem/document_tree_provider.hpp>
 #include <filesystem/layered_provider.hpp>
 
-#include <cstring>
-#include <random>
 #include <sys/stat.h>
 
 namespace sogen::test

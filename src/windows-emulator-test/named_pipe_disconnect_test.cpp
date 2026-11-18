@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <limits>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtCreateNamedPipeFile(const syscall_context& c, emulator_object<handle> file_handle, ULONG desired_access,

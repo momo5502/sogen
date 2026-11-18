@@ -2,8 +2,6 @@
 
 #include <debug_object.hpp>
 
-#include <utility>
-
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtOpenProcess(const syscall_context& c, emulator_object<handle> process_handle, ACCESS_MASK desired_access,

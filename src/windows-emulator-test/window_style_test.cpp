@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <tuple>
-
 namespace sogen::syscalls
 {
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle window, int index, emulator_pointer value, BOOL ansi);

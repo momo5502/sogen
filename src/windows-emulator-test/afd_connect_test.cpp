@@ -2,8 +2,6 @@
 
 #include <network/tcp_client_socket.hpp>
 
-#include <cstring>
-
 namespace sogen::test
 {
     namespace

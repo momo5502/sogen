@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstdint>
-
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX

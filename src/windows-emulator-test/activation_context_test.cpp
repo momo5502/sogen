@@ -2,8 +2,6 @@
 
 #include <sxs/activation_context.hpp>
 
-#include <random>
-
 namespace sogen::test
 {
     namespace

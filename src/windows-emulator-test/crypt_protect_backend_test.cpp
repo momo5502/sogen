@@ -2,9 +2,6 @@
 
 #include "crypt_backends/dpapi_primitives.hpp"
 
-#include <cstring>
-#include <random>
-
 namespace sogen::test
 {
     namespace

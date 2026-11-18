@@ -1,17 +1,11 @@
 #include "std_include.hpp"
 
-#include <cstring>
-#include <random>
-#include <system_error>
-
 #ifdef SOGEN_ENABLE_SECCOMP
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <ucontext.h>
 
-#include <cerrno>
-#include <csignal>
 #include <unistd.h>
 
 namespace sogen::test

@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <cstring>
-
 namespace sogen::test
 {
     // Verifies that memory_manager::allocate_host_memory aliases caller-owned host memory into the guest

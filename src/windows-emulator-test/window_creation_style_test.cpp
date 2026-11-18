@@ -1,7 +1,5 @@
 #include "std_include.hpp"
 
-#include <type_traits>
-
 namespace sogen::syscalls
 {
     uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,

@@ -2,8 +2,6 @@
 
 #include <network/tcp_server_socket.hpp>
 
-#include <future>
-
 namespace sogen::test
 {
     namespace
