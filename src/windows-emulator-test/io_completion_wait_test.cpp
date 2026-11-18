@@ -658,6 +658,38 @@ namespace sogen::test
         EXPECT_EQ(0u, removed.read());
     }
 
+    // NtRemoveIoCompletionEx writes nothing when its wait starts, and a wait that times out stores the count of
+    // KeRemoveQueueEx's one entry, STATUS_TIMEOUT: 1, with the entries as they were (19041 on the host).
+    TEST_F(IoCompletionWaiterTest, ExWaitThatTimesOutStoresACountOfOne)
+    {
+        using entry_type = FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>;
+        constexpr uint64_t sentinel_key = 0xAB;
+        constexpr int64_t one_second = -10'000'000;
+        auto& waiter = this->new_thread();
+        const emulator_object<entry_type> entries{this->emu->memory, this->storage + 0x100};
+        const emulator_object<ULONG> removed{this->emu->memory, this->storage + 0x20};
+        const emulator_object<LARGE_INTEGER> timeout{this->emu->memory, this->storage + 0x900};
+        entry_type sentinel{};
+        sentinel.KeyContext = sentinel_key;
+        entries.write(sentinel);
+        removed.write(0xDEADBEEF);
+        LARGE_INTEGER due{};
+        due.QuadPart = one_second;
+        timeout.write(due);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtRemoveIoCompletionEx(this->context_of(waiter), this->port, entries, 2, removed, timeout, FALSE);
+        }));
+        EXPECT_EQ(0xDEADBEEFu, removed.read());
+
+        auto& clock = this->emu->scheduling_clock();
+        clock.continue_time_at(clock.steady_now() + std::chrono::seconds(2), clock.timestamp_counter());
+        EXPECT_TRUE(this->emu->synchronize([&] { return waiter.is_thread_ready(*this->emu); }));
+        EXPECT_EQ(STATUS_TIMEOUT, waiter.pending_status);
+        EXPECT_EQ(1u, removed.read());
+        EXPECT_EQ(sentinel_key, entries.read().KeyContext);
+    }
+
     // The copy-out after the wait is plain stores under try (NtRemoveIoCompletion): a store needs a writable page before its
     // guard is looked at, and the wait ends with its fault's own code. A KeyContext that became a guard page while the waiter
     // was suspended fails the wait with STATUS_GUARD_PAGE_VIOLATION and loses its guard; a read-only guard page fails it with

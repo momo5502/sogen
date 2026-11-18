@@ -250,6 +250,7 @@ namespace sogen::test
 
         const auto removed = this->untouched_slot(0x20);
         EXPECT_EQ(STATUS_TIMEOUT, syscalls::handle_NtRemoveIoCompletionEx(this->context(), port, entries, 1, removed, zero_timeout, FALSE));
-        EXPECT_EQ(0u, removed.read());
+        // The count of KeRemoveQueueEx's one entry, the timeout's status (19041 on the host).
+        EXPECT_EQ(1u, removed.read());
     }
 }

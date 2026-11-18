@@ -396,6 +396,18 @@ namespace sogen
             return status;
         }
 
+        NTSTATUS write_status_entry_count(memory_manager& memory, const emulator_thread* thread, const uint64_t entries_removed)
+        {
+            constexpr ULONG status_entries = 1;
+            const auto status = store_range(memory, thread, entries_removed, sizeof(ULONG));
+            if (status == STATUS_SUCCESS)
+            {
+                emulator_object<ULONG>{memory, entries_removed}.write(status_entries);
+            }
+
+            return status;
+        }
+
         bool is_wait_completion_target_type(const handle target_object_handle)
         {
             switch (target_object_handle.value.type)
