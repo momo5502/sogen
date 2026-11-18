@@ -431,6 +431,41 @@ namespace sogen
                 }
             }
         };
+
+        // A host surface may not take what a guest made for Windows asks for, such as Zink's B8G8R8A8 swapchains on
+        // Android. The guest then renders into these images, and each present copies one into an image of the native
+        // swapchain.
+        struct swapchain_proxy
+        {
+            std::vector<VkImage> images{};
+            std::vector<VkDeviceMemory> memories{};
+
+            struct copy_commands
+            {
+                VkCommandPool pool{};
+                std::vector<VkCommandBuffer> buffers{};
+            };
+
+            // Per queue family the guest presents from, created at its first present there.
+            std::map<uint32_t, copy_commands> copies{};
+            // Signaled once the copy out of the image is done, which the guest acquiring it again waits for. Only a copy
+            // that was submitted signals it.
+            std::vector<VkFence> copied{};
+            std::vector<bool> copy_submitted{};
+            // Per proxy image rather than per native one, since the copy waiting for it is fenced like the proxy image.
+            std::vector<VkSemaphore> native_acquired{};
+            // Per native image, waited for by its present.
+            std::vector<VkSemaphore> native_ready{};
+            std::vector<VkImage> native_images{};
+            uint32_t next_image{};
+            // Presents from different queues acquire native images without the kernel lock, while the swapchain
+            // needs external synchronization.
+            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
+            // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
+            // guest has to re-create the swapchain.
+            bool lost{};
+            bool copyable{};
+        };
     }
 
     struct vulkan_host::impl
@@ -883,41 +918,6 @@ namespace sogen
                 buffer.read(this->present_mode);
                 buffer.read(this->clipped);
             }
-        };
-
-        // A host surface may not take what a guest made for Windows asks for, such as Zink's B8G8R8A8 swapchains on
-        // Android. The guest then renders into these images, and each present copies one into an image of the native
-        // swapchain.
-        struct swapchain_proxy
-        {
-            std::vector<VkImage> images{};
-            std::vector<VkDeviceMemory> memories{};
-
-            struct copy_commands
-            {
-                VkCommandPool pool{};
-                std::vector<VkCommandBuffer> buffers{};
-            };
-
-            // Per queue family the guest presents from, created at its first present there.
-            std::map<uint32_t, copy_commands> copies{};
-            // Signaled once the copy out of the image is done, which the guest acquiring it again waits for. Only a copy
-            // that was submitted signals it.
-            std::vector<VkFence> copied{};
-            std::vector<bool> copy_submitted{};
-            // Per proxy image rather than per native one, since the copy waiting for it is fenced like the proxy image.
-            std::vector<VkSemaphore> native_acquired{};
-            // Per native image, waited for by its present.
-            std::vector<VkSemaphore> native_ready{};
-            std::vector<VkImage> native_images{};
-            uint32_t next_image{};
-            // Presents from different queues acquire native images without the kernel lock, while the swapchain
-            // needs external synchronization.
-            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
-            // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
-            // guest has to re-create the swapchain.
-            bool lost{};
-            bool copyable{};
         };
 
         struct swapchain_data
