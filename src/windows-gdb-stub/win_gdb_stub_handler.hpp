@@ -357,13 +357,10 @@ namespace sogen
         {
             auto& thread = vcpu.thread();
 
-            // If the wait is over, is_thread_ready sets the wait status, and setup_if_necessary writes it to the return register.
-            if (!this->is_thread_ready(thread))
+            if (!this->resume_stepped_thread(vcpu, thread))
             {
                 return;
             }
-
-            thread.setup_if_necessary(vcpu.cpu, this->win_emu_->process);
 
             module_event_ = false;
             interrupt_requested_ = false;
@@ -385,18 +382,12 @@ namespace sogen
                     break;
                 }
 
-                // A wait yields, and the scheduler must run the thread again. The time slice and the wake of another thread also
-                // request a thread switch, but the thread can still run. The step continues then, because the CPU can be in
-                // wow64cpu before the 32-bit context is saved.
-                if (vcpu.switch_thread)
+                // A wait yields, and the scheduler must run the thread again. An alertable yield, the time slice and the wake of
+                // another thread also request a thread switch, but the thread can still run. The step continues then, because the
+                // CPU can be in wow64cpu before the 32-bit context is saved.
+                if (vcpu.switch_thread && !this->resume_stepped_thread(vcpu, thread))
                 {
-                    if (!this->is_thread_ready(thread))
-                    {
-                        break;
-                    }
-
-                    vcpu.switch_thread = false;
-                    thread.setup_if_necessary(vcpu.cpu, this->win_emu_->process);
+                    break;
                 }
 
                 // The step ends in 32-bit code after one 32-bit instruction or after a stop in 64-bit code. A breakpoint, watchpoint
@@ -408,9 +399,17 @@ namespace sogen
             }
         }
 
-        bool is_thread_ready(emulator_thread& thread)
+        // Resumes the thread in the same way as the scheduler: switch_to_thread writes the status of a wait that is over,
+        // dispatches an APC to a thread that yielded as alertable and ends the alertable state. A thread that waits and has no
+        // APC to dispatch stays with the scheduler.
+        bool resume_stepped_thread(vcpu_context& vcpu, emulator_thread& thread)
         {
-            return this->win_emu_->synchronize([&] { return thread.is_thread_ready(*this->win_emu_); });
+            const auto can_run =
+                this->win_emu_->synchronize([&] { return thread.is_thread_ready(*this->win_emu_) || thread.has_pending_alertable_apc(); });
+
+            // activate_thread does not check if the thread can run.
+            vcpu.switch_thread = !can_run || !this->win_emu_->activate_thread(vcpu, thread.id);
+            return !vcpu.switch_thread;
         }
 
         size_t read_saved_wow64_register(const size_t reg, void* data, const size_t max_length)
