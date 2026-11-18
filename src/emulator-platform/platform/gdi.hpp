@@ -292,6 +292,16 @@ namespace sogen
         BOOL bPrecisePresentRegionsPreferred;
     };
 
+    constexpr UINT32 D3DKMT_MAX_ENUM_ADAPTERS = 16;
+
+    struct EMU_D3DKMT_ENUMADAPTERS
+    {
+        UINT32 NumAdapters;
+        EMU_D3DKMT_ADAPTERINFO Adapters[D3DKMT_MAX_ENUM_ADAPTERS];
+    };
+
+    static_assert(sizeof(EMU_D3DKMT_ENUMADAPTERS) == 0x144);
+
     struct EMU_D3DKMT_ENUMADAPTERS2
     {
         UINT32 NumAdapters;

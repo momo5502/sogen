@@ -746,6 +746,7 @@ namespace sogen
                                             DWORD thread_id, UINT hwnd_max, emulator_pointer hwnd_list, emulator_object<UINT> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
+        BOOL handle_NtGdiGetCurrentDpiInfo(const syscall_context& c, handle monitor, emulator_object<EMU_DPI_INFORMATION> info);
         BOOL handle_NtUserGetDpiForMonitor(const syscall_context& c, handle monitor, uint32_t dpi_type, emulator_object<uint32_t> dpi_x,
                                            emulator_object<uint32_t> dpi_y);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
@@ -1028,6 +1029,7 @@ namespace sogen
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
         hdc handle_NtGdiOpenDCW(const syscall_context& c);
+        NTSTATUS handle_NtGdiDdDDIEnumAdapters(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS> enum_adapters);
         NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS2> enum_adapters);
         NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS3> enum_adapters);
         NTSTATUS handle_NtDxgkGetProperties(const syscall_context& c, emulator_object<EMU_D3DKMT_GET_PROPERTIES> get_properties);
@@ -2176,6 +2178,7 @@ namespace sogen
         add_handler(NtUserBuildHwndList);
         add_handler(NtUserEnumDisplayMonitors);
         add_handler(NtUserGetDpiForMonitor);
+        add_handler(NtGdiGetCurrentDpiInfo);
         add_handler(NtUserInheritWindowMonitor);
         add_handler(NtUserSetProp);
         add_handler(NtUserSetProp2);
@@ -2258,6 +2261,7 @@ namespace sogen
         add_handler(NtUserQueryDisplayConfig);
         add_handler(NtUserGetWindowContextHelpId);
         add_handler(NtUserSetWindowContextHelpId);
+        add_handler(NtGdiDdDDIEnumAdapters);
         add_handler(NtGdiDdDDIEnumAdapters2);
         add_handler(NtDxgkEnumAdapters3);
         add_handler(NtDxgkGetProperties);

@@ -885,6 +885,23 @@ namespace sogen
     static_assert(offsetof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64, PeakCommitment) == 56);
     static_assert(sizeof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64) == 64);
 
+    struct PROCESS_JOB_MEMORY_INFO
+    {
+        std::uint64_t SharedCommitUsage;
+        std::uint64_t PrivateCommitUsage;
+        std::uint64_t PeakPrivateCommitUsage;
+        std::uint64_t PrivateCommitLimit;
+        std::uint64_t TotalCommitLimit;
+    };
+
+    struct SYSTEM_BASIC_PERFORMANCE_INFORMATION64
+    {
+        std::uint64_t AvailablePages;
+        std::uint64_t CommittedPages;
+        std::uint64_t CommitLimit;
+        std::uint64_t PeakCommitment;
+    };
+
     typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
     {
         ULONG Length;
@@ -1340,6 +1357,24 @@ namespace sogen
             EMU_GROUP_RELATIONSHIP64 Group;
         };
     };
+
+    struct EMU_SYSTEM_CPU_SET_INFORMATION
+    {
+        DWORD Size;
+        DWORD Type;
+        DWORD Id;
+        WORD Group;
+        BYTE LogicalProcessorIndex;
+        BYTE CoreIndex;
+        BYTE LastLevelCacheIndex;
+        BYTE NumaNodeIndex;
+        BYTE EfficiencyClass;
+        BYTE AllFlags;
+        DWORD SchedulingClass;
+        DWORD64 AllocationTag;
+    };
+
+    static_assert(sizeof(EMU_SYSTEM_CPU_SET_INFORMATION) == 0x20);
 
     struct EMU_CACHE_DESCRIPTOR
     {
