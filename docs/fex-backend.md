@@ -90,6 +90,11 @@ build or run at all): from an ARM64 Clang host (Apple Silicon macOS or ARM64 Lin
 `cmake --preset=release` picks this backend up automatically once `deps/FEX` is checked out (see the
 root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requires a 4KB host page.
 
+For iOS, configure with `cmake --preset=ios-simulator-arm64` (Simulator) or `cmake --preset=ios-arm64`
+(device). iOS allows no shared libraries outside the app bundle, so FEXCore is linked statically there.
+Only building and linking is covered: FEXCore has no executable-memory mechanism for iOS devices, so
+the backend cannot run JIT code on a device.
+
 ## Known limitations
 
 - **A read-modify-write to a `PAGE_NOACCESS` page is reported to the guest as a read.** Faults are

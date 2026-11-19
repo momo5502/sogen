@@ -82,7 +82,7 @@ endif()
 # platform. Enabled automatically when those hold and the submodule is checked out.
 if((CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64") AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/FEX/CMakeLists.txt"
-   AND CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Android)$")
+   AND CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Android|iOS)$")
   set(SOGEN_ENABLE_FEX ON)
   message(STATUS "FEX backend: enabled (ARM64 ${CMAKE_SYSTEM_NAME} + Clang, deps/FEX present)")
 else()

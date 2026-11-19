@@ -1,21 +1,38 @@
-# FEX-Emu (x86 -> AArch64 JIT). Built only when the FEX backend is enabled (ARM64 Linux/Darwin/Android +
+# FEX-Emu (x86 -> AArch64 JIT). Built only when the FEX backend is enabled (ARM64 Linux/Darwin/Android/iOS +
 # Clang, resolved at the top level). FEX is not designed to be embedded via add_subdirectory: it
 # assumes it is the top-level project (~60 uses of CMAKE_SOURCE_DIR) and configures its whole
 # loader/tools tree. Instead build it standalone via ExternalProject and consume the resulting
 # self-contained shared FEXCore library (the FEXCore_shared target). Only that target is built -
-# not the FEX tools.
+# not the FEX tools. iOS allows no shared libraries outside the app bundle, so there the static
+# FEXCore archive is consumed instead, together with the static archives it depends on.
 if(SOGEN_ENABLE_FEX)
   include(ExternalProject)
 
   set(_FEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/FEX")
 
-  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    set(_FEXCORE_SHARED_LIB "libFEXCore.dylib")
+  set(_FEXCORE_STATIC_DEPS "")
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(_FEXCORE_LIB "libFEXCore.a")
+    set(_FEXCORE_BUILD_TARGETS FEXCore JemallocLibs)
+    set(_FEXCORE_OSX_ARGS -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+    set(_FEXCORE_STATIC_DEPS
+      FEXCore/Source/libFEXCore_Base.a
+      FEXCore/Source/libJemallocLibs.a
+      External/fmt/libfmt.a
+      External/xxhash/cmake_unofficial/libxxhash.a
+      External/cephes/libcephes_128bit.a
+      External/SoftFloat-3e/libsoftfloat_3e.a
+    )
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(_FEXCORE_LIB "libFEXCore.dylib")
+    set(_FEXCORE_BUILD_TARGETS FEXCore_shared)
     set(_FEXCORE_OSX_ARGS -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
   else()
-    set(_FEXCORE_SHARED_LIB "libFEXCore.so")
+    set(_FEXCORE_LIB "libFEXCore.so")
+    set(_FEXCORE_BUILD_TARGETS FEXCore_shared)
     set(_FEXCORE_OSX_ARGS "")
   endif()
+  list(TRANSFORM _FEXCORE_STATIC_DEPS PREPEND "<BINARY_DIR>/" OUTPUT_VARIABLE _FEXCORE_STATIC_DEP_BYPRODUCTS)
 
   if(CMAKE_TOOLCHAIN_FILE)
     set(_FEXCORE_TOOLCHAIN_ARGS -DCMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE})
@@ -78,13 +95,13 @@ if(SOGEN_ENABLE_FEX)
       # Do not let FEX replace the process allocator; sogen owns it when FEXCore is embedded.
       -DENABLE_FEX_ALLOCATOR=OFF
       -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
-    # Build only the self-contained shared core library, not FEX's loader/server tools.
-    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target FEXCore_shared
+    # Build only the self-contained core library, not FEX's loader/server tools.
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target ${_FEXCORE_BUILD_TARGETS}
     # The source directory is a submodule, whose changes ExternalProject cannot see, so FEX's own (incremental)
     # build runs every time.
     BUILD_ALWAYS TRUE
     INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS <BINARY_DIR>/FEXCore/Source/${_FEXCORE_SHARED_LIB}
+    BUILD_BYPRODUCTS <BINARY_DIR>/FEXCore/Source/${_FEXCORE_LIB} ${_FEXCORE_STATIC_DEP_BYPRODUCTS}
   )
 
   ExternalProject_Get_property(fex_external BINARY_DIR)
@@ -95,11 +112,13 @@ if(SOGEN_ENABLE_FEX)
   # runner. Copy the shared library into the artifacts directory too, alongside fex-emulator's own
   # output, so the test job's @loader_path-relative rpath resolves it without needing that
   # build-tree path to exist.
-  add_custom_command(
-    TARGET fex_external POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy "${BINARY_DIR}/FEXCore/Source/${_FEXCORE_SHARED_LIB}" "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
-    COMMENT "Copying libFEXCore shared library to the artifacts directory"
-  )
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_custom_command(
+      TARGET fex_external POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy "${BINARY_DIR}/FEXCore/Source/${_FEXCORE_LIB}" "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+      COMMENT "Copying libFEXCore shared library to the artifacts directory"
+    )
+  endif()
 
   # CMake validates that every directory in an IMPORTED target's INTERFACE_INCLUDE_DIRECTORIES
   # exists at generate time. ${BINARY_DIR}/include (FEXCore's build-time-generated headers, see
@@ -117,9 +136,15 @@ if(SOGEN_ENABLE_FEX)
   # hidden-visibility FEXCore library does not re-export. FEXCore also generates some of its own
   # headers at build time (Config/ConfigValues.inl, IR/IRDefines.inc, ...) into its binary dir's
   # include/ - consumers need that include dir too.
-  add_library(fexcore SHARED IMPORTED GLOBAL)
+  if(_FEXCORE_STATIC_DEPS)
+    list(TRANSFORM _FEXCORE_STATIC_DEPS PREPEND "${BINARY_DIR}/")
+    add_library(fexcore STATIC IMPORTED GLOBAL)
+    set_target_properties(fexcore PROPERTIES INTERFACE_LINK_LIBRARIES "${_FEXCORE_STATIC_DEPS}")
+  else()
+    add_library(fexcore SHARED IMPORTED GLOBAL)
+  endif()
   set_target_properties(fexcore PROPERTIES
-    IMPORTED_LOCATION "${BINARY_DIR}/FEXCore/Source/${_FEXCORE_SHARED_LIB}"
+    IMPORTED_LOCATION "${BINARY_DIR}/FEXCore/Source/${_FEXCORE_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${_FEX_SRC}/FEXCore/include;${BINARY_DIR}/include;${_FEX_SRC}/External/fmt/include;${_FEX_SRC}/External/unordered_dense/include"
     INTERFACE_COMPILE_DEFINITIONS "FMT_HEADER_ONLY=1")
 endif()
