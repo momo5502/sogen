@@ -1263,10 +1263,15 @@ namespace sogen
             // takes suspend and resume requests.
             if (!c.proc.managed_threads.get(thread_handle))
             {
-                if (const auto status = handle_NtAlertThread(c, thread_handle); !NT_SUCCESS(status))
+                auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+                if (!thread)
                 {
-                    return status;
+                    return get_unresolved_handle_status(thread_handle, handle_types::thread);
                 }
+
+                // KeAlertResumeThread alerts in kernel mode whatever the caller's mode, so NtTestAlert never sees it.
+                thread->kernel_mode_alerted = true;
+                c.win_emu.wake_idle_vcpu();
             }
 
             return handle_NtResumeThread(c, thread_handle, previous_suspend_count);

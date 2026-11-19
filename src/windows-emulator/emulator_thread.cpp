@@ -1571,18 +1571,34 @@ namespace sogen
             return false;
         }
 
-        if (this->is_wait_satisfied(win_emu))
+        if (this->take_alert_ending_wait())
         {
+            this->end_alertable_wait(STATUS_ALERTED);
             return true;
         }
 
-        if (!this->apc_alertable || !this->test_user_mode_alert())
+        return this->is_wait_satisfied(win_emu);
+    }
+
+    bool emulator_thread::is_in_alertable_wait() const
+    {
+        return this->apc_alertable && (this->await_time.has_value() || !this->await_objects.empty() || this->await_msg_mask.has_value() ||
+                                       this->await_io_completion.has_value() || this->await_debug_event.has_value());
+    }
+
+    bool emulator_thread::take_alert_ending_wait()
+    {
+        if (!this->is_in_alertable_wait())
         {
             return false;
         }
 
-        this->end_alertable_wait(STATUS_ALERTED);
-        return true;
+        if (this->test_user_mode_alert())
+        {
+            return true;
+        }
+
+        return this->pending_apcs.empty() && std::exchange(this->kernel_mode_alerted, false);
     }
 
     bool emulator_thread::is_wait_satisfied(windows_emulator& win_emu)
@@ -1591,7 +1607,7 @@ namespace sogen
         auto& clock = win_emu.clock();
 
         const auto complete_if_timed_out = [&](const NTSTATUS status) {
-            if (!this->is_await_time_over(clock) || this->can_end_alertable_wait())
+            if (!this->is_await_time_over(clock) || this->has_pending_alertable_apc())
             {
                 return false;
             }
@@ -1785,7 +1801,7 @@ namespace sogen
             // when this one was suspended.
             if (completion->queue.empty())
             {
-                if (timeout_expired(wait) && !this->can_end_alertable_wait())
+                if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
                     // NtRemoveIoCompletionEx stores the count of KeRemoveQueueEx's one entry, STATUS_TIMEOUT, under try;
                     // NtWaitForWorkViaWorkerFactory stores its count only when it succeeds (19041).

@@ -525,8 +525,10 @@ namespace sogen
 
         bool apc_alertable{false};
         std::vector<pending_apc> pending_apcs{};
-        // KTHREAD Alerted[UserMode], set by NtAlertThread. Unrelated to `alerted`, which is NtAlertThreadByThreadId's.
+        // KTHREAD Alerted[UserMode], set by NtAlertThread, and Alerted[KernelMode], set by NtAlertResumeThread. Unrelated
+        // to `alerted`, which is NtAlertThreadByThreadId's.
         bool user_mode_alerted{false};
+        bool kernel_mode_alerted{false};
 
         std::optional<NTSTATUS> pending_status{};
 
@@ -612,9 +614,9 @@ namespace sogen
             }
         }
 
-        bool can_end_alertable_wait() const
+        bool has_pending_alertable_apc() const
         {
-            return this->apc_alertable && (this->user_mode_alerted || !this->pending_apcs.empty());
+            return this->apc_alertable && !this->pending_apcs.empty();
         }
 
         bool test_user_mode_alert()
@@ -728,6 +730,7 @@ namespace sogen
             buffer.write(this->apc_alertable);
             buffer.write_vector(this->pending_apcs);
             buffer.write(this->user_mode_alerted);
+            buffer.write(this->kernel_mode_alerted);
 
             buffer.write_optional(this->pending_status);
             buffer.write(this->win32k_thread_info);
@@ -820,6 +823,7 @@ namespace sogen
             buffer.read(this->apc_alertable);
             buffer.read_vector(this->pending_apcs);
             buffer.read(this->user_mode_alerted);
+            buffer.read(this->kernel_mode_alerted);
 
             buffer.read_optional(this->pending_status);
             buffer.read(this->win32k_thread_info);
@@ -889,6 +893,8 @@ namespace sogen
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
 
+        bool is_in_alertable_wait() const;
+        bool take_alert_ending_wait();
         bool is_wait_satisfied(windows_emulator& win_emu);
 
         void setup_registers(cpu_interface& emu, const process_context& context) const;
