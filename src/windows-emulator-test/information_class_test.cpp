@@ -163,6 +163,41 @@ namespace sogen::test
         }
     }
 
+    TEST_F(InformationClassTest, ProcessImageInformationReadsTheImageOptionalHeaderFormat)
+    {
+        mapped_module module{};
+        module.image_base = this->storage + 0x400;
+        this->emu->mod_manager.executable = &module;
+        PEDosHeader_t dos{};
+        dos.e_lfanew = 0x100;
+        this->emu->memory.write_memory(module.image_base, dos);
+
+        const auto check = [&]<typename T>() {
+            PENTHeaders_t<T> headers{};
+            headers.OptionalHeader.Magic = PEOptionalHeader_t<T>::k_Magic;
+            headers.OptionalHeader.SizeOfStackReserve = 0x100000;
+            headers.OptionalHeader.SizeOfStackCommit = 0x2000;
+            headers.OptionalHeader.SizeOfHeapReserve = 0x300000;
+            headers.OptionalHeader.SizeOfHeapCommit = 0x4000;
+            headers.OptionalHeader.LoaderFlags = 0x1234;
+            headers.OptionalHeader.SizeOfImage = 0x9000;
+            headers.OptionalHeader.CheckSum = 0x5678;
+            this->emu->memory.write_memory(module.image_base + dos.e_lfanew, headers);
+            using image_information = SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>;
+            ASSERT_EQ(STATUS_SUCCESS, this->query_process(CURRENT_PROCESS, ProcessImageInformation,
+                                                          {.address = this->data().address, .length = sizeof(image_information)}));
+            const auto result = emulator_object<image_information>{this->emu->memory, this->data().address}.read();
+            EXPECT_EQ(0x100000u, result.MaximumStackSize);
+            EXPECT_EQ(0x2000u, result.CommittedStackSize);
+            EXPECT_EQ(0x9000u, result.ImageFileSize);
+            EXPECT_EQ(0x1234u, result.LoaderFlags);
+            EXPECT_EQ(0x5678u, result.CheckSum);
+        };
+        check.operator()<uint32_t>();
+        check.operator()<uint64_t>();
+        this->emu->mod_manager.executable = nullptr;
+    }
+
     TEST_F(InformationClassTest, QueryProcessFixedSizeClassesFollowWindowsLengthAndHandleRules)
     {
         const auto read_only_buffer = this->emu->memory.allocate_memory(0x1000, memory_permission::read);
