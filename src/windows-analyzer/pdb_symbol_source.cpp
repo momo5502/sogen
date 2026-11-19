@@ -211,7 +211,9 @@ namespace sogen
                 const auto validation = pdb_file{candidate}.validate(*sig);
                 if (validation.status == pdb_validation_status::mismatch)
                 {
-                    throw std::runtime_error("PDB signature mismatch for " + candidate.string());
+                    log.warn("Skipping PDB %s for %s: signature mismatch\n", candidate.string().c_str(),
+                             pe_path.filename().string().c_str());
+                    continue;
                 }
                 if (validation.status != pdb_validation_status::match)
                 {

@@ -13,18 +13,18 @@ namespace sogen
 
         const auto& section = mod.pe_sections[section_index - 1];
         const auto section_size = std::max(section.virtual_size, section.raw_size);
-        if (section_size != 0 && offset > section_size)
+        if (offset >= section_size)
         {
             return std::nullopt;
         }
 
-        const auto rva = section.virtual_address + offset;
+        const auto rva = static_cast<uint64_t>(section.virtual_address) + offset;
         if (rva >= mod.size_of_image)
         {
             return std::nullopt;
         }
 
-        return rva;
+        return static_cast<uint32_t>(rva);
     }
 
 } // namespace sogen
