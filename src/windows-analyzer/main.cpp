@@ -1324,7 +1324,7 @@ namespace sogen
                 ->check(CLI::IsMember({"trace", "callers", "all"}));
 
             std::vector<std::string> symbol_sources{};
-            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: pdb or map=PATH for the main executable")
+            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: pdb or [MODULE=]map:PATH")
                 ->expected(1, -1)
                 ->allow_extra_args(false);
 
@@ -1421,13 +1421,19 @@ namespace sogen
                     {
                         options.symbols.pdb.auto_lookup = true;
                     }
-                    else if (source.starts_with("map=") && source.size() > 4)
+                    else if (source.starts_with("map:") && source.size() > 4)
                     {
                         options.symbols.maps.emplace_back(map_symbol_input{.path = source.substr(4)});
                     }
+                    else if (const auto separator = source.find("=map:");
+                             separator != std::string::npos && separator > 0 && separator + 5 < source.size())
+                    {
+                        options.symbols.maps.emplace_back(
+                            map_symbol_input{.module = source.substr(0, separator), .path = source.substr(separator + 5)});
+                    }
                     else
                     {
-                        throw std::runtime_error("Invalid --symbol-source: expected pdb or map=PATH");
+                        throw std::runtime_error("Invalid --symbol-source: expected pdb or [MODULE=]map:PATH");
                     }
                 }
 
