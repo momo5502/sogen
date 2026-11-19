@@ -1,9 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <utils/shared_host_buffer.hpp>
-
-#include <cstring>
-#include <vector>
+#include "std_include.hpp"
 
 #if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <fcntl.h>

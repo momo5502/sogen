@@ -82,6 +82,7 @@ sogen_assign_source_group(${SRC_FILES})
 target_link_libraries(windows-emulator-test PRIVATE
   gtest
   gtest_main
+  flatbuffers
   windows-emulator
   windows-gdb-stub
   backend-selection
@@ -122,3 +123,5 @@ sogen_targets_set_folder("tests" windows-emulator-test)
 sogen_strip_target(windows-emulator-test)
 sogen_enable_hypervisor_entitlement(windows-emulator-test)
 sogen_target_skip_clang_tidy(windows-emulator-test)
+
+target_precompile_headers(windows-emulator-test PRIVATE std_include.hpp)

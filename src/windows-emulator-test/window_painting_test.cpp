@@ -1,9 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
-
-#include <initializer_list>
-#include <optional>
-#include <tuple>
+#include "std_include.hpp"
 
 namespace sogen::syscalls
 {

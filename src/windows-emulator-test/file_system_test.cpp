@@ -1,13 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <emulator_utils.hpp>
-#include <file_system.hpp>
-#include <filesystem/guest_file.hpp>
-
-#include <cstdlib>
-#include <fstream>
-#include <random>
-#include <set>
+#include "std_include.hpp"
 
 namespace sogen
 {

@@ -5666,6 +5666,24 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDIEnumAdapters(const syscall_context& c, const emulator_object<EMU_D3DKMT_ENUMADAPTERS> enum_adapters)
+        {
+            if (!enum_adapters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto status = write_default_dxgk_adapter_array(c, D3DKMT_MAX_ENUM_ADAPTERS,
+                                                                 enum_adapters.value() + offsetof(EMU_D3DKMT_ENUMADAPTERS, Adapters));
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            c.emu.write_memory<UINT32>(enum_adapters.value() + offsetof(EMU_D3DKMT_ENUMADAPTERS, NumAdapters), k_dxgk_adapter_count);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, const emulator_object<EMU_D3DKMT_ENUMADAPTERS2> enum_adapters)
         {
             if (!enum_adapters)

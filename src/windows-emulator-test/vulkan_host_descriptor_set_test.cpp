@@ -1,11 +1,8 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <devices/vulkan_host.hpp>
 #include <gpu_bridge_protocol.hpp>
 #include <vulkan/vulkan_core.h>
-
-#include <array>
-#include <cstdint>
 
 namespace sogen::test
 {

@@ -1,14 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <platform/crypt_protect_backend.hpp>
 #include "crypt_backends/dpapi_primitives.hpp"
-
-#include <array>
-#include <cstring>
-#include <filesystem>
-#include <memory>
-#include <random>
-#include <vector>
 
 namespace sogen::test
 {

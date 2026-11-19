@@ -1,14 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <logger.hpp>
 #include <queued_file_writer.hpp>
-
-#include <cstdio>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
-#include <string>
 
 namespace sogen::test
 {

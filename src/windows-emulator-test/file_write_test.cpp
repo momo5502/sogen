@@ -1,9 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
-#include <utils/finally.hpp>
-
-#include <fstream>
-#include <random>
+#include "std_include.hpp"
 
 namespace sogen::syscalls
 {

@@ -1,16 +1,6 @@
-#include <utils/host_pipe.hpp>
-#include <utils/finally.hpp>
-#include <utils/serialization.hpp>
-#include <network/tcp_server_socket.hpp>
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <chrono>
-#include <stdexcept>
-#include <thread>
-#include <vector>
-#include <future>
-#include <array>
-#include <atomic>
+#include <network/tcp_server_socket.hpp>
 
 namespace sogen::test
 {

@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "emulation_test_utils.hpp"
 #include "code_page_test_utils.hpp"
 

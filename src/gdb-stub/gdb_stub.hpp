@@ -37,6 +37,12 @@ namespace sogen::gdb_stub
         std::string name;
     };
 
+    struct stop_reason
+    {
+        breakpoint_type type;
+        uint64_t address;
+    };
+
     class binding_error : public std::runtime_error
     {
       public:
@@ -114,6 +120,11 @@ namespace sogen::gdb_stub
         virtual std::string consume_debug_output()
         {
             return {};
+        }
+
+        virtual std::optional<stop_reason> consume_stop_reason()
+        {
+            return std::nullopt;
         }
 
         virtual std::string get_os_abi()

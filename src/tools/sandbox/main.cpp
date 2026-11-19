@@ -162,10 +162,12 @@ namespace sogen::sandbox
             }
 
 #ifdef _WIN32
-            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides. Snapshots only
-            // support a single vCPU so far.
+            // One vCPU per host core, but at most four: every syscall takes the kernel lock, so further vCPUs mostly wait for
+            // it (Skyrim runs at about 30 FPS with 12 vCPUs and 40 with 4). EMULATOR_VCPU_COUNT overrides, up to the 64 WHP
+            // supports per partition. Snapshots only support a single vCPU so far.
+            constexpr uint32_t max_default_vcpu_count = 4;
             const auto resumes = !resume_file.empty();
-            auto vcpu_count = resumes ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            auto vcpu_count = resumes ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, max_default_vcpu_count);
             if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
             {
                 vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
@@ -202,62 +204,65 @@ namespace sogen::sandbox
             settings.root_layer = root_layer;
             settings.mounts = std::move(mounts);
 
-            subprocess_process_manager process_manager{utils::get_current_executable_path(), [&](const auto port, const auto& token) {
-                                                           std::vector<std::string> arguments{"--managed-process-port",
-                                                                                              std::to_string(port),
-                                                                                              "--managed-process-token",
-                                                                                              token,
-                                                                                              "--registry",
-                                                                                              settings.registry_directory.string()};
-                                                           arguments.emplace_back("--network");
-                                                           arguments.emplace_back(network::to_string(network_mode));
-                                                           if (spoof_gpu_features)
-                                                           {
-                                                               arguments.emplace_back("--spoof-gpu-features");
-                                                           }
-                                                           if (elevated)
-                                                           {
-                                                               arguments.emplace_back("--elevated");
-                                                           }
-                                                           if (max_display_mode)
-                                                           {
-                                                               arguments.emplace_back("--max-display-mode");
-                                                               arguments.push_back(to_string(*max_display_mode));
-                                                           }
-                                                           if (!settings.emulation_root.empty())
-                                                           {
-                                                               arguments.emplace_back("--emulation");
-                                                               arguments.push_back(settings.emulation_root.string());
-                                                           }
-                                                           arguments.emplace_back("--root-mode");
-                                                           arguments.emplace_back(to_string(settings.root_mode));
-                                                           if (!settings.root_layer.empty())
-                                                           {
-                                                               arguments.emplace_back("--root-layer");
-                                                               arguments.push_back(settings.root_layer.string());
-                                                           }
-                                                           for (const auto& mount : settings.mounts)
-                                                           {
-                                                               arguments.emplace_back("--mount");
-                                                               arguments.push_back(render_mount_spec(mount));
-                                                           }
-                                                           for (const auto& mount : directory_mounts)
-                                                           {
-                                                               arguments.emplace_back("--directory-mount");
-                                                               std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
-                                                           }
-                                                           for (const auto& mount : document_mounts)
-                                                           {
-                                                               arguments.emplace_back("--document-mount");
-                                                               std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
-                                                           }
-                                                           for (const auto& file : registry_files)
-                                                           {
-                                                               arguments.emplace_back("--reg-file");
-                                                               arguments.push_back(file.string());
-                                                           }
-                                                           return arguments;
-                                                       }};
+            subprocess_process_manager process_manager{
+                utils::get_current_executable_path(),
+                [&](const auto port, const auto& token) {
+                    std::vector<std::string> arguments{"--managed-process-port",
+                                                       std::to_string(port),
+                                                       "--managed-process-token",
+                                                       token,
+                                                       "--registry",
+                                                       settings.registry_directory.string()};
+                    arguments.emplace_back("--network");
+                    arguments.emplace_back(network::to_string(network_mode));
+                    if (spoof_gpu_features)
+                    {
+                        arguments.emplace_back("--spoof-gpu-features");
+                    }
+                    if (elevated)
+                    {
+                        arguments.emplace_back("--elevated");
+                    }
+                    if (max_display_mode)
+                    {
+                        arguments.emplace_back("--max-display-mode");
+                        arguments.push_back(to_string(*max_display_mode));
+                    }
+                    if (!settings.emulation_root.empty())
+                    {
+                        arguments.emplace_back("--emulation");
+                        arguments.push_back(settings.emulation_root.string());
+                    }
+                    arguments.emplace_back("--root-mode");
+                    arguments.emplace_back(to_string(settings.root_mode));
+                    if (!settings.root_layer.empty())
+                    {
+                        arguments.emplace_back("--root-layer");
+                        arguments.push_back(settings.root_layer.string());
+                    }
+                    for (const auto& mount : settings.mounts)
+                    {
+                        arguments.emplace_back("--mount");
+                        arguments.push_back(render_mount_spec(mount));
+                    }
+                    for (const auto& mount : directory_mounts)
+                    {
+                        arguments.emplace_back("--directory-mount");
+                        std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
+                    }
+                    for (const auto& mount : document_mounts)
+                    {
+                        arguments.emplace_back("--document-mount");
+                        std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
+                    }
+                    for (const auto& file : registry_files)
+                    {
+                        arguments.emplace_back("--reg-file");
+                        arguments.push_back(file.string());
+                    }
+                    return arguments;
+                },
+                create_subprocess_launcher(), managed_connection ? managed_connection->request().session : process_session_endpoint{}};
 
             // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
             // other way out leaves the children to the process manager's destructor.

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <arch_emulator.hpp>
 #include <function_calling_convention.hpp>

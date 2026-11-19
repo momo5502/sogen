@@ -1219,7 +1219,6 @@ namespace sogen
         buffer.write(this->next_low_level_input_id);
         buffer.write(this->next_hook_handle);
         buffer.write(this->drop_low_level_characters);
-        buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
         buffer.write_map(this->audio_render_events_by_stream);
         buffer.write_map(this->pending_audio_render_events);
@@ -1360,7 +1359,6 @@ namespace sogen
         buffer.read(this->next_low_level_input_id);
         buffer.read(this->next_hook_handle);
         buffer.read(this->drop_low_level_characters);
-        buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
         buffer.read_map(this->audio_render_events_by_stream);
         buffer.read_map(this->pending_audio_render_events);
@@ -1955,7 +1953,29 @@ namespace sogen
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread,
                                           const uint64_t stack_commit_size)
     {
-        const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
+        uint32_t thread_id = this->initial_thread_id;
+        if (!initial_thread)
+        {
+            const auto allocated = this->process_manager_ ? this->process_manager_->allocate_thread_id() : std::nullopt;
+            if (allocated)
+            {
+                if (!*allocated)
+                {
+                    return {};
+                }
+                thread_id = allocated->id;
+            }
+            else
+            {
+                const auto next_id = static_cast<uint64_t>(this->initial_thread_id) + static_cast<uint64_t>(this->spawned_thread_count) * 4;
+                if (next_id > UINT32_MAX)
+                {
+                    return {};
+                }
+                thread_id = static_cast<uint32_t>(next_id);
+            }
+        }
+        ++this->spawned_thread_count;
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
@@ -2031,6 +2051,28 @@ namespace sogen
         return exported;
     }
 
+    bool process_context::reply_to_sent_message(sent_window_message& message, const uint64_t result)
+    {
+        if (std::exchange(message.replied, true))
+        {
+            return false;
+        }
+        auto* sender = this->find_thread_by_id(message.sender_thread_id);
+        if (!sender || sender->is_terminated())
+        {
+            return false;
+        }
+
+        auto& waits = sender->sent_message_waits;
+        const auto wait = std::ranges::find(waits, message.sender_callback_depth, &sent_message_wait::callback_depth);
+        if (wait == waits.end())
+        {
+            return false;
+        }
+        wait->result = result;
+        return true;
+    }
+
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
         if (!thread.is_terminated())
@@ -2039,6 +2081,22 @@ namespace sogen
         }
 
         thread.exit_status = thread_exit_status;
+        thread.clear_raw_input();
+        for (auto& sent : thread.pending_sent_messages)
+        {
+            this->reply_to_sent_message(sent, 0);
+        }
+        for (auto& sent : thread.active_sent_messages)
+        {
+            this->reply_to_sent_message(sent, 0);
+            if (sent.scratch_text != 0)
+            {
+                thread.memory_ptr->release_memory(sent.scratch_text, 0);
+            }
+        }
+        thread.pending_sent_messages.clear();
+        thread.active_sent_messages.clear();
+        thread.sent_message_waits.clear();
         this->impersonate_token(thread, {});
 
         for (auto& entry : this->mutants | std::views::values)

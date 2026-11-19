@@ -1,5 +1,6 @@
+#include "std_include.hpp"
+
 #include "rpc_test_utils.hpp"
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {

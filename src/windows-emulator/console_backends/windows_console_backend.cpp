@@ -1,5 +1,9 @@
 #include "../std_include.hpp"
 #include "buffered_console_backend.hpp"
+#include <thread>
+#include <system_error>
+#include <utils/nt_handle.hpp>
+#include <utils/nt_thread.hpp>
 
 #ifdef OS_WINDOWS
 namespace sogen
@@ -46,7 +50,78 @@ namespace sogen
 
             ~windows_console_backend() override
             {
+                this->stop_reader();
                 this->restore_terminal();
+            }
+
+            std::optional<std::string> try_read_input(const size_t length) override
+            {
+                if (!this->reader_.joinable() && !this->read_text_.empty())
+                {
+                    this->buffer_text(std::exchange(this->read_text_, {}));
+                }
+                if (length == 0 || !this->input_.empty())
+                {
+                    return buffered_console_backend::try_read_input(length);
+                }
+                if (this->reader_.joinable())
+                {
+                    if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
+                    {
+                        return std::nullopt;
+                    }
+                    this->reader_.join();
+                    const auto has_text = !this->read_text_.empty();
+                    this->buffer_text(std::exchange(this->read_text_, {}));
+                    if (this->input_.empty())
+                    {
+                        return has_text ? this->try_read_input(length) : std::optional<std::string>{std::string{}};
+                    }
+                    return buffered_console_backend::try_read_input(length);
+                }
+                if (!this->reader_handle_)
+                {
+                    this->reader_handle_ =
+                        CreateFileW(L"CONIN$", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+                    if (!this->reader_handle_)
+                    {
+                        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Opening console reader");
+                    }
+                }
+                this->read_text_.resize(std::min<size_t>(length, 256));
+                this->reader_ = std::thread([this] {
+                    DWORD count{};
+                    if (!ReadConsoleW(this->reader_handle_, this->read_text_.data(), static_cast<DWORD>(this->read_text_.size()), &count,
+                                      nullptr))
+                    {
+                        count = 0;
+                    }
+                    this->read_text_.resize(count);
+                });
+                return std::nullopt;
+            }
+
+            bool cancel_read_input() override
+            {
+                if (!this->reader_.joinable())
+                {
+                    return true;
+                }
+                if (!CancelIoEx(this->reader_handle_, nullptr))
+                {
+                    const auto error = GetLastError();
+                    if (error != ERROR_NOT_FOUND)
+                    {
+                        throw std::system_error(static_cast<int>(error), std::system_category(), "CancelIoEx");
+                    }
+                }
+                if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
+                {
+                    return false;
+                }
+                this->reader_.join();
+                this->reader_handle_ = INVALID_HANDLE_VALUE;
+                return true;
             }
 
             std::string read_input(const size_t length) override
@@ -93,6 +168,8 @@ namespace sogen
 
             void reset() override
             {
+                this->stop_reader();
+                this->reader_handle_ = INVALID_HANDLE_VALUE;
                 this->restore_terminal();
                 this->pending_surrogate_ = 0;
                 buffered_console_backend::reset();
@@ -101,6 +178,10 @@ namespace sogen
           protected:
             void refill(const int timeout_ms) override
             {
+                if (this->reader_.joinable())
+                {
+                    return;
+                }
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(timeout_ms, 0));
                 while (this->input_.empty())
                 {
@@ -163,6 +244,16 @@ namespace sogen
             }
 
           private:
+            void stop_reader()
+            {
+                while (!this->cancel_read_input())
+                {
+                    // Cancellation can race the worker entering ReadConsoleW, so retry until it has actually exited.
+                    WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 1);
+                }
+                this->read_text_.clear();
+            }
+
             void buffer_text(std::u16string text)
             {
                 if (this->pending_surrogate_)
@@ -192,6 +283,9 @@ namespace sogen
             DWORD original_mode_{};
             bool terminal_modified_{};
             char16_t pending_surrogate_{};
+            utils::nt::handle<utils::nt::invalid_handle> reader_handle_{};
+            std::thread reader_{};
+            std::u16string read_text_{};
         };
     }
 

@@ -396,8 +396,9 @@ namespace sogen
 
         process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb, const bool intercept_kusd,
                         const windows_guest_architecture architecture = windows_guest_architecture::x86_64,
-                        std::function<std::optional<native_tsc>()> read_tsc = {})
+                        std::function<std::optional<native_tsc>()> read_tsc = {}, process_manager* manager = nullptr)
             : callbacks_(&cb),
+              process_manager_(manager),
               base_allocator(emu),
               peb64(emu),
               process_params64(emu),
@@ -423,6 +424,7 @@ namespace sogen
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false, uint64_t stack_commit_size = 0);
         void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
+        bool reply_to_sent_message(sent_window_message& message, uint64_t result);
 
         // PsImpersonateClient keeps the token object itself, so the thread keeps the privileges of the token it was
         // given and the guest closing that handle does not end the impersonation. A token identity is not an object
@@ -512,6 +514,7 @@ namespace sogen
         uint32_t hard_error_mode{0};
 
         callbacks* callbacks_{};
+        process_manager* process_manager_{};
 
         std::vector<uint8_t> sid{};
 
@@ -693,22 +696,6 @@ namespace sogen
         // The host sends the character of a key as its own event, so it has to be dropped with a swallowed key press.
         bool drop_low_level_characters{};
 
-        // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
-        // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
-        struct raw_input_payload
-        {
-            bool keyboard{};              // false = mouse, true = keyboard
-            int32_t dx{};                 // mouse relative motion
-            int32_t dy{};                 //
-            uint16_t mouse_buttons{};     // RI_MOUSE_* button transition flags
-            uint16_t mouse_button_data{}; // wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL
-            uint16_t vkey{};              // keyboard virtual key
-            uint16_t scan_code{};         // keyboard scan code
-            uint32_t key_message{};       // corresponding WM_KEY* or WM_SYSKEY* message
-            bool key_extended{};          // true when the key's scan code has an E0 prefix (lParam bit 24)
-        };
-
-        std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};
 
         // For WOW64 processes

@@ -1,13 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
-
-#include <array>
-#include <cstring>
-#include <map>
-#include <span>
-#include <utility>
-#include <vector>
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 namespace sogen::syscalls
 {

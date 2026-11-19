@@ -1,6 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <filesystem/mount_spec.hpp>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

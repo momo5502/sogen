@@ -92,6 +92,39 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            // Windows assigns CPU set IDs starting at 0x100, one per logical processor.
+            NTSTATUS handle_cpu_set_information(const syscall_context& c, const uint64_t system_information,
+                                                const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+            {
+                constexpr uint32_t first_cpu_set_id = 0x100;
+
+                const auto processor_count =
+                    std::min<uint32_t>(c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }), 64);
+                const auto required_size = static_cast<uint32_t>(processor_count * sizeof(EMU_SYSTEM_CPU_SET_INFORMATION));
+
+                if (return_length)
+                {
+                    return_length.write(required_size);
+                }
+
+                if (system_information_length < required_size)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                for (uint32_t processor = 0; processor < processor_count; ++processor)
+                {
+                    EMU_SYSTEM_CPU_SET_INFORMATION cpu_set{};
+                    cpu_set.Size = sizeof(EMU_SYSTEM_CPU_SET_INFORMATION);
+                    cpu_set.Id = first_cpu_set_id + processor;
+                    cpu_set.LogicalProcessorIndex = static_cast<BYTE>(processor);
+                    cpu_set.CoreIndex = static_cast<BYTE>(processor);
+                    c.emu.write_memory(system_information + processor * sizeof(cpu_set), cpu_set);
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             NTSTATUS handle_logical_processor_and_group_information(const syscall_context& c, const uint64_t input_buffer,
                                                                     const uint32_t input_buffer_length, const uint64_t system_information,
                                                                     const uint32_t system_information_length,
@@ -1035,6 +1068,9 @@ namespace sogen
                 return handle_logical_processor_and_group_information(c, input_buffer, input_buffer_length, system_information,
                                                                       system_information_length, return_length);
 
+            case SystemCpuSetInformation:
+                return handle_cpu_set_information(c, system_information, system_information_length, return_length);
+
             case SystemLogicalProcessorInformation: {
                 if (!input_buffer || input_buffer_length != sizeof(USHORT))
                 {
@@ -1136,6 +1172,23 @@ namespace sogen
                     return_length.try_write(system_information_length);
                 }
                 return STATUS_SUCCESS;
+
+            case SystemBasicPerformanceInformation:
+                if (system_information_length != sizeof(SYSTEM_BASIC_PERFORMANCE_INFORMATION64))
+                {
+                    if (return_length)
+                    {
+                        return_length.try_write(sizeof(SYSTEM_BASIC_PERFORMANCE_INFORMATION64));
+                    }
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                return handle_query<SYSTEM_BASIC_PERFORMANCE_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length, [](SYSTEM_BASIC_PERFORMANCE_INFORMATION64& info) {
+                        info.AvailablePages = physical_page_count / 2;
+                        info.CommittedPages = physical_page_count / 4;
+                        info.CommitLimit = physical_page_count + physical_page_count / 2;
+                        info.PeakCommitment = info.CommittedPages;
+                    });
 
             case SystemProcessorPowerInformation:
             case SystemInterruptInformation:

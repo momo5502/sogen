@@ -85,7 +85,8 @@ namespace sogen
         bool runs_get_message_hook(const emulator_thread& thread)
         {
             return std::ranges::any_of(thread.callback_stack, [](const callback_frame& frame) {
-                return dynamic_cast<const get_message_hook_state*>(frame.state.get()) != nullptr;
+                const auto* state = dynamic_cast<const message_retrieval_state*>(frame.state.get());
+                return state && state->callback == message_retrieval_callback::get_message_hook;
             });
         }
 
@@ -198,7 +199,7 @@ namespace sogen
             .hook_data = message,
         };
 
-        get_message_hook_state state{};
+        message_retrieval_state state{};
         state.message = message;
         dispatch_user_callback(c, completion_id, k_fn_hk_in_lp_msg_callback_id, std::move(state), args);
         return true;
@@ -206,7 +207,7 @@ namespace sogen
 
     msg complete_get_message_hook(const syscall_context& c)
     {
-        auto message = c.get_completion_state<get_message_hook_state>().message;
+        auto message = c.get_completion_state<message_retrieval_state>().message;
         const auto& result = c.get_callback_result_object();
         if (result.output != 0 && result.output_size >= sizeof(message))
         {

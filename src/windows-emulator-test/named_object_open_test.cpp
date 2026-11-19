@@ -1,5 +1,5 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
+#include "std_include.hpp"
+
 #include <memory_condition_events.hpp>
 
 namespace sogen::syscalls

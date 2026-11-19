@@ -1,14 +1,8 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <devices/vulkan_host.hpp>
 #include <gpu_bridge_protocol.hpp>
 #include <vk_feature_chain.hpp>
-
-#include <array>
-#include <chrono>
-#include <cstring>
-#include <future>
-#include <vector>
 
 namespace sogen::test
 {

@@ -349,10 +349,38 @@ namespace sogen
                                                      uint64_t& out_alignment, uint32_t& out_memory_type_bits);
         int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
 
-        // Records a single image memory barrier into the (recording) command buffer.
-        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
-                                     uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
-                                     uint32_t src_queue_family_index, uint32_t dst_queue_family_index, const subresource_range& range);
+        struct barrier_masks
+        {
+            uint64_t src_stage_mask;
+            uint64_t src_access_mask;
+            uint64_t dst_stage_mask;
+            uint64_t dst_access_mask;
+        };
+
+        struct buffer_barrier
+        {
+            barrier_masks masks;
+            uint32_t src_queue_family_index;
+            uint32_t dst_queue_family_index;
+            uint64_t buffer;
+            uint64_t offset;
+            uint64_t size;
+        };
+
+        struct image_barrier
+        {
+            barrier_masks masks;
+            uint32_t old_layout;
+            uint32_t new_layout;
+            uint32_t src_queue_family_index;
+            uint32_t dst_queue_family_index;
+            uint64_t image;
+            subresource_range range;
+        };
+
+        // Records a VkDependencyInfo into the (recording) command buffer.
+        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags, std::span<const barrier_masks> memory_barriers,
+                                     std::span<const buffer_barrier> buffer_barriers, std::span<const image_barrier> image_barriers);
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
@@ -509,7 +537,8 @@ namespace sogen
                                   uint32_t base_mip_level, uint32_t level_count, uint32_t base_array_layer, uint32_t layer_count,
                                   uint32_t swizzle_r, uint32_t swizzle_g, uint32_t swizzle_b, uint32_t swizzle_a, uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
-        int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t& out_view);
+        int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t usage,
+                                   uint64_t& out_view);
         void destroy_buffer_view(uint64_t device, uint64_t buffer_view);
         int32_t cmd_copy_buffer(uint64_t command_buffer, uint64_t src_buffer, uint64_t dst_buffer, std::span<const buffer_copy> regions);
         int32_t create_query_pool(uint64_t device, uint32_t query_type, uint32_t query_count, uint32_t pipeline_statistics,
@@ -725,11 +754,30 @@ namespace sogen
         };
 
         // Optional depth-stencil state for a pipeline (test_enable == 0 => none, as before).
-        struct depth_state
+        struct stencil_op_state
         {
-            uint32_t test_enable;
-            uint32_t write_enable;
+            uint32_t fail_op;
+            uint32_t pass_op;
+            uint32_t depth_fail_op;
             uint32_t compare_op;
+            uint32_t compare_mask;
+            uint32_t write_mask;
+            uint32_t reference;
+        };
+
+        struct depth_stencil_state
+        {
+            bool present;
+            uint32_t flags;
+            uint32_t depth_test_enable;
+            uint32_t depth_write_enable;
+            uint32_t depth_compare_op;
+            uint32_t depth_bounds_test_enable;
+            uint32_t stencil_test_enable;
+            stencil_op_state front;
+            stencil_op_state back;
+            float min_depth_bounds;
+            float max_depth_bounds;
         };
 
         struct spec_entry
@@ -768,6 +816,22 @@ namespace sogen
             std::span<const uint8_t> identifier;
         };
 
+        struct pipeline_stage
+        {
+            uint32_t stage; // VkShaderStageFlagBits
+            shader_stage_source source;
+            specialization spec;
+        };
+
+        struct tessellation_state
+        {
+            bool present;
+            uint32_t flags;
+            uint32_t patch_control_points;
+            bool domain_origin_present;
+            uint32_t domain_origin;
+        };
+
         int32_t create_pipeline_cache(uint64_t device, uint32_t flags, std::span<const uint8_t> initial_data, uint64_t& out_pipeline_cache);
         void destroy_pipeline_cache(uint64_t device, uint64_t pipeline_cache);
         int32_t get_pipeline_cache_data(uint64_t device, uint64_t pipeline_cache, void* out, size_t out_size, bool has_data,
@@ -785,8 +849,8 @@ namespace sogen
             uint64_t render_pass{};
             uint32_t subpass{};
             uint64_t pipeline_layout{};
-            shader_stage_source vertex_shader{};
-            shader_stage_source fragment_shader{};
+            std::span<const pipeline_stage> stages{};
+            tessellation_state tessellation{};
             uint64_t flags{};         // VkPipelineCreateFlags2
             uint32_t library_parts{}; // VkGraphicsPipelineLibraryFlagsEXT this pipeline defines
             std::span<const uint64_t> libraries{};
@@ -795,7 +859,7 @@ namespace sogen
             std::span<const vertex_binding> bindings{};
             std::span<const vertex_attribute> attributes{};
             std::span<const vertex_divisor> divisors{};
-            depth_state depth{};
+            depth_stencil_state depth_stencil{};
             std::span<const uint32_t> color_formats{};
             uint32_t depth_format{};
             uint32_t stencil_format{};
@@ -805,8 +869,6 @@ namespace sogen
             uint32_t rasterization_stream{};
             uint32_t rasterization_stream_flags{};
             std::span<const uint32_t> dynamic_states{};
-            specialization vs_spec{};
-            specialization fs_spec{};
             std::span<const color_blend_attachment> blend_attachments{};
         };
 
@@ -816,7 +878,7 @@ namespace sogen
                                          const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked,
                                          uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
-                                        const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline);
+                                        const shader_stage_source& shader, uint64_t flags, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         struct render_area

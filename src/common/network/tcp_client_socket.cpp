@@ -123,6 +123,35 @@ namespace sogen::network
         return error == SERR(EWOULDBLOCK);
     }
 
+    bool tcp_client_socket::connect(const address& target, const std::chrono::steady_clock::time_point deadline,
+                                    const std::atomic_bool* stopping)
+    {
+        if (!this->set_blocking(false))
+        {
+            return false;
+        }
+        if (::connect(this->get_socket(), &target.get_addr(), target.get_size()) != SOCKET_ERROR)
+        {
+            return true;
+        }
+        const auto error = GET_SOCKET_ERROR();
+        if (error != SERR(EWOULDBLOCK) && error != SERR(EINPROGRESS))
+        {
+            return false;
+        }
+        while ((!stopping || !*stopping) && std::chrono::steady_clock::now() < deadline)
+        {
+            if (!this->sleep(std::chrono::milliseconds(10), false))
+            {
+                continue;
+            }
+            int result{};
+            socklen_t size = sizeof(result);
+            return getsockopt(this->get_socket(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&result), &size) == 0 && result == 0;
+        }
+        return false;
+    }
+
     void tcp_client_socket::close()
     {
         if (*this && this->get_target())

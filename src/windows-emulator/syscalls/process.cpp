@@ -460,25 +460,20 @@ namespace sogen
             {
                 return map_process_error(result.error);
             }
-            const auto process_id = result.process_id;
+            const auto process_id = result.process.identity.process_id;
             const auto thread_id = result.thread_id;
 
-            emulator_process child{};
-            child.process = result.process;
-            child.id = process_id;
-            child.is_wow64_process = child_is_wow64;
-            child.native_environment = result.native_environment;
-            child.compatibility_environment = result.compatibility_environment;
-            const auto child_process_handle = c.proc.processes.store(std::move(child));
-            (void)c.proc.processes.set_attributes(child_process_handle, get_handle_attributes(process_object_attributes));
+            const auto child_process_handle =
+                c.proc.processes.store(make_emulator_process(result.process), get_handle_attributes(process_object_attributes));
 
             if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
             {
-                debugger->debuggees.push_back({.process = result.process.value, .process_id = process_id, .thread_ids = {thread_id}});
+                debugger->debuggees.push_back(
+                    {.process = result.process.handle.value, .identity = result.process.identity, .thread_ids = {thread_id}});
             }
 
             managed_process_thread initial_thread{};
-            initial_thread.process = result.process;
+            initial_thread.process = result.process.handle;
             initial_thread.process_id = process_id;
             initial_thread.thread_id = thread_id;
             const auto child_thread_handle = c.proc.managed_threads.store(std::move(initial_thread));
@@ -490,8 +485,8 @@ namespace sogen
             creation.State = PsCreateSuccess;
             creation.SuccessState = {};
             creation.SuccessState.CurrentParameterFlags = parameters.Flags;
-            creation.SuccessState.PebAddressNative = result.native_environment;
-            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.compatibility_environment);
+            creation.SuccessState.PebAddressNative = result.process.identity.native_environment;
+            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.process.identity.compatibility_environment);
             creation.SuccessState.UserProcessParametersNative = result.native_parameters;
             creation.SuccessState.UserProcessParametersWow64 = static_cast<uint32_t>(result.compatibility_parameters);
             create_info.write(creation);
@@ -599,7 +594,7 @@ namespace sogen
                         basic_info.ExitStatus = status.status ? process_exit_code(*status.status) : STATUS_PENDING;
                         basic_info.PebBaseAddress = managed->native_environment;
                         basic_info.UniqueProcessId = managed->id;
-                        basic_info.InheritedFromUniqueProcessId = c.proc.process_id;
+                        basic_info.InheritedFromUniqueProcessId = managed->parent_id;
                     };
 
                     switch (process_information_length)
@@ -1016,6 +1011,11 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case ProcessJobMemoryInformation:
+                // The emulated process never belongs to a job.
+                return process_information_length == sizeof(PROCESS_JOB_MEMORY_INFO) ? STATUS_ERROR_PROCESS_NOT_IN_JOB
+                                                                                     : STATUS_INFO_LENGTH_MISMATCH;
+
             case ProcessImageFileName: {
                 const auto image_path = c.win_emu.mod_manager.executable->module_path.to_device_path();
                 const auto string_length = image_path.size() * sizeof(char16_t);
@@ -1315,9 +1315,33 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (auto* manager = c.win_emu.processes(); manager && id.UniqueProcess <= std::numeric_limits<uint32_t>::max())
+            {
+                const auto result = manager->open_process(static_cast<uint32_t>(id.UniqueProcess));
+                if (result)
+                {
+                    for (const auto& [index, process] : c.proc.processes)
+                    {
+                        if (process.process == result.process.handle)
+                        {
+                            process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
+                            return STATUS_SUCCESS;
+                        }
+                    }
+                    const auto opened =
+                        c.proc.processes.store(make_emulator_process(result.process), get_handle_attributes(object_attributes));
+                    process_handle.write(opened);
+                    return STATUS_SUCCESS;
+                }
+                if (result.error != process_error::invalid_process)
+                {
+                    return map_process_error(result.error);
+                }
+            }
+
             for (const auto& [index, process] : c.proc.processes)
             {
-                if (process.process && process.id == id.UniqueProcess)
+                if (!c.win_emu.processes() && process.process && process.id == id.UniqueProcess)
                 {
                     process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;

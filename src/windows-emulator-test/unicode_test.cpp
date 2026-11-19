@@ -1,7 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <platform/platform.hpp>
-#include <cstring>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

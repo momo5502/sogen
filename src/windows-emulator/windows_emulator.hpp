@@ -273,6 +273,8 @@ namespace sogen
         const device_registry device_registry_;
         bool setup_completed_{false};
 
+        void initialize_process_manager();
+
         // Host threads owned by the process, such as audio streams, signal the guest through these, so they have to
         // outlive it.
         std::mutex idle_wakeup_mutex_{};
@@ -506,7 +508,7 @@ namespace sogen
         void finish_low_level_hook(emulator_thread& thread, bool swallow);
         bool has_low_level_hook_work(uint32_t thread_id);
         emulator_thread* drain_low_level_input();
-        void deliver_raw_input(const process_context::raw_input_payload& payload, hwnd explicit_target);
+        void deliver_raw_input(const raw_input_payload& payload, hwnd explicit_target);
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags, uint16_t button_data = 0);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, uint32_t message, bool extended);
 
@@ -628,6 +630,7 @@ namespace sogen
         void mark_process_setup_completed()
         {
             this->setup_completed_ = true;
+            this->initialize_process_manager();
         }
 
         void wake_idle_vcpu();

@@ -62,7 +62,10 @@ namespace sogen
 
             if ((context.ContextFlags & CONTEXT_FLOATING_POINT_64) == CONTEXT_FLOATING_POINT_64)
             {
-                emu.reg<uint16_t>(x86_register::fpcw, context.FltSave.ControlWord);
+                // KxContextToKframes takes the XMM registers and MXCSR (kept to KiMxCsrMask) from the context and keeps
+                // what a user context may set of FltSave's control word; fxrstor then loads FltSave without its MXCSR.
+                emu.reg<uint32_t>(x86_register::mxcsr, context.MxCsr & mxcsr_legal);
+                emu.reg<uint16_t>(x86_register::fpcw, (context.FltSave.ControlWord & x87_control_legal) | x87_control_always_one);
                 emu.reg<uint16_t>(x86_register::fpsw, context.FltSave.StatusWord);
 
                 for (int i = 0; i < 8; i++)
@@ -73,11 +76,6 @@ namespace sogen
 
                 // After the registers: a backend that keeps FSAVE's full tag word classifies the values they now hold.
                 emu.reg<uint16_t>(x86_register::fptag, context.FltSave.TagWord);
-            }
-
-            if ((context.ContextFlags & CONTEXT_XSTATE_64) == CONTEXT_XSTATE_64)
-            {
-                emu.reg<uint32_t>(x86_register::mxcsr, context.MxCsr);
 
                 for (int i = 0; i < 16; i++)
                 {
@@ -85,6 +83,9 @@ namespace sogen
                     emu.reg<M128A>(reg, (&context.Xmm0)[i]);
                 }
             }
+
+            // CONTEXT_XSTATE's AVX and later state is in the CONTEXT_EX area after the record (KxContextToKframes
+            // restores it with RtlXRestoreS), which this does not read.
         }
 
         void save(x86_64_cpu& emu, CONTEXT64& context)
@@ -146,24 +147,34 @@ namespace sogen
 
             if ((context.ContextFlags & CONTEXT_FLOATING_POINT_64) == CONTEXT_FLOATING_POINT_64)
             {
+                // KeContextFromKframes fxsaves the thread's state into FltSave, takes the XMM registers from its frames
+                // and gives MxCsr and FltSave.MxCsr the frame's MXCSR.
+                const auto mxcsr = emu.reg<uint32_t>(x86_register::mxcsr);
+                context.MxCsr = mxcsr;
                 context.FltSave.ControlWord = emu.reg<uint16_t>(x86_register::fpcw);
                 context.FltSave.StatusWord = emu.reg<uint16_t>(x86_register::fpsw);
                 context.FltSave.TagWord = static_cast<BYTE>(emu.reg<uint16_t>(x86_register::fptag));
+                context.FltSave.MxCsr = mxcsr;
+                context.FltSave.MxCsr_Mask = mxcsr_legal;
                 for (int i = 0; i < 8; i++)
                 {
                     const auto reg = static_cast<x86_register>(static_cast<int>(x86_register::st0) + i);
                     context.FltSave.FloatRegisters[i] = emu.reg<M128A>(reg);
                 }
-            }
 
-            if ((context.ContextFlags & CONTEXT_XSTATE_64) == CONTEXT_XSTATE_64)
-            {
-                context.MxCsr = emu.reg<uint32_t>(x86_register::mxcsr);
                 for (int i = 0; i < 16; i++)
                 {
                     const auto reg = static_cast<x86_register>(static_cast<int>(x86_register::xmm0) + i);
                     (&context.Xmm0)[i] = emu.reg<M128A>(reg);
                 }
+            }
+
+            if ((context.ContextFlags & CONTEXT_XSTATE_64) == CONTEXT_XSTATE_64)
+            {
+                // KeContextFromKframes reports the frame's MXCSR with the extended state too.
+                const auto mxcsr = emu.reg<uint32_t>(x86_register::mxcsr);
+                context.MxCsr = mxcsr;
+                context.FltSave.MxCsr = mxcsr;
             }
         }
 

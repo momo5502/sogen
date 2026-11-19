@@ -1,9 +1,6 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
 
 #include <snapshot.hpp>
-
-#include <filesystem>
-#include <vector>
 
 namespace sogen::test
 {

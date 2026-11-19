@@ -185,6 +185,16 @@ namespace sogen
 
     static_assert(sizeof(RAWINPUTHEADER32) == 0x10);
 
+    struct RAWINPUTHEADER64
+    {
+        uint32_t dwType;
+        uint32_t dwSize;
+        uint64_t hDevice;
+        uint64_t wParam;
+    };
+
+    static_assert(sizeof(RAWINPUTHEADER64) == 0x18);
+
     // The mouse body has no pointer fields, so its layout is identical for 32- and 64-bit guests.
     struct RAWMOUSE32
     {
@@ -238,6 +248,24 @@ namespace sogen
         TYPE_CTYPES = 22,
         TYPE_GENERIC = 255
     };
+
+    // Undocumented win32k DPI_INFORMATION; the layout follows shcore's CImmersiveOrPrimaryMonitor::InitImpl.
+    struct EMU_DPI_INFORMATION
+    {
+        uint32_t Reserved0[2];
+        uint32_t ScaleFactor;
+        uint32_t ScaleFactorY;
+        uint32_t Reserved1[2];
+        uint32_t MonitorWidth;
+        uint32_t MonitorHeight;
+        uint32_t PhysicalHeight;
+        uint32_t PhysicalWidth;
+        uint32_t DpiX;
+        uint32_t DpiY;
+        uint32_t Reserved2[12];
+    };
+
+    static_assert(sizeof(EMU_DPI_INFORMATION) == 96);
 
     struct USER_MONITOR
     {

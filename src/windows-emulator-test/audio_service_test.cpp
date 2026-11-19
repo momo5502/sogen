@@ -1,7 +1,6 @@
-#include "rpc_test_utils.hpp"
+#include "std_include.hpp"
 
-#include <chrono>
-#include <thread>
+#include "rpc_test_utils.hpp"
 
 namespace sogen::test
 {

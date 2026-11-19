@@ -1,5 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
+#include "std_include.hpp"
 
 namespace sogen::syscalls
 {
@@ -14,6 +13,11 @@ namespace sogen::syscalls
     BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
     uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
                                                        uint32_t size);
+    uint32_t handle_NtUserGetRawInputData(const syscall_context& c, emulator_pointer raw_input, uint32_t command, emulator_pointer data,
+                                          emulator_object<uint32_t> size, uint32_t header_size);
+    BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max);
+    BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max,
+                                  UINT remove);
     uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
     uint32_t handle_NtUserSendInput(const syscall_context& c, uint32_t input_count, emulator_pointer inputs, int32_t input_size);
 }
@@ -24,6 +28,7 @@ namespace sogen::test
     {
         constexpr DWORD untouched_error = 0xDEAD;
         constexpr DWORD untouched_value = 0xAAAAAAAA;
+        constexpr UINT k_wm_app = 0x8000;
         constexpr uint32_t k_overlapped_window = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
         class UserQueryTest : public testing::Test
@@ -111,6 +116,27 @@ namespace sogen::test
             uint32_t key_state(const int32_t virtual_key)
             {
                 return syscalls::handle_NtUserGetKeyState(this->context(), virtual_key);
+            }
+
+            std::optional<msg> peek_raw_input(const UINT remove = PM_REMOVE)
+            {
+                const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
+                if (!syscalls::handle_NtUserPeekMessage(this->context(), message, 0, WM_INPUT, WM_INPUT, remove))
+                {
+                    return std::nullopt;
+                }
+                return message.read();
+            }
+
+            emulator_object<uint32_t> raw_input_size()
+            {
+                return {this->emu.memory, this->storage};
+            }
+
+            uint32_t read_raw_input(const emulator_pointer token, const uint32_t command, const emulator_pointer data,
+                                    const uint32_t header_size = sizeof(RAWINPUTHEADER64))
+            {
+                return syscalls::handle_NtUserGetRawInputData(this->context(), token, command, data, this->raw_input_size(), header_size);
             }
 
             windows_emulator emu = create_sample_emulator();
@@ -540,5 +566,171 @@ namespace sogen::test
     {
         EXPECT_EQ(0u, this->key_state(0x100));
         EXPECT_EQ(87u, this->last_error()); // ERROR_INVALID_PARAMETER
+    }
+
+    TEST_F(UserQueryTest, RawInputCanBeReadRepeatedlyUntilAnotherOrdinaryMessageIsRemoved)
+    {
+        const auto window = this->create_top_level_window();
+        this->emu.deliver_raw_input({.dx = -3, .dy = 7}, window);
+        const auto first = this->peek_raw_input();
+        ASSERT_TRUE(first);
+
+        this->emu.deliver_raw_input({.dx = 11}, window);
+        const auto next = this->peek_raw_input(PM_NOREMOVE);
+        ASSERT_TRUE(next);
+        ASSERT_NE(first->lParam, next->lParam);
+        EXPECT_EQ(0u, this->read_raw_input(next->lParam, RID_INPUT, 0));
+
+        const auto data = this->storage + 0x40;
+        constexpr uint32_t header_size = sizeof(RAWINPUTHEADER64);
+        constexpr uint32_t total_size = header_size + sizeof(RAWMOUSE32);
+        constexpr uint32_t capacity = 64;
+        this->raw_input_size().write(capacity);
+        EXPECT_EQ(header_size, this->read_raw_input(first->lParam, RID_HEADER, data));
+        for (int read = 0; read < 2; ++read)
+        {
+            ASSERT_EQ(total_size, this->read_raw_input(first->lParam, RID_INPUT, data));
+            const auto mouse = this->emu.memory.read_memory<RAWMOUSE32>(data + header_size);
+            EXPECT_EQ(-3, mouse.lLastX);
+            EXPECT_EQ(7, mouse.lLastY);
+            EXPECT_EQ(capacity, this->raw_input_size().read());
+        }
+        EXPECT_EQ(untouched_error, this->last_error());
+
+        const auto removed = this->peek_raw_input();
+        ASSERT_TRUE(removed);
+        EXPECT_EQ(next->lParam, removed->lParam);
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(first->lParam, RID_INPUT, data));
+        EXPECT_EQ(6u, this->last_error());
+        EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
+        EXPECT_EQ(11, this->emu.memory.read_memory<RAWMOUSE32>(data + header_size).lLastX);
+
+        this->emu.vcpu(0).active_thread->post_message(this->emu, {.window = window, .message = k_wm_app, .wParam = 0, .lParam = 0});
+        const emulator_object<msg> ordinary{this->emu.memory, this->storage + 0x100};
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, k_wm_app, k_wm_app, PM_NOREMOVE));
+        EXPECT_EQ(total_size, this->read_raw_input(removed->lParam, RID_INPUT, data));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), ordinary, 0, k_wm_app, k_wm_app, PM_REMOVE));
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(removed->lParam, RID_INPUT, data));
+        EXPECT_EQ(6u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, RawInputExpiresWhenPaintIsRemoved)
+    {
+        const auto window = this->create_top_level_window(0, WS_VISIBLE);
+        this->emu.deliver_raw_input({}, window);
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        this->emu.process.windows.get(window)->update_pending = true;
+        const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, window, WM_PAINT, WM_PAINT, PM_NOREMOVE));
+        EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, window, WM_PAINT, WM_PAINT, PM_REMOVE));
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0));
+    }
+
+    TEST_F(UserQueryTest, RawInputSurvivesGetMessageQuitButNotPeekMessageQuit)
+    {
+        const auto window = this->create_top_level_window();
+        this->emu.deliver_raw_input({}, window);
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        auto& thread = *this->emu.vcpu(0).active_thread;
+        const emulator_object<msg> message{this->emu.memory, this->storage + 0x100};
+        thread.post_message(this->emu, {.window = 0, .message = WM_QUIT, .wParam = 0, .lParam = 0});
+        EXPECT_FALSE(syscalls::handle_NtUserGetMessage(this->context(), message, 0, 0, 0));
+        EXPECT_EQ(static_cast<UINT>(WM_QUIT), message.read().message);
+        EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
+        thread.post_message(this->emu, {.window = 0, .message = WM_QUIT, .wParam = 0, .lParam = 0});
+        ASSERT_TRUE(syscalls::handle_NtUserPeekMessage(this->context(), message, 0, 0, 0, PM_REMOVE));
+        EXPECT_EQ(static_cast<UINT>(WM_QUIT), message.read().message);
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0));
+    }
+
+    TEST_F(UserQueryTest, RawInputReportsRequiredSizeWithoutWritingAShortBuffer)
+    {
+        this->emu.deliver_raw_input({.keyboard = true, .scan_code = 6}, this->create_top_level_window());
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        const auto data = this->storage + 0x40;
+        constexpr uint32_t total_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWKEYBOARD32);
+        const std::array<uint8_t, total_size> original{0xAA};
+        this->emu.memory.write_memory(data, original);
+
+        EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0));
+        EXPECT_EQ(total_size, this->raw_input_size().read());
+        this->raw_input_size().write(total_size - 1);
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, data));
+        EXPECT_EQ(122u, this->last_error());
+        EXPECT_EQ(total_size, this->raw_input_size().read());
+        EXPECT_EQ(original, (this->emu.memory.read_memory<std::array<uint8_t, total_size>>(data)));
+        ASSERT_EQ(total_size, this->read_raw_input(input->lParam, RID_INPUT, data));
+        EXPECT_EQ(6u, this->emu.memory.read_memory<RAWKEYBOARD32>(data + sizeof(RAWINPUTHEADER64)).MakeCode);
+    }
+
+    TEST_F(UserQueryTest, RawInputRejectsUnknownCommandsAndWrongHeaderSizes)
+    {
+        this->emu.deliver_raw_input({}, this->create_top_level_window());
+        const auto input = this->peek_raw_input();
+        ASSERT_TRUE(input);
+        this->raw_input_size().write(untouched_value);
+
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, 0, 0));
+        EXPECT_EQ(87u, this->last_error());
+        for (const uint32_t size : {0u, 16u, 17u, 23u, 25u, 32u})
+        {
+            this->set_last_error(untouched_error);
+            EXPECT_EQ(UINT32_MAX, this->read_raw_input(input->lParam, RID_INPUT, 0, size));
+            EXPECT_EQ(87u, this->last_error());
+        }
+        EXPECT_EQ(untouched_value, this->raw_input_size().read());
+
+        this->emu.process.is_wow64_process = true;
+        for (const uint32_t size : {16u, 24u})
+        {
+            this->set_last_error(untouched_error);
+            EXPECT_EQ(0u, this->read_raw_input(input->lParam, RID_INPUT, 0, size));
+            EXPECT_EQ(size + sizeof(RAWMOUSE32), this->raw_input_size().read());
+            EXPECT_EQ(untouched_error, this->last_error());
+        }
+    }
+
+    TEST_F(UserQueryTest, DroppedWindowMessagesReleaseTheirRawInputPayloads)
+    {
+        const auto window = this->create_top_level_window();
+        this->emu.deliver_raw_input({}, window);
+        const auto pending = this->peek_raw_input(PM_NOREMOVE);
+        ASSERT_TRUE(pending);
+        ASSERT_EQ(0u, this->read_raw_input(pending->lParam, RID_INPUT, 0));
+
+        this->context().thread().remove_window_messages(window);
+        EXPECT_FALSE(this->peek_raw_input());
+        EXPECT_EQ(UINT32_MAX, this->read_raw_input(pending->lParam, RID_INPUT, 0));
+        EXPECT_EQ(6u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, RawInputPreservesABurstQueuedBeforeTheThreadPumpsMessages)
+    {
+        const auto window = this->create_top_level_window();
+        this->emu.deliver_raw_input({}, window);
+        const auto current = this->peek_raw_input();
+        ASSERT_TRUE(current);
+
+        constexpr int burst_size = 1024;
+        for (int i = 0; i < burst_size; ++i)
+        {
+            this->emu.deliver_raw_input({.dx = i}, window);
+        }
+        EXPECT_EQ(0u, this->read_raw_input(current->lParam, RID_INPUT, 0));
+        const auto data = this->storage + 0x40;
+        constexpr uint32_t packet_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE32);
+        this->raw_input_size().write(packet_size);
+        for (int i = 0; i < burst_size; ++i)
+        {
+            const auto input = this->peek_raw_input();
+            ASSERT_TRUE(input);
+            ASSERT_EQ(packet_size, this->read_raw_input(input->lParam, RID_INPUT, data));
+            EXPECT_EQ(i, this->emu.memory.read_memory<RAWMOUSE32>(data + sizeof(RAWINPUTHEADER64)).lLastX);
+        }
+        EXPECT_FALSE(this->peek_raw_input());
     }
 }

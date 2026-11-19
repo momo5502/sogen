@@ -1,8 +1,6 @@
-#include "emulation_test_utils.hpp"
+#include "std_include.hpp"
 
 #include <devices/afd_types.hpp>
-
-#include <array>
 
 namespace sogen::test
 {

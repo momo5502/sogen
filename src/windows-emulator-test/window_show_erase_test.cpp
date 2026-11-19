@@ -1,8 +1,6 @@
-#include "emulation_test_utils.hpp"
-#include <syscall_utils.hpp>
-#include <window_show_orchestrator.hpp>
+#include "std_include.hpp"
 
-#include <functional>
+#include <window_show_orchestrator.hpp>
 
 namespace sogen::test
 {

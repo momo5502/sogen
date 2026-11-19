@@ -614,10 +614,11 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
-            const auto can_run_message_hook = !is_ready && thread.message_wait_return_register.has_value() &&
-                                              (win_emu.has_low_level_hook_work(thread.id) || thread.has_hooked_message(win_emu));
+            const auto can_restart_message_wait =
+                !is_ready && thread.message_wait_return_register.has_value() &&
+                (win_emu.has_low_level_hook_work(thread.id) || thread.needs_message_wait_restart(win_emu));
 
-            if (!is_ready && !force && !can_dispatch_apcs && !can_run_message_hook)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_restart_message_wait)
             {
                 return false;
             }
@@ -638,14 +639,33 @@ namespace sogen
 
             thread.setup_if_necessary(emu, context);
 
-            if (can_dispatch_apcs && !has_pending_status)
+            if (const auto* wait = thread.current_sent_message_wait(); is_ready && wait)
             {
-                thread.mark_as_ready(STATUS_USER_APC);
+                win_emu.abi().instruction_pointer(emu, wait->syscall_ip);
+                win_emu.abi().return_value(emu, wait->syscall_number);
+            }
+            else if (can_dispatch_apcs && !has_pending_status)
+            {
+                // An APC ends NtRemoveIoCompletionEx's alertable wait with KeRemoveQueueEx's one entry, STATUS_USER_APC, whose
+                // count the call stores under try.
+                auto status = STATUS_USER_APC;
+                if (const auto& io_wait = thread.await_io_completion;
+                    io_wait && io_wait->type == io_completion_wait_type::remove_multiple && !io_wait->worker_factory)
+                {
+                    if (const auto stored =
+                            io_completion_wait::write_status_entry_count(win_emu.memory, &thread, io_wait->entries_removed_ptr);
+                        stored != STATUS_SUCCESS)
+                    {
+                        status = stored;
+                    }
+                }
+
+                thread.mark_as_ready(status);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
-            else if (can_run_message_hook)
+            else if (can_restart_message_wait)
             {
-                // The message syscall runs the hook first when it executes again.
+                // Guest callbacks run through the message syscall when it executes again.
                 thread.restart_message_wait(emu, win_emu.abi());
             }
 
@@ -872,18 +892,20 @@ namespace sogen
                        ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}
                        : registry_manager{}),
           mod_manager(memory, file_sys, this->callbacks, guest_architecture_of(*this->emu_)),
-          process(*this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_),
-                  [this]() -> std::optional<native_tsc> {
-                      // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
-                      const auto frequency = this->native_timestamp_counter_frequency();
-                      const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
-                      if (!value)
-                      {
-                          return std::nullopt;
-                      }
+          process(
+              *this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_),
+              [this]() -> std::optional<native_tsc> {
+                  // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
+                  const auto frequency = this->native_timestamp_counter_frequency();
+                  const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
+                  if (!value)
+                  {
+                      return std::nullopt;
+                  }
 
-                      return native_tsc{.value = *value, .frequency = *frequency};
-                  }),
+                  return native_tsc{.value = *value, .frequency = *frequency};
+              },
+              this->process_manager_),
           use_relative_time_(settings.use_relative_time),
           // Instruction precision runs through a global execution hook; backends that only count instructions
           // (single-stepping) cannot provide it.
@@ -972,6 +994,29 @@ namespace sogen
         this->process.abandon_shared_mutants();
     }
 
+    void windows_emulator::initialize_process_manager()
+    {
+        if (this->process_manager_ && this->setup_completed_)
+        {
+            this->process_manager_->initialize_current_process(
+                {.process_id = this->process.process_id,
+                 .parent_process_id = this->process.parent_process_id,
+                 .native_environment = this->process.peb64.value(),
+                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0},
+                this->process.initial_thread_id);
+            for (const auto& thread : this->process.threads | std::views::values)
+            {
+                if (thread.id != this->process.initial_thread_id)
+                {
+                    if (const auto allocated = this->process_manager_->allocate_thread_id(thread.id); allocated && !*allocated)
+                    {
+                        throw std::runtime_error("Registering a restored guest thread failed");
+                    }
+                }
+            }
+        }
+    }
+
     void windows_emulator::setup_process_if_necessary()
     {
         if (this->setup_completed_)
@@ -982,6 +1027,7 @@ namespace sogen
         this->setup_completed_ = true;
 
         this->setup_process();
+        this->initialize_process_manager();
     }
 
     void windows_emulator::setup_process()
@@ -1960,6 +2006,13 @@ namespace sogen
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
 
+        const auto report_exit = utils::finally([this] {
+            if (this->process_manager_ && this->process.exit_status)
+            {
+                this->process_manager_->notify_current_process_exit(static_cast<uint32_t>(*this->process.exit_status));
+            }
+        });
+
         this->debugger_.begin_emulation();
         const auto end_debugger_emulation = utils::finally([this] { this->debugger_.end_emulation(); });
         this->report_debugger_process_start();
@@ -2137,7 +2190,7 @@ namespace sogen
         this->dump_lock_profile();
     }
 
-    void windows_emulator::deliver_raw_input(const process_context::raw_input_payload& payload, const hwnd explicit_target)
+    void windows_emulator::deliver_raw_input(const raw_input_payload& payload, const hwnd explicit_target)
     {
         // Resolve the destination at delivery time: an explicit hwndTarget, else the foreground window
         // (raw input registered with a NULL target follows keyboard focus). If neither resolves to a live
@@ -2155,23 +2208,7 @@ namespace sogen
             return;
         }
 
-        const auto token = this->process.next_raw_input_token++;
-        this->process.raw_inputs[token] = payload;
-
-        // Bound the pending set: WM_INPUT is normally consumed at once by GetRawInputData, but if the guest
-        // stops pumping, drop the oldest tokens so the map can't grow without limit.
-        constexpr size_t max_pending_raw_inputs = 256;
-        while (this->process.raw_inputs.size() > max_pending_raw_inputs)
-        {
-            this->process.raw_inputs.erase(this->process.raw_inputs.begin());
-        }
-
-        msg m{};
-        m.window = target;
-        m.message = WM_INPUT;
-        m.wParam = RIM_INPUT;
-        m.lParam = token;
-        thread->post_message(*this, m);
+        thread->post_raw_input(*this, target, this->process.next_raw_input_token++, payload);
     }
 
     void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags,
@@ -3221,6 +3258,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
@@ -3423,6 +3461,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         this->apply_cursor_shape();

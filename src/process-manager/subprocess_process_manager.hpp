@@ -2,6 +2,7 @@
 
 #include "host_process.hpp"
 #include "process_manager.hpp"
+#include "process_session.hpp"
 
 #include <network/tcp_client_socket.hpp>
 
@@ -13,11 +14,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-
-namespace ProcessProtocol
-{
-    struct MessageT;
-}
+#include <variant>
 
 namespace sogen
 {
@@ -59,7 +56,10 @@ namespace sogen
         using argument_factory = std::function<std::vector<std::string>(uint16_t, const std::string&)>;
 
         subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
-                                   std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher());
+                                   std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher(),
+                                   process_session_endpoint session = {},
+                                   std::chrono::milliseconds session_timeout = std::chrono::seconds(5),
+                                   process_session::clock_source session_clock = std::chrono::steady_clock::now);
         ~subprocess_process_manager() override;
 
         subprocess_process_manager(const subprocess_process_manager&) = delete;
@@ -67,10 +67,16 @@ namespace sogen
         subprocess_process_manager(subprocess_process_manager&&) = delete;
         subprocess_process_manager& operator=(subprocess_process_manager&&) = delete;
 
+        void initialize_current_process(process_identity identity, uint32_t initial_thread_id = 8) override;
+        process_session_endpoint session_endpoint() const;
+        std::optional<guest_id_result> allocate_thread_id(uint32_t requested_id = {}) override;
+        void notify_current_process_exit(uint64_t exit_code) override;
+        process_open_result open_process(uint32_t process_id) override;
         process_create_result create_process(process_create_request request) override;
         process_error resume_process(managed_process process) override;
         process_error terminate_process(managed_process process, uint64_t exit_code) override;
         process_exit_status_result exit_status(managed_process process) const override;
+        process_exit_status_result poll_exit_status(managed_process process) const override;
         void wait_for_processes() override;
 
         // Ends every child process, which also ends a wait for them.
@@ -99,18 +105,32 @@ namespace sogen
         process_memory_region query_memory(managed_process process, uint64_t address) const override;
 
       private:
-        struct process_entry;
+        struct child_process;
+        using process_reference = std::variant<std::shared_ptr<child_process>, std::shared_ptr<session_process>>;
+
+        struct child_process_result
+        {
+            std::shared_ptr<child_process> process{};
+            process_error error{process_error::none};
+        };
+
+        struct control_response;
 
         template <typename Request>
-        std::optional<ProcessProtocol::MessageT> exchange(managed_process process, Request request, uint8_t response_type) const;
+        control_response exchange(managed_process process, Request request, uint8_t response_type) const;
 
-        std::shared_ptr<process_entry> find_process(managed_process process) const;
+        std::optional<process_reference> find_process(managed_process process) const;
+        child_process_result find_child(managed_process process) const;
 
         std::filesystem::path executable_{};
         argument_factory arguments_{};
         std::unique_ptr<host_process_launcher> launcher_{};
         mutable std::mutex mutex_{};
-        std::unordered_map<uint64_t, std::shared_ptr<process_entry>> processes_{};
+        std::mutex publication_mutex_{};
+        process_session session_;
+        uint32_t current_process_id_{};
+        bool current_process_exited_{};
+        std::unordered_map<uint64_t, process_reference> processes_{};
         uint64_t next_process_{1};
         bool stopping_{};
     };

@@ -1,9 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <devices/named_pipe.hpp>
-#include <emulator_utils.hpp>
-#include <syscall_utils.hpp>
-#include <limits>
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 namespace sogen::syscalls
 {

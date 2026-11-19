@@ -1,12 +1,8 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <emulator_utils.hpp>
 #include <filesystem/document_tree_provider.hpp>
 #include <filesystem/layered_provider.hpp>
 
-#include <cstring>
-#include <map>
-#include <random>
 #include <sys/stat.h>
 
 namespace sogen::test

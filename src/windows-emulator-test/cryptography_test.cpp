@@ -1,10 +1,4 @@
-#include "emulation_test_utils.hpp"
-#include <io_device.hpp>
-
-#include <algorithm>
-#include <array>
-#include <cstring>
-#include <limits>
+#include "std_include.hpp"
 
 namespace sogen::test
 {

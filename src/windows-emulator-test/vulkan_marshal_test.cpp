@@ -1,7 +1,4 @@
-#include <gtest/gtest.h>
-
-#include <array>
-#include <vector>
+#include "std_include.hpp"
 
 #include "vk_bridge_marshal.generated.hxx"
 

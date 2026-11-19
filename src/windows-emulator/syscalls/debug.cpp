@@ -12,28 +12,15 @@ namespace sogen
 
         handle store_process_handle(process_context& proc, const debug_object::debuggee& debuggee)
         {
-            emulator_process process{};
-            for (const auto& existing : proc.processes | std::views::values)
-            {
-                if (existing.process.value == debuggee.process)
-                {
-                    process.is_wow64_process = existing.is_wow64_process;
-                    process.native_environment = existing.native_environment;
-                    process.compatibility_environment = existing.compatibility_environment;
-                    break;
-                }
-            }
-
-            process.process = managed_process{debuggee.process};
-            process.id = debuggee.process_id;
-            return proc.processes.store(std::move(process));
+            return proc.processes.store(
+                make_emulator_process({.handle = managed_process{debuggee.process}, .identity = debuggee.identity}));
         }
 
         handle store_thread_handle(process_context& proc, const debug_object::debuggee& debuggee, const uint32_t thread_id)
         {
             managed_process_thread thread{};
             thread.process = managed_process{debuggee.process};
-            thread.process_id = debuggee.process_id;
+            thread.process_id = debuggee.identity.process_id;
             thread.thread_id = thread_id;
             thread.resume_observed = true;
             return proc.managed_threads.store(std::move(thread));
@@ -87,7 +74,7 @@ namespace sogen
         {
             auto& proc = win_emu.process;
             DBGUI_WAIT_STATE_CHANGE64 change{};
-            change.AppClientId.UniqueProcess = debuggee.process_id;
+            change.AppClientId.UniqueProcess = debuggee.identity.process_id;
             change.AppClientId.UniqueThread = event.thread_id;
 
             switch (event.kind)
@@ -280,7 +267,8 @@ namespace sogen
             }
 
             const auto id = client_id.read();
-            const auto debuggee = std::ranges::find(object->debuggees, id.UniqueProcess, &debug_object::debuggee::process_id);
+            const auto debuggee =
+                std::ranges::find(object->debuggees, id.UniqueProcess, [](const auto& process) { return process.identity.process_id; });
             if (debuggee == object->debuggees.end())
             {
                 return STATUS_INVALID_PARAMETER;

@@ -246,7 +246,8 @@ function(sogen_target_set_warnings_as_errors target)
    -pedantic -Werror -Wno-comment)
 
   if(MSVC)
-    set(compile_options /W4 /WX)
+    # C4324 only reports padding that an alignas asked for, which every class inheriting that alignment repeats.
+    set(compile_options /W4 /WX /wd4324)
   endif()
 
   target_compile_options(${target} PRIVATE

@@ -1,13 +1,6 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
 #include <utils/compression.hpp>
-#include <utils/serialization.hpp>
-
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
-#include <stdexcept>
-#include <vector>
 
 namespace sogen::test
 {

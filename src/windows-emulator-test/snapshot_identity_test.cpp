@@ -1,12 +1,7 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
 
-#include <emulator_utils.hpp>
 #include <snapshot.hpp>
 #include <sogen_version.hpp>
-
-#include <cstring>
-#include <fstream>
-#include <random>
 
 namespace sogen::test
 {

@@ -1,4 +1,5 @@
-#include <gtest/gtest.h>
+#include "std_include.hpp"
+
 #include <code_page.hpp>
 #include "code_page_test_utils.hpp"
 #include <platform/compiler.hpp>

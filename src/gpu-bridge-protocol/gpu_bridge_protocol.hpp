@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 46;
+    inline constexpr uint32_t protocol_version = 49;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1162,19 +1162,46 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
     };
 
-    struct cmd_pipeline_barrier_request
+    // VkMemoryBarrier2, and the masks of the buffer and image barriers.
+    struct barrier_masks
     {
-        object_id command_buffer;
-        object_id image;
-        image_subresource_range subresource;
-        uint32_t src_stage_mask; // VkPipelineStageFlags
-        uint32_t dst_stage_mask;
-        uint32_t src_access_mask; // VkAccessFlags
-        uint32_t dst_access_mask;
+        uint64_t src_stage_mask;  // VkPipelineStageFlags2
+        uint64_t src_access_mask; // VkAccessFlags2
+        uint64_t dst_stage_mask;  // VkPipelineStageFlags2
+        uint64_t dst_access_mask; // VkAccessFlags2
+    };
+
+    struct buffer_memory_barrier
+    {
+        barrier_masks masks;
+        uint32_t src_queue_family_index;
+        uint32_t dst_queue_family_index;
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize (VK_WHOLE_SIZE allowed)
+    };
+
+    struct image_memory_barrier
+    {
+        barrier_masks masks;
         uint32_t old_layout; // VkImageLayout
         uint32_t new_layout;
         uint32_t src_queue_family_index;
         uint32_t dst_queue_family_index;
+        object_id image;
+        image_subresource_range subresource;
+        uint32_t reserved;
+    };
+
+    // A VkDependencyInfo. The barriers trail the header: memory_barrier_count barrier_masks, then buffer_barrier_count
+    // buffer_memory_barrier, then image_barrier_count image_memory_barrier.
+    struct cmd_pipeline_barrier_request
+    {
+        object_id command_buffer;
+        uint32_t dependency_flags; // VkDependencyFlags
+        uint32_t memory_barrier_count;
+        uint32_t buffer_barrier_count;
+        uint32_t image_barrier_count;
     };
 
     struct cmd_clear_color_image_request
@@ -1560,6 +1587,7 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
         uint64_t offset; // VkDeviceSize
         uint64_t range;  // VkDeviceSize (VK_WHOLE_SIZE allowed)
+        uint64_t usage;  // VkBufferUsageFlags2 the view is limited to; 0 = the buffer's usage
     };
 
     // One source/destination/size triple of a buffer-to-buffer copy (trailing element of cmd_copy_buffer).
@@ -1981,20 +2009,67 @@ namespace sogen::gpu_bridge
         std::array<uint8_t, max_shader_module_identifier_size> identifier{};
     };
 
+    struct pipeline_stencil_op_state
+    {
+        uint32_t fail_op;       // VkStencilOp
+        uint32_t pass_op;       // VkStencilOp
+        uint32_t depth_fail_op; // VkStencilOp
+        uint32_t compare_op;    // VkCompareOp
+        uint32_t compare_mask;
+        uint32_t write_mask;
+        uint32_t reference;
+    };
+
+    // VkPipelineDepthStencilStateCreateInfo; `present` is 0 when the guest passed none.
+    struct pipeline_depth_stencil_state
+    {
+        uint32_t present;
+        uint32_t flags; // VkPipelineDepthStencilStateCreateFlags
+        uint32_t depth_test_enable;
+        uint32_t depth_write_enable;
+        uint32_t depth_compare_op; // VkCompareOp
+        uint32_t depth_bounds_test_enable;
+        uint32_t stencil_test_enable;
+        pipeline_stencil_op_state front;
+        pipeline_stencil_op_state back;
+        float min_depth_bounds;
+        float max_depth_bounds;
+    };
+
+    // One shader stage of a graphics pipeline (trailing element of create_graphics_pipeline).
+    struct pipeline_shader_stage
+    {
+        uint32_t stage; // VkShaderStageFlagBits
+        uint32_t spec_entry_count;
+        uint32_t spec_data_size;
+        uint32_t reserved;
+        shader_stage_source source;
+    };
+
+    // VkPipelineTessellationStateCreateInfo with its optional VkPipelineTessellationDomainOriginStateCreateInfo.
+    struct pipeline_tessellation_state
+    {
+        uint32_t present;
+        uint32_t flags; // VkPipelineTessellationStateCreateFlags
+        uint32_t patch_control_points;
+        uint32_t domain_origin_present;
+        uint32_t domain_origin; // VkTessellationDomainOrigin
+        uint32_t reserved;
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
         object_id pipeline_cache; // null_object => VK_NULL_HANDLE
         object_id render_pass;    // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
         object_id pipeline_layout;
-        shader_stage_source vertex_shader;
-        shader_stage_source fragment_shader;
+        uint32_t stage_count; // number of pipeline_shader_stage entries that follow the dynamic states
+        uint32_t reserved_stage_count;
+        pipeline_tessellation_state tessellation;
         uint32_t library_parts; // VkGraphicsPipelineLibraryFlagsEXT this call defines; all of them for a complete pipeline
         uint32_t width;
         uint32_t height;
-        uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
-        uint32_t depth_write_enable; // VkBool32
-        uint32_t depth_compare_op;   // VkCompareOp (used when depth_test_enable != 0)
+        pipeline_depth_stencil_state depth_stencil;
         // Dynamic-rendering attachment formats (used when render_pass == 0). DXVK 2.x builds pipelines with
         // VK_KHR_dynamic_rendering (renderPass = VK_NULL_HANDLE + VkPipelineRenderingCreateInfo) instead of a
         // render-pass object, so the host rebuilds that info from these formats.
@@ -2010,11 +2085,6 @@ namespace sogen::gpu_bridge
         uint32_t primitive_restart_enable;
         uint32_t rasterization_stream;
         uint32_t rasterization_stream_flags;
-        // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
-        uint32_t vs_spec_entry_count;
-        uint32_t vs_spec_data_size;
-        uint32_t fs_spec_entry_count;
-        uint32_t fs_spec_data_size;
         // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
         // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
         uint32_t blend_attachment_count;
@@ -2029,10 +2099,8 @@ namespace sogen::gpu_bridge
         // vertex_input_attribute attributes[attribute_count];
         // vertex_input_divisor divisors[divisor_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline
-        // specialization_map_entry vs_spec_entries[vs_spec_entry_count];
-        // uint8_t vs_spec_data[vs_spec_data_size];
-        // specialization_map_entry fs_spec_entries[fs_spec_entry_count];
-        // uint8_t fs_spec_data[fs_spec_data_size];
+        // pipeline_shader_stage stages[stage_count];
+        // per stage, in order: specialization_map_entry spec_entries[spec_entry_count]; uint8_t spec_data[spec_data_size];
         // object_id libraries[library_count];
     };
 
@@ -2042,8 +2110,7 @@ namespace sogen::gpu_bridge
         object_id pipeline_cache; // null_object => VK_NULL_HANDLE
         object_id pipeline_layout;
         shader_stage_source shader;
-        uint32_t flags; // VkPipelineCreateFlags
-        uint32_t reserved;
+        uint64_t flags; // VkPipelineCreateFlags2
     };
 
     struct create_compute_pipeline_response
@@ -2664,11 +2731,14 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(queue_present_request) == 24, "wire layout drift");
     static_assert(sizeof(create_surface_request) == 16, "wire layout drift");
     static_assert(sizeof(create_swapchain_request) == 80, "wire layout drift");
-    static_assert(sizeof(cmd_pipeline_barrier_request) == 72, "wire layout drift");
+    static_assert(sizeof(barrier_masks) == 32, "wire layout drift");
+    static_assert(sizeof(buffer_memory_barrier) == 64, "wire layout drift");
+    static_assert(sizeof(image_memory_barrier) == 80, "wire layout drift");
+    static_assert(sizeof(cmd_pipeline_barrier_request) == 24, "wire layout drift");
     static_assert(sizeof(acquire_next_image_request) == 32, "wire layout drift");
     static_assert(sizeof(get_surface_support_request) == 24, "wire layout drift");
     static_assert(sizeof(surface_format) == 8, "wire layout drift");
-    static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
+    static_assert(sizeof(create_buffer_view_request) == 48, "wire layout drift");
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
     static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
@@ -2678,6 +2748,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
     static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
+    static_assert(sizeof(pipeline_shader_stage) == 64, "wire layout drift");
+    static_assert(sizeof(pipeline_tessellation_state) == 24, "wire layout drift");
     static_assert(sizeof(create_graphics_pipeline_request) == 536, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");

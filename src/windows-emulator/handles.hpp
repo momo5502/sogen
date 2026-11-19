@@ -320,7 +320,7 @@ namespace sogen
             return blocked;
         }
 
-        std::pair<handle, T*> store_and_get(T value)
+        std::pair<handle, T*> store_and_get(T value, const std::optional<handle_attributes>& attributes = std::nullopt)
         {
             if (this->block_mutation_)
             {
@@ -329,15 +329,16 @@ namespace sogen
 
             const auto index = this->allocate_object_index();
             const auto it = this->store_.emplace(index, std::move(value)).first;
-            const auto handle =
-                this->open_index(index, false, {.inherit = it->second.inherit, .protect_from_close = it->second.protect_from_close});
+            const auto handle = this->open_index(
+                index, false,
+                attributes.value_or(handle_attributes{.inherit = it->second.inherit, .protect_from_close = it->second.protect_from_close}));
 
             return {handle, &it->second};
         }
 
-        handle store(T value)
+        handle store(T value, const std::optional<handle_attributes>& attributes = std::nullopt)
         {
-            return this->store_and_get(std::move(value)).first;
+            return this->store_and_get(std::move(value), attributes).first;
         }
 
         bool store_at(const handle h, T&& value)

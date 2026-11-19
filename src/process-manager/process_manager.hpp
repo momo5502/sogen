@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "memory_permission.hpp"
+#include <serialization.hpp>
 
 #include <compare>
 #include <cstdint>
@@ -43,6 +44,17 @@ namespace sogen
         resource_limit,
         communication_failure,
         internal_failure,
+    };
+
+    struct guest_id_result
+    {
+        uint32_t id{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
     };
 
     struct process_memory_result
@@ -157,6 +169,36 @@ namespace sogen
         process_error error{process_error::none};
     };
 
+    struct process_session_endpoint
+    {
+        uint16_t port{};
+        std::string token{};
+    };
+
+    struct process_identity
+    {
+        uint32_t process_id{};
+        uint32_t parent_process_id{};
+        uint64_t native_environment{};
+        uint64_t compatibility_environment{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->process_id);
+            buffer.write(this->parent_process_id);
+            buffer.write(this->native_environment);
+            buffer.write(this->compatibility_environment);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->process_id);
+            buffer.read(this->parent_process_id);
+            buffer.read(this->native_environment);
+            buffer.read(this->compatibility_environment);
+        }
+    };
+
     struct process_create_request
     {
         std::string application{};
@@ -175,15 +217,30 @@ namespace sogen
         bool debugged{};
         uint32_t parent_process_id{};
         std::vector<uint8_t> registry_state{};
+        process_session_endpoint session{};
+    };
+
+    struct managed_process_identity
+    {
+        managed_process handle{};
+        process_identity identity{};
+    };
+
+    struct process_open_result
+    {
+        managed_process_identity process{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
     };
 
     struct process_create_result
     {
-        managed_process process{};
-        uint32_t process_id{};
+        managed_process_identity process{};
         uint32_t thread_id{};
-        uint64_t native_environment{};
-        uint64_t compatibility_environment{};
         uint64_t native_parameters{};
         uint64_t compatibility_parameters{};
         process_error error{process_error::none};
@@ -329,10 +386,34 @@ namespace sogen
     {
         virtual ~process_manager() = default;
 
+        virtual void initialize_current_process(process_identity, uint32_t = 8)
+        {
+        }
+
+        virtual std::optional<guest_id_result> allocate_thread_id(uint32_t = 0)
+        {
+            return std::nullopt;
+        }
+
+        virtual void notify_current_process_exit(uint64_t)
+        {
+        }
+
+        virtual process_open_result open_process(uint32_t)
+        {
+            return {.error = process_error::invalid_process};
+        }
+
         virtual process_create_result create_process(process_create_request request) = 0;
         virtual process_error resume_process(managed_process process) = 0;
         virtual process_error terminate_process(managed_process process, uint64_t exit_code) = 0;
         virtual process_exit_status_result exit_status(managed_process process) const = 0;
+
+        virtual process_exit_status_result poll_exit_status(managed_process process) const
+        {
+            return this->exit_status(process);
+        }
+
         virtual process_memory_result allocate_memory(managed_process process, uint64_t address, uint64_t size,
                                                       memory_permission permission, bool reserve, bool commit) = 0;
         virtual process_error free_memory(managed_process process, uint64_t address, uint64_t size, bool release) = 0;

@@ -69,6 +69,8 @@ namespace sogen::gdb_stub
         struct debugging_state
         {
             std::optional<uint32_t> continuation_thread{};
+            bool reports_swbreak{};
+            bool reports_hwbreak{};
         };
 
         struct debugging_context
@@ -182,6 +184,22 @@ namespace sogen::gdb_stub
             }
 
             return {name, args};
+        }
+
+        bool lists_feature(std::string_view features, const std::string_view feature)
+        {
+            while (!features.empty())
+            {
+                const auto [current, rest] = split_string(features, ';');
+                if (current == feature)
+                {
+                    return true;
+                }
+
+                features = rest;
+            }
+
+            return false;
         }
 
         void send_output(const debugging_context& c, const std::string_view output)
@@ -394,13 +412,18 @@ namespace sogen::gdb_stub
 
             if (name == "Supported")
             {
+                c.state.reports_swbreak = lists_feature(args, "swbreak+");
+                c.state.reports_hwbreak = lists_feature(args, "hwbreak+");
+
                 std::string reply = "PacketSize=";
                 reply.append(utils::string::to_hex_number(max_data_size));
                 reply.append(";qXfer:features:read+"
                              ";qXfer:libraries:read+"
                              ";qXfer:exec-file:read+"
                              ";qXfer:threads:read+"
-                             ";binary-upload+");
+                             ";binary-upload+"
+                             ";swbreak+"
+                             ";hwbreak+");
 
                 c.connection.send_reply(reply);
             }
@@ -628,6 +651,27 @@ namespace sogen::gdb_stub
             c.connection.send_reply(res ? "OK" : "E01");
         }
 
+        std::string get_stop_reason(const debugging_state& state, const stop_reason& reason)
+        {
+            const auto address = utils::string::to_hex_number(reason.address);
+
+            switch (reason.type)
+            {
+            case breakpoint_type::software:
+                return state.reports_swbreak ? "swbreak:;" : "";
+            case breakpoint_type::hardware_exec:
+                return state.reports_hwbreak ? "hwbreak:;" : "";
+            case breakpoint_type::hardware_write:
+                return "watch:" + address + ";";
+            case breakpoint_type::hardware_read:
+                return "rwatch:" + address + ";";
+            case breakpoint_type::hardware_read_write:
+                return "awatch:" + address + ";";
+            default:
+                return {};
+            }
+        }
+
         void signal_stop(const debugging_context& c)
         {
             const auto exit_status = c.handler.get_exit_code();
@@ -641,6 +685,11 @@ namespace sogen::gdb_stub
             const auto hex_id = utils::string::to_hex_number(id);
 
             std::string reply = "T05";
+
+            if (const auto reason = c.handler.consume_stop_reason())
+            {
+                reply += get_stop_reason(c.state, *reason);
+            }
 
             if (c.handler.should_signal_library())
             {

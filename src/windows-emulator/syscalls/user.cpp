@@ -21,9 +21,12 @@ namespace sogen
     namespace
     {
         constexpr ULONG k_thread_state_capture_window = 0x2;
+        constexpr ULONG k_thread_state_send_message = 0x8;
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr ULONG k_thread_state_message_time = 0x9;
+        constexpr uint32_t k_ismex_send = 0x1;
+        constexpr uint32_t k_ismex_replied = 0x8;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
         constexpr uint32_t k_client_setup_callback_id = 0x54;
@@ -1917,6 +1920,17 @@ namespace sogen
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
+            if (routine == k_thread_state_send_message)
+            {
+                const auto* thread = c.vcpu.active_thread;
+                if (!thread || thread->active_sent_messages.empty())
+                {
+                    return 0;
+                }
+
+                return k_ismex_send | (thread->active_sent_messages.back().replied ? k_ismex_replied : 0);
+            }
+
             if (routine == k_thread_state_message_time)
             {
                 return c.vcpu.active_thread ? c.vcpu.active_thread->current_message_time : 0;
@@ -2301,6 +2315,8 @@ namespace sogen
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
         {
+            // TODO: Native GDI doesn't require ReleaseDC for window-DC writes to become visible; presenting here is only
+            //       a Sogen flush boundary. Move presentation into the relevant window-DC drawing paths once unified.
             uint32_t present_handle = 0;
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
@@ -2616,39 +2632,41 @@ namespace sogen
             return static_cast<ULONG>(-1);
         }
 
-        // GetRawInputData fetches the payload referenced by a WM_INPUT message's lParam (an HRAWINPUT token we
-        // minted in handle_ui_event). We only synthesize relative mouse motion, so reconstruct a RAWINPUT whose
-        // mouse delta is the {dx, dy} stored for the token. uiCommand selects the header-only (RID_HEADER) or
-        // full (RID_INPUT) payload; passing pData==NULL is the standard size query.
+        // GetRawInputData fetches the payload referenced by WM_INPUT's lParam. RID_HEADER reads only the header,
+        // RID_INPUT reads the header and payload, and a null data pointer queries the required size. Reads leave
+        // the token valid so the window procedure can read the payload again.
         //
-        // The RAWMOUSE body follows the header with no extra padding, so it sits at offset == cbSizeHeader. A
-        // WoW64 (32-bit) guest on 64-bit Windows gets the *64-bit* RAWINPUTHEADER (24 bytes: 8-byte hDevice +
-        // wParam), not the 16-byte 32-bit one -- the well-known WoW64 raw-input quirk -- so honor whatever
-        // cbSizeHeader the caller passes and place the mouse body there, instead of assuming a fixed layout.
+        // The mouse or keyboard body follows the header with no extra padding. Native 64-bit callers use the
+        // 24-byte header, while WoW64 callers can use either the 16-byte or 24-byte layout.
         uint32_t handle_NtUserGetRawInputData(const syscall_context& c, const emulator_pointer raw_input, const uint32_t command,
                                               const emulator_pointer data, const emulator_object<uint32_t> size_ptr,
                                               const uint32_t header_size)
         {
             constexpr auto failure = static_cast<uint32_t>(-1);
-            constexpr uint32_t max_header_size = 0x20;
-
-            if (!size_ptr || header_size < sizeof(RAWINPUTHEADER32) || header_size > max_header_size)
+            const auto valid_header =
+                header_size == sizeof(RAWINPUTHEADER64) || (header_size == sizeof(RAWINPUTHEADER32) && c.proc.is_wow64_process);
+            if (!size_ptr || !valid_header)
             {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
                 return failure;
             }
 
-            const auto token = static_cast<uint32_t>(raw_input);
-            const auto entry = c.proc.raw_inputs.find(token);
-            if (entry == c.proc.raw_inputs.end())
+            const auto* payload = c.thread().find_raw_input(raw_input);
+            if (!payload)
             {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
                 return failure;
             }
 
-            const auto& payload = entry->second;
+            if (command != RID_HEADER && command != RID_INPUT)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return failure;
+            }
 
-            // The body is a RAWKEYBOARD or RAWMOUSE depending on what the token carried.
-            const uint32_t body_size = payload.keyboard ? sizeof(RAWKEYBOARD32) : sizeof(RAWMOUSE32);
-            const uint32_t dw_type = payload.keyboard ? RIM_TYPEKEYBOARD : RIM_TYPEMOUSE;
+            // The payload is a RAWKEYBOARD or RAWMOUSE depending on what the token carried.
+            const uint32_t body_size = payload->keyboard ? sizeof(RAWKEYBOARD32) : sizeof(RAWMOUSE32);
+            const uint32_t dw_type = payload->keyboard ? RIM_TYPEKEYBOARD : RIM_TYPEMOUSE;
 
             const uint32_t total = header_size + body_size;
             const uint32_t required = (command == RID_HEADER) ? header_size : total;
@@ -2661,26 +2679,28 @@ namespace sogen
 
             if (size_ptr.read() < required)
             {
+                size_ptr.write(required);
+                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
                 return failure;
             }
 
             // dwType @0 and dwSize @4 are identical across header layouts; hDevice/wParam stay zeroed, so only
             // the overall header size (which shifts the body) matters.
-            std::array<uint8_t, max_header_size + sizeof(RAWMOUSE32)> buffer{};
+            std::array<uint8_t, sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE32)> buffer{};
             const uint32_t dw_size = total;
             std::memcpy(buffer.data() + 0, &dw_type, sizeof(dw_type));
             std::memcpy(buffer.data() + 4, &dw_size, sizeof(dw_size));
-            if (command != RID_HEADER)
+            if (command == RID_INPUT)
             {
-                if (payload.keyboard)
+                if (payload->keyboard)
                 {
                     RAWKEYBOARD32 keyboard{};
-                    keyboard.MakeCode = payload.scan_code;
-                    const bool key_release = payload.key_message == WM_KEYUP || payload.key_message == WM_SYSKEYUP;
+                    keyboard.MakeCode = payload->scan_code;
+                    const bool key_release = payload->key_message == WM_KEYUP || payload->key_message == WM_SYSKEYUP;
                     keyboard.Flags =
-                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload.key_extended ? RI_KEY_E0 : 0));
-                    keyboard.VKey = payload.vkey;
-                    keyboard.Message = payload.key_message;
+                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload->key_extended ? RI_KEY_E0 : 0));
+                    keyboard.VKey = payload->vkey;
+                    keyboard.Message = payload->key_message;
                     std::memcpy(buffer.data() + header_size, &keyboard, sizeof(keyboard));
                 }
                 else
@@ -2690,12 +2710,11 @@ namespace sogen
                     // RAWMOUSE has a usButtonFlags/usButtonData union packed into ulButtons. The high
                     // word carries wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL.
                     mouse.ulButtons =
-                        static_cast<uint32_t>(payload.mouse_buttons) | (static_cast<uint32_t>(payload.mouse_button_data) << 16);
-                    mouse.lLastX = payload.dx;
-                    mouse.lLastY = payload.dy;
+                        static_cast<uint32_t>(payload->mouse_buttons) | (static_cast<uint32_t>(payload->mouse_button_data) << 16);
+                    mouse.lLastX = payload->dx;
+                    mouse.lLastY = payload->dy;
                     std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
                 }
-                c.proc.raw_inputs.erase(entry);
             }
 
             c.emu.write_memory(data, buffer.data(), required);
@@ -3874,117 +3893,6 @@ namespace sogen
             return c.proc.desktops.erase(desktop_handle) ? TRUE : FALSE;
         }
 
-        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
-        // versions use different numbers, so the table is gated by guest build below.
-        constexpr uint32_t user_call_set_dialog_pointer = 99;
-        constexpr uint32_t user_call_set_dialog_system_menu = 111;
-        constexpr uint32_t user_call_set_foreground_window = 112;
-        constexpr uint32_t user_call_update_window = 115;
-        constexpr uint32_t user_call_set_msg_box = 89;
-        constexpr uint32_t user_call_message_beep = 0x39;
-        constexpr uint32_t user_call_post_quit_message = 0x3B;
-        constexpr uint32_t user_call_get_cursor_pos = 0x7F;
-
-        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && code == user_call_set_dialog_pointer)
-            {
-                return handle_NtUserSetDialogPointer(c, hwnd, param);
-            }
-
-            if (c.win_emu.callbacks.on_generic_activity)
-            {
-                c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
-            }
-
-            return 0;
-        }
-
-        BOOL set_foreground_window(const syscall_context& c, const hwnd hwnd)
-        {
-            if (!c.proc.windows.get(hwnd))
-            {
-                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
-                return FALSE;
-            }
-
-            c.win_emu.set_foreground_window(hwnd);
-            return TRUE;
-        }
-
-        BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046))
-            {
-                if (routine == user_call_set_dialog_system_menu)
-                {
-                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
-                }
-
-                if (routine == user_call_set_foreground_window)
-                {
-                    // user32!SetForegroundWindow is dispatched through NtUserCallHwndLock(112) on Win10.
-                    return set_foreground_window(c, hwnd);
-                }
-
-                if (routine == user_call_update_window)
-                {
-                    // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
-                    return handle_NtUserUpdateWindow(c, hwnd);
-                }
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
-            return FALSE;
-        }
-
-        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_set_msg_box)
-            {
-                return handle_NtUserSetMsgBox(c, hwnd);
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
-            return 0;
-        }
-
-        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046))
-            {
-                if (routine == user_call_message_beep)
-                {
-                    return handle_NtUserMessageBeep();
-                }
-
-                if (routine == user_call_post_quit_message)
-                {
-                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
-                }
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
-            return 0;
-        }
-
-        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_get_cursor_pos)
-            {
-                // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
-                if (param2 != 1 && param2 != 2)
-                {
-                    return FALSE;
-                }
-
-                return handle_NtUserGetCursorPos(c, param1);
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
-            return 0;
-        }
-
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
@@ -5004,9 +4912,187 @@ namespace sogen
             return advance_window_show(c, s);
         }
 
+        struct prepared_message_text
+        {
+            uint64_t scratch_text{};
+            uint64_t scratch_capacity{};
+            bool target_unicode{};
+        };
+
+        prepared_message_text prepare_message_text(const syscall_context& c, window& win, const UINT msg, const uint64_t w_param,
+                                                   const uint64_t l_param, const BOOL ansi)
+        {
+            prepared_message_text result{};
+            result.target_unicode = win.unicode_proc;
+            const bool caller_unicode = ansi == FALSE;
+
+            if (msg == WM_SETTEXT)
+            {
+                if (l_param == 0)
+                {
+                    update_window_title(c, win, {});
+                }
+                else if (ansi)
+                {
+                    update_window_title(c, win, c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param)));
+                }
+                else
+                {
+                    update_window_title(c, win, read_string<char16_t>(c.win_emu.memory, l_param));
+                }
+
+                // Deliver the text in the target proc's encoding (caller's is `ansi`, proc's is
+                // unicode_proc): when they differ, re-encode into a scratch guest buffer so a wide proc
+                // never reads ANSI as UTF-16. Freed after the window procedure returns.
+                if (l_param != 0 && caller_unicode != win.unicode_proc)
+                {
+                    if (win.unicode_proc)
+                    {
+                        const auto wide = c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param));
+                        result.scratch_text = allocate_text_buffer(c, wide.size() + 1, sizeof(char16_t));
+                        if (result.scratch_text == 0)
+                        {
+                            return {};
+                        }
+                        c.win_emu.memory.write_memory(result.scratch_text, wide.c_str(), (wide.size() + 1) * sizeof(char16_t));
+                    }
+                    else
+                    {
+                        const auto narrow = c.proc.ansi_code_page.encode(read_string<char16_t>(c.win_emu.memory, l_param));
+                        result.scratch_text = allocate_text_buffer(c, narrow.size() + 1, sizeof(char));
+                        if (result.scratch_text == 0)
+                        {
+                            return {};
+                        }
+                        c.win_emu.memory.write_memory(result.scratch_text, narrow.c_str(), narrow.size() + 1);
+                    }
+                }
+            }
+            else if (msg == WM_GETTEXT && l_param != 0 && w_param != 0 && caller_unicode != win.unicode_proc)
+            {
+                result.scratch_capacity = w_param;
+                if (caller_unicode)
+                {
+                    // A wide caller's character count converts to up to maximum_character_size bytes each.
+                    const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
+                    if (w_param - 1 > (std::numeric_limits<uint64_t>::max() - 1) / maximum_size)
+                    {
+                        return {};
+                    }
+                    result.scratch_capacity = (w_param - 1) * maximum_size + 1;
+                }
+                result.scratch_text = allocate_text_buffer(c, result.scratch_capacity, win.unicode_proc ? sizeof(char16_t) : sizeof(char));
+                if (result.scratch_text == 0)
+                {
+                    return {};
+                }
+            }
+
+            return result;
+        }
+
+        std::optional<uint64_t> copy_message_text_result(const syscall_context& c, const UINT msg, const uint64_t w_param,
+                                                         const uint64_t l_param, const BOOL ansi, const uint64_t scratch_text)
+        {
+            if (msg != WM_GETTEXT || scratch_text == 0)
+            {
+                return std::nullopt;
+            }
+            const auto capacity = static_cast<size_t>(std::min<uint64_t>(w_param, std::numeric_limits<size_t>::max()));
+            auto text = ansi ? read_string<char16_t>(c.win_emu.memory, scratch_text, capacity)
+                             : c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, scratch_text, capacity));
+            text.erase(std::min(text.find(u'\0'), text.size()));
+            return copy_text_to_buffer(c, text, w_param, l_param, ansi != FALSE);
+        }
+
+        void complete_sent_window_message(const syscall_context& c, sent_window_message& message, const uint64_t result)
+        {
+            if (c.proc.reply_to_sent_message(message, result))
+            {
+                c.win_emu.wake_idle_vcpu();
+            }
+        }
+
+        bool dispatch_pending_sent_window_message(const syscall_context& c, const callback_id completion_callback)
+        {
+            auto& thread = c.thread();
+            while (!thread.pending_sent_messages.empty())
+            {
+                auto message = thread.pending_sent_messages.front();
+                thread.pending_sent_messages.erase(thread.pending_sent_messages.begin());
+                thread.publish_client_thread_info();
+                auto* win = c.proc.windows.get(message.window);
+                if (!win || win->thread_id != thread.id)
+                {
+                    complete_sent_window_message(c, message, 0);
+                    continue;
+                }
+                message.scratch_text =
+                    prepare_message_text(c, *win, message.message, message.w_param, message.l_param, message.ansi).scratch_text;
+                thread.active_sent_messages.push_back(message);
+                thread.publish_client_thread_info();
+                const auto param = message.scratch_text != 0 ? message.scratch_text : message.l_param;
+                if (completion_callback == callback_id::NtUserMessageCall)
+                {
+                    message_call_state state{};
+                    state.dispatching_nested_send = true;
+                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, message.w_param, param);
+                }
+                else
+                {
+                    message_retrieval_state state{};
+                    state.callback = message_retrieval_callback::sent_message;
+                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, message.w_param, param);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        void complete_active_sent_window_message(const syscall_context& c)
+        {
+            auto& messages = c.thread().active_sent_messages;
+            if (messages.empty())
+            {
+                throw std::runtime_error("Missing active sent window message");
+            }
+            auto message = messages.back();
+            messages.pop_back();
+            c.thread().publish_client_thread_info();
+            if (!message.replied)
+            {
+                const auto converted =
+                    copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
+                complete_sent_window_message(c, message, converted.value_or(c.get_callback_result<uint64_t>()));
+            }
+            if (message.scratch_text != 0)
+            {
+                c.win_emu.memory.release_memory(message.scratch_text, 0);
+            }
+        }
+
+        uint64_t continue_sent_message_wait(const syscall_context& c, const sent_message_wait& wait)
+        {
+            if (wait.result)
+            {
+                const auto result = *wait.result;
+                c.thread().sent_message_waits.pop_back();
+                return result;
+            }
+            if (!dispatch_pending_sent_window_message(c, callback_id::NtUserMessageCall))
+            {
+                c.win_emu.yield_thread(c.vcpu, false);
+            }
+            return 0;
+        }
+
         uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
                                           const uint64_t l_param, const uint64_t result_info, const DWORD type, const BOOL ansi)
         {
+            if (const auto* wait = c.thread().current_sent_message_wait())
+            {
+                return continue_sent_message_wait(c, *wait);
+            }
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
             {
@@ -5052,86 +5138,46 @@ namespace sogen
                     }
                 }
 
+                if (type == FNID_SENDMESSAGE || type == FNID_SENDMESSAGEFF)
+                {
+                    if (auto* target = c.proc.find_thread_by_id(win->thread_id); target && !target->is_terminated())
+                    {
+                        const auto depth = c.thread().callback_stack.size();
+                        const auto& abi = c.win_emu.abi();
+                        c.thread().sent_message_waits.push_back({.callback_depth = depth,
+                                                                 .syscall_ip = abi.instruction_pointer(c.emu),
+                                                                 .syscall_number = abi.return_value(c.emu)});
+                        target->pending_sent_messages.push_back({.sender_thread_id = c.thread().id,
+                                                                 .sender_callback_depth = depth,
+                                                                 .window = hwnd,
+                                                                 .message = msg,
+                                                                 .w_param = w_param,
+                                                                 .l_param = l_param,
+                                                                 .ansi = ansi});
+                        target->mark_queue_status_changed(QS_SENDMESSAGE);
+                        c.win_emu.wake_idle_vcpu();
+                        c.win_emu.yield_thread(c.vcpu, false);
+                    }
+                }
                 return 0;
             }
 
+            const auto prepared = prepare_message_text(c, *win, msg, w_param, l_param, ansi);
             uint64_t dispatch_w_param = w_param;
-            uint64_t dispatch_l_param = l_param;
-            uint64_t scratch_text = 0;
-            uint64_t scratch_capacity = 0;
-            const bool caller_unicode = ansi == FALSE;
-            const bool target_unicode = win->unicode_proc;
-
-            if (msg == WM_SETTEXT)
+            uint64_t dispatch_l_param = prepared.scratch_text != 0 ? prepared.scratch_text : l_param;
+            if (prepared.scratch_text != 0 && msg == WM_GETTEXT)
             {
-                if (l_param == 0)
-                {
-                    update_window_title(c, *win, {});
-                }
-                else if (ansi)
-                {
-                    update_window_title(c, *win, c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param)));
-                }
-                else
-                {
-                    update_window_title(c, *win, read_string<char16_t>(c.win_emu.memory, l_param));
-                }
-
-                // Deliver the text in the target proc's encoding (caller's is `ansi`, proc's is
-                // unicode_proc): when they differ, re-encode into a scratch guest buffer so a wide proc
-                // never reads ANSI as UTF-16. Freed in completion_NtUserMessageCall.
-                if (l_param != 0 && caller_unicode != target_unicode)
-                {
-                    if (target_unicode)
-                    {
-                        const auto wide = c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param));
-                        scratch_text = allocate_text_buffer(c, wide.size() + 1, sizeof(char16_t));
-                        if (scratch_text == 0)
-                        {
-                            return 0;
-                        }
-                        c.win_emu.memory.write_memory(scratch_text, wide.c_str(), (wide.size() + 1) * sizeof(char16_t));
-                    }
-                    else
-                    {
-                        const auto narrow = c.proc.ansi_code_page.encode(read_string<char16_t>(c.win_emu.memory, l_param));
-                        scratch_text = allocate_text_buffer(c, narrow.size() + 1, sizeof(char));
-                        if (scratch_text == 0)
-                        {
-                            return 0;
-                        }
-                        c.win_emu.memory.write_memory(scratch_text, narrow.c_str(), narrow.size() + 1);
-                    }
-                    dispatch_l_param = scratch_text;
-                }
-            }
-            else if (msg == WM_GETTEXT && l_param != 0 && w_param != 0 && caller_unicode != target_unicode)
-            {
-                scratch_capacity = w_param;
-                if (caller_unicode)
-                {
-                    const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
-                    if (w_param - 1 > (std::numeric_limits<uint64_t>::max() - 1) / maximum_size)
-                    {
-                        return 0;
-                    }
-                    scratch_capacity = (w_param - 1) * maximum_size + 1;
-                }
-                scratch_text = allocate_text_buffer(c, scratch_capacity, target_unicode ? sizeof(char16_t) : sizeof(char));
-                if (scratch_text == 0)
-                {
-                    return 0;
-                }
-                dispatch_w_param = scratch_capacity;
-                dispatch_l_param = scratch_text;
+                // The scratch buffer holds the text in the target's encoding and can be larger than the
+                // caller's character count, so the target must receive its own capacity in w_param.
+                dispatch_w_param = prepared.scratch_capacity;
             }
 
             message_call_state state{};
             state.window = hwnd;
             state.message = msg;
-            state.scratch_text = scratch_text;
-            state.scratch_capacity = scratch_capacity;
-            state.target_unicode = target_unicode;
+            state.scratch_text = prepared.scratch_text;
+            state.scratch_capacity = prepared.scratch_capacity;
+            state.target_unicode = prepared.target_unicode;
             dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, dispatch_w_param, dispatch_l_param);
             return {};
         }
@@ -5140,6 +5186,12 @@ namespace sogen
                                               const uint64_t l_param, const uint64_t result_info, const DWORD type, const BOOL ansi)
         {
             auto& state = c.get_completion_state<message_call_state>();
+
+            if (state.dispatching_nested_send)
+            {
+                complete_active_sent_window_message(c);
+                return continue_sent_message_wait(c, *c.thread().current_sent_message_wait());
+            }
 
             if (state.destroying_window)
             {
@@ -5436,6 +5488,11 @@ namespace sogen
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
+            if (dispatch_pending_sent_window_message(c, callback_id::NtUserGetMessage))
+            {
+                return {};
+            }
+
             if (dispatch_low_level_hook(c, callback_id::NtUserGetMessage))
             {
                 return {};
@@ -5443,7 +5500,7 @@ namespace sogen
 
             auto& t = c.thread();
 
-            if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, message_retrieval_mode::get))
             {
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
@@ -5465,20 +5522,33 @@ namespace sogen
         BOOL completion_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                          const UINT msg_filter_min, const UINT msg_filter_max)
         {
-            if (c.current_completion_state)
+            if (c.current_completion_state &&
+                c.get_completion_state<message_retrieval_state>().callback == message_retrieval_callback::get_message_hook)
             {
                 const auto hooked = complete_get_message_hook(c);
                 message.write(hooked);
                 return hooked.message != WM_QUIT ? TRUE : FALSE;
             }
 
-            complete_low_level_hook(c);
+            if (c.current_completion_state)
+            {
+                complete_active_sent_window_message(c);
+            }
+            else
+            {
+                complete_low_level_hook(c);
+            }
             return handle_NtUserGetMessage(c, message, hwnd, msg_filter_min, msg_filter_max);
         }
 
         BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                       const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
+            if (dispatch_pending_sent_window_message(c, callback_id::NtUserPeekMessage))
+            {
+                return {};
+            }
+
             if (dispatch_low_level_hook(c, callback_id::NtUserPeekMessage))
             {
                 return {};
@@ -5487,7 +5557,8 @@ namespace sogen
             auto& t = c.thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, should_remove);
+            const auto mode = should_remove ? message_retrieval_mode::remove : message_retrieval_mode::peek;
+            std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, mode);
 
             if (pending_msg)
             {
@@ -5507,13 +5578,21 @@ namespace sogen
         BOOL completion_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                           const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
-            if (c.current_completion_state)
+            if (c.current_completion_state &&
+                c.get_completion_state<message_retrieval_state>().callback == message_retrieval_callback::get_message_hook)
             {
                 message.write(complete_get_message_hook(c));
                 return TRUE;
             }
 
-            complete_low_level_hook(c);
+            if (c.current_completion_state)
+            {
+                complete_active_sent_window_message(c);
+            }
+            else
+            {
+                complete_low_level_hook(c);
+            }
             return handle_NtUserPeekMessage(c, message, hwnd, msg_filter_min, msg_filter_max, remove_message);
         }
 
@@ -5525,12 +5604,13 @@ namespace sogen
             }
 
             auto& t = c.thread();
-            if (t.peek_pending_message(c.win_emu))
+            if (!t.pending_sent_messages.empty() || t.peek_pending_message(c.win_emu))
             {
                 return TRUE;
             }
 
             t.await_msg_mask = QS_ALLINPUT;
+            t.await_msg_ready_status = TRUE;
             t.remember_message_wait(c.emu, c.win_emu.abi());
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
@@ -5540,6 +5620,27 @@ namespace sogen
         {
             complete_low_level_hook(c);
             return handle_NtUserWaitMessage(c);
+        }
+
+        BOOL handle_NtUserReplyMessage(const syscall_context& c, const uint64_t result)
+        {
+            auto& messages = c.thread().active_sent_messages;
+            if (messages.empty())
+            {
+                return FALSE;
+            }
+
+            // Windows replies to the innermost active cross-thread send even when a nested same-thread
+            // window procedure calls ReplyMessage.
+            auto& message = messages.back();
+            if (message.replied)
+            {
+                return FALSE;
+            }
+
+            copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
+            complete_sent_window_message(c, message, result);
+            return TRUE;
         }
 
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> rect, const BOOL erase)
@@ -5973,6 +6074,38 @@ namespace sogen
             dpi_x.write(96);
             dpi_y.write(96);
             return TRUE;
+        }
+
+        NTSTATUS handle_NtGdiGetCurrentDpiInfo(const syscall_context& c, const handle monitor,
+                                               const emulator_object<EMU_DPI_INFORMATION> info)
+        {
+            if (monitor != c.proc.default_monitor_handle || !info)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto display_info = c.proc.user_handles.get_display_info().read();
+            const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor);
+            if (!monitor_obj)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto rect = monitor_obj.read().rcMonitor;
+            const auto width = static_cast<UINT32>(rect.right - rect.left);
+            const auto height = static_cast<UINT32>(rect.bottom - rect.top);
+
+            EMU_DPI_INFORMATION dpi{};
+            dpi.ScaleFactor = 100;
+            dpi.ScaleFactorY = 100;
+            dpi.MonitorWidth = width;
+            dpi.MonitorHeight = height;
+            dpi.PhysicalHeight = height;
+            dpi.PhysicalWidth = width;
+            dpi.DpiX = 96;
+            dpi.DpiY = 96;
+            info.write(dpi);
+            return STATUS_SUCCESS;
         }
 
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc /*hdc_in*/, const uint64_t /*clip_rect_ptr*/,
@@ -6420,9 +6553,22 @@ namespace sogen
             return advance_deferred_window_positions(c, state);
         }
 
-        NTSTATUS handle_NtUserSetForegroundWindow()
+        BOOL handle_NtUserSetForegroundWindow(const syscall_context& c, const hwnd hwnd)
         {
-            return STATUS_SUCCESS;
+            const auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            if ((win->style & WS_CHILD) != 0 && (win->style & WS_POPUP) == 0)
+            {
+                return FALSE;
+            }
+
+            c.win_emu.set_foreground_window(hwnd);
+            return TRUE;
         }
 
         hwnd find_foreground_window(const syscall_context& c)
@@ -9703,6 +9849,351 @@ namespace sogen
         BOOL handle_NtUserIsChildWindowDpiMessageEnabled()
         {
             return FALSE;
+        }
+
+        ULONG handle_NtUserGetKeyboardType()
+        {
+            return 0;
+        }
+
+        // win32k client-interactivity-tracking telemetry hook; audioses pokes it while starting/stopping a
+        // stream. There is nothing to track in the emulator, so acknowledge it.
+        NTSTATUS handle_NtUserCitSetInfo()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
+        // versions use different numbers, so the table is gated by guest build below.
+        constexpr uint32_t user_call_create_menu = 0;
+        constexpr uint32_t user_call_create_popup_menu = 1;
+        constexpr uint32_t user_call_destroy_caret = 6;
+        constexpr uint32_t user_call_disable_process_windows_ghosting = 7;
+        constexpr uint32_t user_call_get_message_pos = 12;
+        constexpr uint32_t user_call_hide_cursor_no_capture = 16;
+        constexpr uint32_t user_call_release_capture = 22;
+        constexpr uint32_t user_call_zap_active_and_focus = 25;
+        constexpr uint32_t user_call_remote_connect_state = 34;
+        constexpr uint32_t user_call_trace_logging_send_mixed_mode_telemetry = 35;
+        constexpr uint32_t user_call_begin_defer_window_pos = 44;
+        constexpr uint32_t user_call_allow_set_foreground_window = 46;
+        constexpr uint32_t user_call_get_keyboard_type = 51;
+        constexpr uint32_t user_call_map_desktop_object = 56;
+        constexpr uint32_t user_call_message_beep = 57;
+        constexpr uint32_t user_call_post_quit_message = 59;
+        constexpr uint32_t user_call_swap_mouse_button = 73;
+        constexpr uint32_t user_call_thread_message_queue_attached = 78;
+        constexpr uint32_t user_call_get_window_context_help_id = 87;
+        constexpr uint32_t user_call_set_msg_box = 89;
+        constexpr uint32_t user_call_schedule_dispatch_notification = 91;
+        constexpr uint32_t user_call_clear_window_state = 95;
+        constexpr uint32_t user_call_set_dialog_pointer = 99;
+        constexpr uint32_t user_call_set_window_context_help_id = 101;
+        constexpr uint32_t user_call_set_window_state = 102;
+        constexpr uint32_t user_call_draw_menu_bar = 106;
+        constexpr uint32_t user_call_redraw_frame = 109;
+        constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_set_foreground_window = 112;
+        constexpr uint32_t user_call_set_sys_menu = 113;
+        constexpr uint32_t user_call_update_client_rect = 114;
+        constexpr uint32_t user_call_update_window = 115;
+        constexpr uint32_t user_call_show_owned_popups = 121;
+        constexpr uint32_t user_call_enable_window = 125;
+        constexpr uint32_t user_call_change_window_message_filter = 126;
+        constexpr uint32_t user_call_get_cursor_pos = 127;
+        constexpr uint32_t user_call_set_caret_pos = 136;
+        constexpr uint32_t user_call_cit_set_info = 140;
+
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_get_window_context_help_id)
+                {
+                    return handle_NtUserGetWindowContextHelpId(c, hwnd);
+                }
+
+                if (routine == user_call_set_msg_box)
+                {
+                    return handle_NtUserSetMsgBox(c, hwnd);
+                }
+
+                if (routine == user_call_schedule_dispatch_notification)
+                {
+                    return handle_NtUserScheduleDispatchNotification(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_draw_menu_bar)
+                {
+                    return handle_NtUserDrawMenuBar(c, hwnd);
+                }
+
+                if (routine == user_call_redraw_frame)
+                {
+                    return handle_NtUserRedrawFrame(c, hwnd);
+                }
+
+                if (routine == user_call_set_dialog_system_menu)
+                {
+                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_set_foreground_window)
+                {
+                    return handle_NtUserSetForegroundWindow(c, hwnd);
+                }
+
+                if (routine == user_call_set_sys_menu)
+                {
+                    return handle_NtUserSetSysMenu(c, hwnd);
+                }
+
+                if (routine == user_call_update_client_rect)
+                {
+                    return handle_NtUserUpdateClientRect(c, hwnd);
+                }
+
+                if (routine == user_call_update_window)
+                {
+                    return handle_NtUserUpdateWindow(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
+            return FALSE;
+        }
+
+        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                const auto dword_param = static_cast<uint32_t>(param);
+
+                if (routine == user_call_clear_window_state)
+                {
+                    return handle_NtUserClearWindowState(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_set_dialog_pointer)
+                {
+                    return handle_NtUserSetDialogPointer(c, hwnd, param);
+                }
+
+                if (routine == user_call_set_window_context_help_id)
+                {
+                    return handle_NtUserSetWindowContextHelpId(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_set_window_state)
+                {
+                    return handle_NtUserSetWindowState(c, hwnd, dword_param);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndParamLock(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                const auto dword_param = static_cast<int32_t>(param);
+
+                if (routine == user_call_show_owned_popups)
+                {
+                    return handle_NtUserShowOwnedPopups(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_enable_window)
+                {
+                    return handle_NtUserEnableWindow(c, hwnd, dword_param);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParamLock routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndParamLockSafe(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_enable_window)
+                {
+                    return handle_NtUserEnableWindow(c, hwnd, static_cast<int32_t>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParamLockSafe routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndSafe(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_schedule_dispatch_notification)
+                {
+                    return handle_NtUserScheduleDispatchNotification(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndSafe routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallNoParam(const syscall_context& c, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_create_menu)
+                {
+                    return handle_NtUserCreateMenu(c);
+                }
+
+                if (routine == user_call_create_popup_menu)
+                {
+                    return handle_NtUserCreatePopupMenu(c);
+                }
+
+                if (routine == user_call_destroy_caret)
+                {
+                    return handle_NtUserDestroyCaret();
+                }
+
+                if (routine == user_call_disable_process_windows_ghosting)
+                {
+                    return handle_NtUserDisableProcessWindowsGhosting(c);
+                }
+
+                if (routine == user_call_get_message_pos)
+                {
+                    return handle_NtUserGetMessagePos(c);
+                }
+
+                if (routine == user_call_hide_cursor_no_capture)
+                {
+                    return handle_NtUserHideCursorNoCapture();
+                }
+
+                if (routine == user_call_release_capture)
+                {
+                    return handle_NtUserReleaseCapture(c);
+                }
+
+                if (routine == user_call_zap_active_and_focus)
+                {
+                    return handle_NtUserZapActiveAndFocus(c);
+                }
+
+                if (routine == user_call_remote_connect_state)
+                {
+                    return handle_NtUserRemoteConnectState(c);
+                }
+
+                if (routine == user_call_trace_logging_send_mixed_mode_telemetry)
+                {
+                    return handle_NtUserTraceLoggingSendMixedModeTelemetry();
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallNoParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_begin_defer_window_pos)
+                {
+                    return handle_NtUserBeginDeferWindowPos(c, static_cast<int>(param));
+                }
+
+                if (routine == user_call_allow_set_foreground_window)
+                {
+                    return handle_NtUserAllowSetForegroundWindow();
+                }
+
+                if (routine == user_call_get_keyboard_type)
+                {
+                    return handle_NtUserGetKeyboardType();
+                }
+
+                if (routine == user_call_map_desktop_object)
+                {
+                    const handle handle{.h = param};
+                    return handle_NtUserMapDesktopObject(c, handle);
+                }
+
+                if (routine == user_call_message_beep)
+                {
+                    return handle_NtUserMessageBeep();
+                }
+
+                if (routine == user_call_post_quit_message)
+                {
+                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                }
+
+                if (routine == user_call_swap_mouse_button)
+                {
+                    return handle_NtUserSwapMouseButton();
+                }
+
+                if (routine == user_call_thread_message_queue_attached)
+                {
+                    return handle_NtUserThreadMessageQueueAttached(c, static_cast<int>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_change_window_message_filter)
+                {
+                    return handle_NtUserChangeWindowMessageFilter();
+                }
+
+                if (routine == user_call_get_cursor_pos)
+                {
+                    // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
+                    if (param2 != 1 && param2 != 2)
+                    {
+                        return FALSE;
+                    }
+
+                    return handle_NtUserGetCursorPos(c, param1);
+                }
+
+                if (routine == user_call_set_caret_pos)
+                {
+                    return handle_NtUserSetCaretPos();
+                }
+
+                if (routine == user_call_cit_set_info)
+                {
+                    return handle_NtUserCitSetInfo();
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
+            return 0;
         }
     }
 

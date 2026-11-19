@@ -431,6 +431,41 @@ namespace sogen
                 }
             }
         };
+
+        // A host surface may not take what a guest made for Windows asks for, such as Zink's B8G8R8A8 swapchains on
+        // Android. The guest then renders into these images, and each present copies one into an image of the native
+        // swapchain.
+        struct swapchain_proxy
+        {
+            std::vector<VkImage> images{};
+            std::vector<VkDeviceMemory> memories{};
+
+            struct copy_commands
+            {
+                VkCommandPool pool{};
+                std::vector<VkCommandBuffer> buffers{};
+            };
+
+            // Per queue family the guest presents from, created at its first present there.
+            std::map<uint32_t, copy_commands> copies{};
+            // Signaled once the copy out of the image is done, which the guest acquiring it again waits for. Only a copy
+            // that was submitted signals it.
+            std::vector<VkFence> copied{};
+            std::vector<bool> copy_submitted{};
+            // Per proxy image rather than per native one, since the copy waiting for it is fenced like the proxy image.
+            std::vector<VkSemaphore> native_acquired{};
+            // Per native image, waited for by its present.
+            std::vector<VkSemaphore> native_ready{};
+            std::vector<VkImage> native_images{};
+            uint32_t next_image{};
+            // Presents from different queues acquire native images without the kernel lock, while the swapchain
+            // needs external synchronization.
+            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
+            // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
+            // guest has to re-create the swapchain.
+            bool lost{};
+            bool copyable{};
+        };
     }
 
     struct vulkan_host::impl
@@ -711,6 +746,8 @@ namespace sogen
             PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
+            // Null unless the guest enabled synchronization2.
+            PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier2{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdClearAttachments cmd_clear_attachments{};
             PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
@@ -883,41 +920,6 @@ namespace sogen
                 buffer.read(this->present_mode);
                 buffer.read(this->clipped);
             }
-        };
-
-        // A host surface may not take what a guest made for Windows asks for, such as Zink's B8G8R8A8 swapchains on
-        // Android. The guest then renders into these images, and each present copies one into an image of the native
-        // swapchain.
-        struct swapchain_proxy
-        {
-            std::vector<VkImage> images{};
-            std::vector<VkDeviceMemory> memories{};
-
-            struct copy_commands
-            {
-                VkCommandPool pool{};
-                std::vector<VkCommandBuffer> buffers{};
-            };
-
-            // Per queue family the guest presents from, created at its first present there.
-            std::map<uint32_t, copy_commands> copies{};
-            // Signaled once the copy out of the image is done, which the guest acquiring it again waits for. Only a copy
-            // that was submitted signals it.
-            std::vector<VkFence> copied{};
-            std::vector<bool> copy_submitted{};
-            // Per proxy image rather than per native one, since the copy waiting for it is fenced like the proxy image.
-            std::vector<VkSemaphore> native_acquired{};
-            // Per native image, waited for by its present.
-            std::vector<VkSemaphore> native_ready{};
-            std::vector<VkImage> native_images{};
-            uint32_t next_image{};
-            // Presents from different queues acquire native images without the kernel lock, while the swapchain
-            // needs external synchronization.
-            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
-            // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
-            // guest has to re-create the swapchain.
-            bool lost{};
-            bool copyable{};
         };
 
         struct swapchain_data
@@ -1850,6 +1852,27 @@ namespace sogen
             }
         };
 
+        struct pipeline_stage_params
+        {
+            uint32_t stage{};
+            shader_stage_params shader{};
+            specialization_params spec{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->stage);
+                buffer.write(this->shader);
+                buffer.write(this->spec);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->stage);
+                buffer.read(this->shader);
+                buffer.read(this->spec);
+            }
+        };
+
         struct pipeline_params
         {
             bool compute{};
@@ -1859,9 +1882,9 @@ namespace sogen
             uint32_t subpass{};
             uint64_t pipeline_layout{};
             std::shared_ptr<const pipeline_layout_params> layout_create{};
-            // The compute stage for compute pipelines.
-            shader_stage_params vertex{};
-            shader_stage_params fragment{};
+            // A compute pipeline has just its compute stage.
+            std::vector<pipeline_stage_params> stages{};
+            tessellation_state tessellation{};
             uint64_t flags{};
             uint32_t library_parts{};
             std::vector<uint64_t> libraries{};
@@ -1872,7 +1895,7 @@ namespace sogen
             std::vector<vertex_binding> bindings{};
             std::vector<vertex_attribute> attributes{};
             std::vector<vertex_divisor> divisors{};
-            depth_state depth{};
+            depth_stencil_state depth_stencil{};
             std::vector<uint32_t> color_formats{};
             uint32_t depth_format{};
             uint32_t stencil_format{};
@@ -1882,8 +1905,6 @@ namespace sogen
             uint32_t rasterization_stream{};
             uint32_t rasterization_stream_flags{};
             std::vector<uint32_t> dynamic_states{};
-            specialization_params vs_spec{};
-            specialization_params fs_spec{};
             std::vector<color_blend_attachment> blend_attachments{};
 
             void serialize(utils::buffer_serializer& buffer) const
@@ -1899,8 +1920,8 @@ namespace sogen
                 {
                     buffer.write(*this->layout_create);
                 }
-                buffer.write(this->vertex);
-                buffer.write(this->fragment);
+                buffer.write_vector(this->stages);
+                buffer.write(this->tessellation);
                 buffer.write(this->flags);
                 buffer.write(this->library_parts);
                 buffer.write_vector(this->libraries);
@@ -1913,7 +1934,7 @@ namespace sogen
                 buffer.write_vector(this->bindings);
                 buffer.write_vector(this->attributes);
                 buffer.write_vector(this->divisors);
-                buffer.write(this->depth);
+                buffer.write(this->depth_stencil);
                 buffer.write_vector(this->color_formats);
                 buffer.write(this->depth_format);
                 buffer.write(this->stencil_format);
@@ -1923,8 +1944,6 @@ namespace sogen
                 buffer.write(this->rasterization_stream);
                 buffer.write(this->rasterization_stream_flags);
                 buffer.write_vector(this->dynamic_states);
-                buffer.write(this->vs_spec);
-                buffer.write(this->fs_spec);
                 buffer.write_vector(this->blend_attachments);
             }
 
@@ -1938,8 +1957,8 @@ namespace sogen
                 buffer.read(this->pipeline_layout);
                 this->layout_create =
                     buffer.read<bool>() ? std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>()) : nullptr;
-                buffer.read(this->vertex);
-                buffer.read(this->fragment);
+                buffer.read_vector(this->stages);
+                buffer.read(this->tessellation);
                 buffer.read(this->flags);
                 buffer.read(this->library_parts);
                 buffer.read_vector(this->libraries);
@@ -1953,7 +1972,7 @@ namespace sogen
                 buffer.read_vector(this->bindings);
                 buffer.read_vector(this->attributes);
                 buffer.read_vector(this->divisors);
-                buffer.read(this->depth);
+                buffer.read(this->depth_stencil);
                 buffer.read_vector(this->color_formats);
                 buffer.read(this->depth_format);
                 buffer.read(this->stencil_format);
@@ -1963,8 +1982,6 @@ namespace sogen
                 buffer.read(this->rasterization_stream);
                 buffer.read(this->rasterization_stream_flags);
                 buffer.read_vector(this->dynamic_states);
-                buffer.read(this->vs_spec);
-                buffer.read(this->fs_spec);
                 buffer.read_vector(this->blend_attachments);
             }
         };
@@ -1988,6 +2005,7 @@ namespace sogen
             uint32_t format{};
             uint64_t offset{};
             uint64_t range{};
+            uint64_t usage{};
         };
 
         struct framebuffer_params
@@ -2509,6 +2527,57 @@ namespace sogen
 
             params.max_inline_uniform_block_bindings = std::max(params.max_inline_uniform_block_bindings, inline_uniform_blocks);
             return params;
+        }
+
+        // Without synchronization2 the guest can only have used the legacy flags, which fit the legacy call. Each barrier
+        // keeps its own stages, so each becomes a call of its own.
+        static void record_legacy_barriers(const device_data& device, const VkCommandBuffer command_buffer, const uint32_t dependency_flags,
+                                           const std::span<const VkMemoryBarrier2> memory_barriers,
+                                           const std::span<const VkBufferMemoryBarrier2> buffer_barriers,
+                                           const std::span<const VkImageMemoryBarrier2> image_barriers)
+        {
+            const auto record = [&](const auto& barrier, const VkMemoryBarrier* memory, const VkBufferMemoryBarrier* buffer,
+                                    const VkImageMemoryBarrier* image) {
+                device.cmd_pipeline_barrier(command_buffer, static_cast<VkPipelineStageFlags>(barrier.srcStageMask),
+                                            static_cast<VkPipelineStageFlags>(barrier.dstStageMask), dependency_flags, memory ? 1 : 0,
+                                            memory, buffer ? 1 : 0, buffer, image ? 1 : 0, image);
+            };
+
+            for (const VkMemoryBarrier2& barrier : memory_barriers)
+            {
+                const VkMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                             .pNext = nullptr,
+                                             .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                             .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
+                record(barrier, &legacy, nullptr, nullptr);
+            }
+            for (const VkBufferMemoryBarrier2& barrier : buffer_barriers)
+            {
+                const VkBufferMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                                                   .pNext = nullptr,
+                                                   .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                                   .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                                                   .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                                                   .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                                                   .buffer = barrier.buffer,
+                                                   .offset = barrier.offset,
+                                                   .size = barrier.size};
+                record(barrier, nullptr, &legacy, nullptr);
+            }
+            for (const VkImageMemoryBarrier2& barrier : image_barriers)
+            {
+                const VkImageMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                                  .pNext = nullptr,
+                                                  .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                                                  .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                                                  .oldLayout = barrier.oldLayout,
+                                                  .newLayout = barrier.newLayout,
+                                                  .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                                                  .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                                                  .image = barrier.image,
+                                                  .subresourceRange = barrier.subresourceRange};
+                record(barrier, nullptr, nullptr, &legacy);
+            }
         }
 
         static VkResult create_host_descriptor_pool(const device_data& device, const descriptor_pool_params& create, VkDescriptorPool& pool)
@@ -5867,6 +5936,15 @@ namespace sogen
                    reinterpret_cast<const VkPhysicalDeviceMaintenance5FeaturesKHR*>(base)->maintenance5 == VK_TRUE;
         });
         data.maintenance5_enabled = maintenance5_extension_enabled && maintenance5_feature_enabled;
+        const bool synchronization2_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
+            const auto* base = reinterpret_cast<const VkBaseInStructure*>(buffer.data());
+            if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
+            {
+                return reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(base)->synchronization2 == VK_TRUE;
+            }
+            return base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES &&
+                   reinterpret_cast<const VkPhysicalDeviceSynchronization2Features*>(base)->synchronization2 == VK_TRUE;
+        });
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
@@ -5985,6 +6063,14 @@ namespace sogen
             data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
+            if (synchronization2_enabled)
+            {
+                data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2"));
+                if (!data.cmd_pipeline_barrier2)
+                {
+                    data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2KHR"));
+                }
+            }
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_clear_attachments = reinterpret_cast<PFN_vkCmdClearAttachments>(resolve("vkCmdClearAttachments"));
             data.cmd_clear_depth_stencil_image = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(resolve("vkCmdClearDepthStencilImage"));
@@ -8217,49 +8303,116 @@ namespace sogen
         }
     }
 
-    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
-                                              uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
-                                              uint32_t src_queue_family_index, uint32_t dst_queue_family_index,
-                                              const subresource_range& range)
+    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags,
+                                              std::span<const barrier_masks> memory_barriers,
+                                              std::span<const buffer_barrier> buffer_barriers,
+                                              std::span<const image_barrier> image_barriers)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
-        const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || img->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         const auto dev = this->impl_->devices.find(cb->second.device_id);
-        if (dev == this->impl_->devices.end() || !dev->second.cmd_pipeline_barrier)
+        if (dev == this->impl_->devices.end() || (!dev->second.cmd_pipeline_barrier2 && !dev->second.cmd_pipeline_barrier))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = src_access_mask;
-        barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = img->second.host_layout(old_layout);
-        barrier.newLayout = img->second.host_layout(new_layout);
-        barrier.srcQueueFamilyIndex = src_queue_family_index;
-        barrier.dstQueueFamilyIndex = dst_queue_family_index;
-        barrier.image = img->second.handle;
-        barrier.subresourceRange = to_vk_range(range);
+        std::vector<VkMemoryBarrier2> vk_memory_barriers{};
+        vk_memory_barriers.reserve(memory_barriers.size());
+        for (const barrier_masks& masks : memory_barriers)
+        {
+            vk_memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                          .pNext = nullptr,
+                                          .srcStageMask = masks.src_stage_mask,
+                                          .srcAccessMask = masks.src_access_mask,
+                                          .dstStageMask = masks.dst_stage_mask,
+                                          .dstAccessMask = masks.dst_access_mask});
+        }
 
-        dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        std::vector<VkBufferMemoryBarrier2> vk_buffer_barriers{};
+        vk_buffer_barriers.reserve(buffer_barriers.size());
+        for (const buffer_barrier& barrier : buffer_barriers)
+        {
+            const auto buffer = this->impl_->buffers.find(barrier.buffer);
+            if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                          .pNext = nullptr,
+                                          .srcStageMask = barrier.masks.src_stage_mask,
+                                          .srcAccessMask = barrier.masks.src_access_mask,
+                                          .dstStageMask = barrier.masks.dst_stage_mask,
+                                          .dstAccessMask = barrier.masks.dst_access_mask,
+                                          .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                          .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                          .buffer = buffer->second.handle,
+                                          .offset = barrier.offset,
+                                          .size = barrier.size});
+        }
 
-        cb->second.layout_transitions.push_back(impl::layout_transition{
-            .image = image,
-            .aspect_mask = range.aspect_mask,
-            .base_mip_level = range.base_mip_level,
-            .level_count = range.level_count,
-            .base_array_layer = range.base_array_layer,
-            .layer_count = range.layer_count,
-            .new_layout = static_cast<uint32_t>(barrier.newLayout),
-            .transfers_ownership = src_queue_family_index != dst_queue_family_index && src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
-            .source_family = src_queue_family_index,
-            .destination_family = dst_queue_family_index,
-        });
+        std::vector<VkImageMemoryBarrier2> vk_image_barriers{};
+        vk_image_barriers.reserve(image_barriers.size());
+        for (const image_barrier& barrier : image_barriers)
+        {
+            const auto image = this->impl_->images.find(barrier.image);
+            if (image == this->impl_->images.end() || image->second.device_id != cb->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                         .pNext = nullptr,
+                                         .srcStageMask = barrier.masks.src_stage_mask,
+                                         .srcAccessMask = barrier.masks.src_access_mask,
+                                         .dstStageMask = barrier.masks.dst_stage_mask,
+                                         .dstAccessMask = barrier.masks.dst_access_mask,
+                                         .oldLayout = image->second.host_layout(barrier.old_layout),
+                                         .newLayout = image->second.host_layout(barrier.new_layout),
+                                         .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                         .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                         .image = image->second.handle,
+                                         .subresourceRange = to_vk_range(barrier.range)});
+        }
+
+        if (dev->second.cmd_pipeline_barrier2)
+        {
+            const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .pNext = nullptr,
+                                              .dependencyFlags = dependency_flags,
+                                              .memoryBarrierCount = static_cast<uint32_t>(vk_memory_barriers.size()),
+                                              .pMemoryBarriers = vk_memory_barriers.data(),
+                                              .bufferMemoryBarrierCount = static_cast<uint32_t>(vk_buffer_barriers.size()),
+                                              .pBufferMemoryBarriers = vk_buffer_barriers.data(),
+                                              .imageMemoryBarrierCount = static_cast<uint32_t>(vk_image_barriers.size()),
+                                              .pImageMemoryBarriers = vk_image_barriers.data()};
+            dev->second.cmd_pipeline_barrier2(cb->second.handle, &dependency);
+        }
+        else
+        {
+            impl::record_legacy_barriers(dev->second, cb->second.handle, dependency_flags, vk_memory_barriers, vk_buffer_barriers,
+                                         vk_image_barriers);
+        }
+
+        for (const image_barrier& barrier : image_barriers)
+        {
+            const auto& range = barrier.range;
+            cb->second.layout_transitions.push_back(impl::layout_transition{
+                .image = barrier.image,
+                .aspect_mask = range.aspect_mask,
+                .base_mip_level = range.base_mip_level,
+                .level_count = range.level_count,
+                .base_array_layer = range.base_array_layer,
+                .layer_count = range.layer_count,
+                .new_layout = static_cast<uint32_t>(this->impl_->images.at(barrier.image).host_layout(barrier.new_layout)),
+                .transfers_ownership = barrier.src_queue_family_index != barrier.dst_queue_family_index &&
+                                       barrier.src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+                .source_family = barrier.src_queue_family_index,
+                .destination_family = barrier.dst_queue_family_index,
+            });
+        }
         return VK_SUCCESS;
     }
 
@@ -9620,7 +9773,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range,
-                                            uint64_t& out_view)
+                                            uint64_t usage, uint64_t& out_view)
     {
         out_view = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -9638,6 +9791,14 @@ namespace sogen
         info.offset = offset;
         info.range = range ? range : VK_WHOLE_SIZE;
 
+        VkBufferUsageFlags2CreateInfoKHR usage_info{};
+        if (usage != 0)
+        {
+            usage_info.sType = VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR;
+            usage_info.usage = usage;
+            info.pNext = &usage_info;
+        }
+
         VkBufferView view{};
         const VkResult result = dev->second.create_buffer_view(dev->second.handle, &info, nullptr, &view);
         if (result != VK_SUCCESS)
@@ -9647,8 +9808,9 @@ namespace sogen
 
         const uint64_t id = this->impl_->allocate_id();
         this->impl_->buffer_views.emplace(
-            id, impl::buffer_view_data{
-                    .handle = view, .device_id = device, .create = {.buffer = buffer, .format = format, .offset = offset, .range = range}});
+            id, impl::buffer_view_data{.handle = view,
+                                       .device_id = device,
+                                       .create = {.buffer = buffer, .format = format, .offset = offset, .range = range, .usage = usage}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -11156,13 +11318,53 @@ namespace sogen
             return true;
         };
 
-        VkShaderModule vertex_module = VK_NULL_HANDLE;
-        VkShaderModule fragment_module = VK_NULL_HANDLE;
-        // Depth-only passes (depth prepass, shadows) have no fragment stage.
-        const bool has_fragment_stage =
-            fragment_shader_part && (desc.fragment_shader.module != 0 || !desc.fragment_shader.identifier.empty());
-        if ((pre_rasterization_part && !resolve_stage(desc.vertex_shader, vertex_module)) ||
-            (has_fragment_stage && !resolve_stage(desc.fragment_shader, fragment_module)))
+        const auto stage_part = [](const uint32_t stage) -> uint32_t {
+            switch (stage)
+            {
+            case VK_SHADER_STAGE_VERTEX_BIT:
+            case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
+            case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
+            case VK_SHADER_STAGE_GEOMETRY_BIT:
+                return VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT;
+            case VK_SHADER_STAGE_FRAGMENT_BIT:
+                return VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
+            default:
+                return 0;
+            }
+        };
+
+        const auto valid_spec = [](const specialization& spec) {
+            return std::ranges::all_of(spec.entries, [&spec](const spec_entry& e) {
+                return e.offset <= spec.data.size() && e.size <= spec.data.size() - e.offset;
+            });
+        };
+
+        // As in Vulkan, a stage of a part the pipeline does not define itself is ignored.
+        std::vector<const pipeline_stage*> defined_stages{};
+        std::vector<VkShaderModule> stage_modules{};
+        uint32_t given_stages = 0;
+        for (const pipeline_stage& stage : desc.stages)
+        {
+            const uint32_t part = stage_part(stage.stage);
+            if (part == 0 || (given_stages & stage.stage) != 0 || !valid_spec(stage.spec))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            given_stages |= stage.stage;
+            if ((desc.library_parts & part) == 0)
+            {
+                continue;
+            }
+
+            VkShaderModule module{};
+            if (!resolve_stage(stage.source, module))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            defined_stages.push_back(&stage);
+            stage_modules.push_back(module);
+        }
+        if (pre_rasterization_part && (given_stages & VK_SHADER_STAGE_VERTEX_BIT) == 0)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -11196,80 +11398,43 @@ namespace sogen
             color_count = rp->second.create.description.subpasses[desc.subpass].color_count;
         }
 
-        // Rebuild a VkSpecializationInfo per stage from the forwarded entries/data. The map-entry vectors and
-        // the two info structs must outlive the vkCreateGraphicsPipelines call below.
-        std::array<std::vector<VkSpecializationMapEntry>, 2> spec_map_entries;
-        std::array<VkSpecializationInfo, 2> spec_infos{};
+        std::vector<std::vector<VkSpecializationMapEntry>> spec_map_entries(defined_stages.size());
+        std::vector<VkSpecializationInfo> spec_infos(defined_stages.size());
+        std::vector<VkPipelineShaderStageModuleIdentifierCreateInfoEXT> stage_identifiers(defined_stages.size());
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+        std::vector<VkPipelineShaderStageCreateInfo> stages(defined_stages.size());
+        for (size_t i = 0; i < defined_stages.size(); ++i)
+        {
+            const pipeline_stage& source = *defined_stages[i];
+            VkPipelineShaderStageCreateInfo& stage = stages[i];
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.stage = static_cast<VkShaderStageFlagBits>(source.stage);
+            stage.module = stage_modules[i];
+            stage.pName = "main";
 
-        const auto valid_spec = [](const specialization& spec) {
-            for (const auto& e : spec.entries)
+            if (!source.source.identifier.empty())
             {
-                if (e.offset > spec.data.size() || e.size > spec.data.size() - e.offset)
+                auto& identifier = stage_identifiers[i];
+                identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
+                identifier.identifierSize = static_cast<uint32_t>(source.source.identifier.size());
+                identifier.pIdentifier = source.source.identifier.data();
+                stage.pNext = &identifier;
+            }
+
+            if (!source.spec.entries.empty() && !source.spec.data.empty())
+            {
+                auto& entries = spec_map_entries[i];
+                entries.reserve(source.spec.entries.size());
+                for (const spec_entry& e : source.spec.entries)
                 {
-                    return false;
+                    entries.push_back({.constantID = e.constant_id, .offset = e.offset, .size = e.size});
                 }
+                spec_infos[i] = {.mapEntryCount = static_cast<uint32_t>(entries.size()),
+                                 .pMapEntries = entries.data(),
+                                 .dataSize = source.spec.data.size(),
+                                 .pData = source.spec.data.data()};
+                stage.pSpecializationInfo = &spec_infos[i];
             }
-            return true;
-        };
-
-        if (!valid_spec(desc.vs_spec) || !valid_spec(desc.fs_spec))
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        const auto build_spec = [&](const specialization& spec, size_t idx) -> const VkSpecializationInfo* {
-            if (spec.entries.empty() || spec.data.empty())
-            {
-                return nullptr;
-            }
-            auto& entries = spec_map_entries[idx];
-            entries.reserve(spec.entries.size());
-            for (const spec_entry& e : spec.entries)
-            {
-                entries.push_back({.constantID = e.constant_id, .offset = e.offset, .size = e.size});
-            }
-            spec_infos[idx].mapEntryCount = static_cast<uint32_t>(entries.size());
-            spec_infos[idx].pMapEntries = entries.data();
-            spec_infos[idx].dataSize = spec.data.size();
-            spec_infos[idx].pData = spec.data.data();
-            return &spec_infos[idx];
-        };
-
-        std::array<VkPipelineShaderStageModuleIdentifierCreateInfoEXT, 2> stage_identifiers{};
-        const auto initialize_identifier = [&](size_t index, const shader_stage_source& source) -> const void* {
-            if (source.identifier.empty())
-            {
-                return nullptr;
-            }
-            auto& identifier = stage_identifiers[index];
-            identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
-            identifier.identifierSize = static_cast<uint32_t>(source.identifier.size());
-            identifier.pIdentifier = source.identifier.data();
-            return &identifier;
-        };
-
-        std::vector<VkPipelineShaderStageCreateInfo> stages{};
-        if (pre_rasterization_part)
-        {
-            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
-            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage.pNext = initialize_identifier(0, desc.vertex_shader);
-            stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-            stage.module = vertex_module;
-            stage.pName = "main";
-            stage.pSpecializationInfo = build_spec(desc.vs_spec, 0);
-        }
-        if (has_fragment_stage)
-        {
-            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
-            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage.pNext = initialize_identifier(1, desc.fragment_shader);
-            stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-            stage.module = fragment_module;
-            stage.pName = "main";
-            stage.pSpecializationInfo = build_spec(desc.fs_spec, 1);
         }
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
@@ -11415,9 +11580,36 @@ namespace sogen
 
         VkPipelineDepthStencilStateCreateInfo depth_stencil{};
         depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth_stencil.depthTestEnable = desc.depth.test_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthWriteEnable = desc.depth.write_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(desc.depth.compare_op);
+        const auto to_vk_stencil_op_state = [](const stencil_op_state& state) {
+            return VkStencilOpState{.failOp = static_cast<VkStencilOp>(state.fail_op),
+                                    .passOp = static_cast<VkStencilOp>(state.pass_op),
+                                    .depthFailOp = static_cast<VkStencilOp>(state.depth_fail_op),
+                                    .compareOp = static_cast<VkCompareOp>(state.compare_op),
+                                    .compareMask = state.compare_mask,
+                                    .writeMask = state.write_mask,
+                                    .reference = state.reference};
+        };
+        const depth_stencil_state& ds = desc.depth_stencil;
+        depth_stencil.flags = static_cast<VkPipelineDepthStencilStateCreateFlags>(ds.flags);
+        depth_stencil.depthTestEnable = ds.depth_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthWriteEnable = ds.depth_write_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(ds.depth_compare_op);
+        depth_stencil.depthBoundsTestEnable = ds.depth_bounds_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.stencilTestEnable = ds.stencil_test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.front = to_vk_stencil_op_state(ds.front);
+        depth_stencil.back = to_vk_stencil_op_state(ds.back);
+        depth_stencil.minDepthBounds = ds.min_depth_bounds;
+        depth_stencil.maxDepthBounds = ds.max_depth_bounds;
+
+        VkPipelineTessellationDomainOriginStateCreateInfo domain_origin{};
+        domain_origin.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO;
+        domain_origin.domainOrigin = static_cast<VkTessellationDomainOrigin>(desc.tessellation.domain_origin);
+
+        VkPipelineTessellationStateCreateInfo tessellation{};
+        tessellation.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+        tessellation.pNext = desc.tessellation.domain_origin_present ? &domain_origin : nullptr;
+        tessellation.flags = static_cast<VkPipelineTessellationStateCreateFlags>(desc.tessellation.flags);
+        tessellation.patchControlPoints = desc.tessellation.patch_control_points;
 
         const auto* next = static_cast<const void*>(nullptr);
         const auto chain = [&next](auto& structure) {
@@ -11443,7 +11635,7 @@ namespace sogen
         }
 
         VkGraphicsPipelineLibraryCreateInfoEXT library_parts_info{};
-        if (library_related)
+        if (library_related && desc.library_parts != 0)
         {
             library_parts_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT;
             library_parts_info.flags = desc.library_parts;
@@ -11478,9 +11670,10 @@ namespace sogen
         info.pInputAssemblyState = vertex_input_part ? &input_assembly : nullptr;
         info.pViewportState = pre_rasterization_part ? &viewport_state : nullptr;
         info.pRasterizationState = pre_rasterization_part ? &rasterization : nullptr;
+        info.pTessellationState = pre_rasterization_part && desc.tessellation.present ? &tessellation : nullptr;
         info.pMultisampleState = fragment_shader_part || fragment_output_part ? &multisample : nullptr;
         info.pColorBlendState = fragment_output_part ? &color_blend : nullptr;
-        info.pDepthStencilState = fragment_shader_part && desc.depth.test_enable ? &depth_stencil : nullptr;
+        info.pDepthStencilState = fragment_shader_part && ds.present ? &depth_stencil : nullptr;
         info.pDynamicState = dynamic_rendering ? &dynamic_state : nullptr;
         info.layout = layout_handle;
         info.renderPass = rp_handle;
@@ -11496,8 +11689,14 @@ namespace sogen
         create.subpass = desc.subpass;
         create.pipeline_layout = desc.pipeline_layout;
         create.layout_create = std::move(layout_create);
-        create.vertex = this->impl_->stage_params(desc.vertex_shader);
-        create.fragment = this->impl_->stage_params(desc.fragment_shader);
+        for (const pipeline_stage& stage : desc.stages)
+        {
+            create.stages.push_back({.stage = stage.stage,
+                                     .shader = this->impl_->stage_params(stage.source),
+                                     .spec = {.entries = {stage.spec.entries.begin(), stage.spec.entries.end()},
+                                              .data = {stage.spec.data.begin(), stage.spec.data.end()}}});
+        }
+        create.tessellation = desc.tessellation;
         create.flags = desc.flags;
         create.library_parts = desc.library_parts;
         create.libraries.assign(desc.libraries.begin(), desc.libraries.end());
@@ -11507,7 +11706,7 @@ namespace sogen
         create.bindings.assign(desc.bindings.begin(), desc.bindings.end());
         create.attributes.assign(desc.attributes.begin(), desc.attributes.end());
         create.divisors.assign(desc.divisors.begin(), desc.divisors.end());
-        create.depth = desc.depth;
+        create.depth_stencil = desc.depth_stencil;
         create.color_formats.assign(desc.color_formats.begin(), desc.color_formats.end());
         create.depth_format = desc.depth_format;
         create.stencil_format = desc.stencil_format;
@@ -11517,10 +11716,6 @@ namespace sogen
         create.rasterization_stream = desc.rasterization_stream;
         create.rasterization_stream_flags = desc.rasterization_stream_flags;
         create.dynamic_states.assign(desc.dynamic_states.begin(), desc.dynamic_states.end());
-        create.vs_spec = {.entries = {desc.vs_spec.entries.begin(), desc.vs_spec.entries.end()},
-                          .data = {desc.vs_spec.data.begin(), desc.vs_spec.data.end()}};
-        create.fs_spec = {.entries = {desc.fs_spec.entries.begin(), desc.fs_spec.entries.end()},
-                          .data = {desc.fs_spec.data.begin(), desc.fs_spec.data.end()}};
         create.blend_attachments.assign(desc.blend_attachments.begin(), desc.blend_attachments.end());
 
         // Compiling takes long enough to stall every other vCPU if it held the caller's locks. The device lock is released
@@ -11550,7 +11745,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
-                                                 const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline)
+                                                 const shader_stage_source& shader, uint64_t flags, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
 
@@ -11599,10 +11794,17 @@ namespace sogen
             cache_handle = cache->second.handle;
         }
 
+        // Flags beyond the legacy 32 bits exist only as VkPipelineCreateFlags2.
+        VkPipelineCreateFlags2CreateInfoKHR flags2_info{};
+        flags2_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR;
+        flags2_info.flags = flags;
+        const bool needs_flags2 = (flags >> 32) != 0;
+
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkComputePipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        info.flags = static_cast<VkPipelineCreateFlags>(flags);
+        info.pNext = needs_flags2 ? &flags2_info : nullptr;
+        info.flags = needs_flags2 ? 0 : static_cast<VkPipelineCreateFlags>(flags);
         info.layout = layout->second.handle;
         info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         info.stage.pNext = has_identifier ? &identifier : nullptr;
@@ -11623,7 +11825,7 @@ namespace sogen
         create.pipeline_cache = pipeline_cache;
         create.pipeline_layout = pipeline_layout;
         create.layout_create = layout->second.create;
-        create.vertex = this->impl_->stage_params(shader);
+        create.stages = {{.stage = VK_SHADER_STAGE_COMPUTE_BIT, .shader = this->impl_->stage_params(shader)}};
         create.flags = flags;
         this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
@@ -14397,12 +14599,9 @@ namespace sogen
                 return stage.code != nullptr || impl.shader_modules.contains(stage.module);
             };
 
-            const auto absent = [](const impl::shader_stage_params& stage) {
-                return stage.module == 0 && stage.identifier.empty() && stage.code == nullptr;
-            };
-
-            if (!restorable(pipeline.create.vertex) ||
-                (!pipeline.create.compute && !absent(pipeline.create.fragment) && !restorable(pipeline.create.fragment)))
+            if (pipeline.create.stages.empty() ||
+                !std::ranges::all_of(pipeline.create.stages,
+                                     [&](const impl::pipeline_stage_params& stage) { return restorable(stage.shader); }))
             {
                 throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
             }
@@ -15220,14 +15419,23 @@ namespace sogen
                 libraries.push_back(ensure_graphics_pipeline(device, create.libraries[i], *create.library_creates[i]));
             }
 
+            std::vector<pipeline_stage> stages{};
+            stages.reserve(create.stages.size());
+            for (const impl::pipeline_stage_params& stage : create.stages)
+            {
+                stages.push_back({.stage = stage.stage,
+                                  .source = stage_source(device, stage.shader),
+                                  .spec = {.entries = stage.spec.entries, .data = stage.spec.data}});
+            }
+
             const graphics_pipeline_desc desc{
                 .device = device,
                 .pipeline_cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0,
                 .render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create),
                 .subpass = create.subpass,
                 .pipeline_layout = create.layout_create ? ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create) : 0,
-                .vertex_shader = stage_source(device, create.vertex),
-                .fragment_shader = stage_source(device, create.fragment),
+                .stages = stages,
+                .tessellation = create.tessellation,
                 .flags = create.flags,
                 .library_parts = create.library_parts,
                 .libraries = libraries,
@@ -15236,7 +15444,7 @@ namespace sogen
                 .bindings = create.bindings,
                 .attributes = create.attributes,
                 .divisors = create.divisors,
-                .depth = create.depth,
+                .depth_stencil = create.depth_stencil,
                 .color_formats = create.color_formats,
                 .depth_format = create.depth_format,
                 .stencil_format = create.stencil_format,
@@ -15246,8 +15454,6 @@ namespace sogen
                 .rasterization_stream = create.rasterization_stream,
                 .rasterization_stream_flags = create.rasterization_stream_flags,
                 .dynamic_states = create.dynamic_states,
-                .vs_spec = {.entries = create.vs_spec.entries, .data = create.vs_spec.data},
-                .fs_spec = {.entries = create.fs_spec.entries, .data = create.fs_spec.data},
                 .blend_attachments = create.blend_attachments,
             };
             if (forced_id)
@@ -15284,9 +15490,9 @@ namespace sogen
             {
                 const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
                 const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
-                const auto shader = stage_source(device, create.vertex);
+                const auto shader = stage_source(device, create.stages.front().shader);
                 impl.forced_ids = {id};
-                result = this->create_compute_pipeline(device, cache, layout, shader, static_cast<uint32_t>(create.flags), pipeline);
+                result = this->create_compute_pipeline(device, cache, layout, shader, create.flags, pipeline);
             }
             else
             {
@@ -15328,7 +15534,8 @@ namespace sogen
 
             uint64_t view{};
             impl.forced_ids = {id};
-            const auto result = this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, view);
+            const auto result =
+                this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, create.usage, view);
             expect_restored(result, view, id, "buffer view");
         }
 
