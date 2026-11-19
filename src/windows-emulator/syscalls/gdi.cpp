@@ -3885,8 +3885,9 @@ namespace sogen
 
         BOOL handle_NtGdiGetDCPoint(const syscall_context& c, const hdc dc, const uint32_t index, const emulator_pointer result)
         {
-            constexpr uint32_t get_dc_origin = 0x60;
-            if (index != get_dc_origin || result == 0)
+            constexpr uint32_t redirected_dc_flag = 0x40;
+            constexpr uint32_t get_dc_origin = 0x20;
+            if ((index & ~redirected_dc_flag) != get_dc_origin || result == 0)
             {
                 return FALSE;
             }

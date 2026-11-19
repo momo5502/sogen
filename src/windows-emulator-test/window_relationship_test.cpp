@@ -134,10 +134,13 @@ namespace sogen::test
         const auto child = this->create_window(parent, WS_CHILD | WS_BORDER, {.left = 10, .top = 20, .right = 50, .bottom = 60});
         const auto dc = syscalls::handle_NtUserGetDC(this->context(), child);
         const auto address = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
-        ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetDCPoint(this->context(), dc, 0x60, address));
-        const auto point = this->emu.memory.read_memory<POINT>(address);
-        EXPECT_EQ(112, point.x);
-        EXPECT_EQ(222, point.y);
+        for (const auto index : {0x20u, 0x60u})
+        {
+            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetDCPoint(this->context(), dc, index, address));
+            const auto point = this->emu.memory.read_memory<POINT>(address);
+            EXPECT_EQ(112, point.x);
+            EXPECT_EQ(222, point.y);
+        }
         EXPECT_EQ(FALSE, syscalls::handle_NtGdiGetDCPoint(this->context(), 0, 0x60, address));
         EXPECT_EQ(FALSE, syscalls::handle_NtGdiGetDCPoint(this->context(), dc, 0x60, 0));
     }

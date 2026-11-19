@@ -2,7 +2,6 @@
 
 #include "rpc_test_utils.hpp"
 #include <io_completion_wait.hpp>
-#include <syscall_utils.hpp>
 
 namespace sogen::syscalls
 {
