@@ -170,6 +170,7 @@ namespace sogen
         // 10.0.26100 audioses reads ControlData_V1, whose 8-byte version prefix moves the cursors of 10.0.20348's ControlData.
         constexpr render_cursor_offsets k_control_data_v1_cursors{.write = 0x18, .play = 0x20};
         constexpr render_cursor_offsets k_control_data_v0_cursors{.write = 0x10, .play = 0x18};
+        constexpr uint32_t k_clock_position_from_play_cursor = 0x80;
 
         using render_control_data = std::array<uint8_t, 0x1c0>;
 
@@ -577,8 +578,8 @@ namespace sogen
                 if (restored.section_size > std::numeric_limits<size_t>::max() - k_audio_page_size ||
                     restored.contents.size() != restored.section_size || restored.section_size < k_render_data_offset ||
                     restored.cursors.write > k_render_data_offset - sizeof(uint64_t) ||
-                    restored.cursors.play > k_render_data_offset - sizeof(uint64_t) || restored.buffer_bytes == 0 ||
-                    restored.buffer_bytes > restored.section_size - k_render_data_offset)
+                    restored.cursors.play > k_render_data_offset - k_clock_position_from_play_cursor - sizeof(uint64_t) ||
+                    restored.buffer_bytes == 0 || restored.buffer_bytes > restored.section_size - k_render_data_offset)
                 {
                     throw std::runtime_error("[audio-service] Cannot restore invalid render stream storage");
                 }
@@ -601,6 +602,8 @@ namespace sogen
             void write_play_cursor(const uint64_t value)
             {
                 std::memcpy(this->host_ptr_ + this->cursors_.play, &value, sizeof(value));
+                // audioses uses this separate position for IAudioClock when the hardware clock is unavailable.
+                std::memcpy(this->host_ptr_ + this->cursors_.play + k_clock_position_from_play_cursor, &value, sizeof(value));
             }
 
             void run()
