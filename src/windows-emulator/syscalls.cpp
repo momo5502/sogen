@@ -717,6 +717,7 @@ namespace sogen
         BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                       UINT msg_filter_max, UINT remove_message);
         BOOL handle_NtUserWaitMessage(const syscall_context& c);
+        BOOL handle_NtUserReplyMessage(const syscall_context& c, uint64_t result);
         BOOL completion_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                          UINT msg_filter_max);
         BOOL completion_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
@@ -2158,6 +2159,7 @@ namespace sogen
         add_handler(NtUserScrollWindowEx);
         add_handler(NtUserPeekMessage);
         add_handler(NtUserWaitMessage);
+        add_handler(NtUserReplyMessage);
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
         add_handler(NtUserGetUpdateRect);
@@ -2442,8 +2444,8 @@ namespace sogen
         add_stateless_callback(NtUserGetControlBrush);
         add_stateless_callback(NtUserGetControlColor);
         add_stateless_callback(NtUserFillWindow);
-        add_callback(NtUserGetMessage, get_message_hook_state);
-        add_callback(NtUserPeekMessage, get_message_hook_state);
+        add_callback(NtUserGetMessage, message_retrieval_state);
+        add_callback(NtUserPeekMessage, message_retrieval_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
         add_stateless_callback(NtUserWaitMessage);
         add_stateless_callback(NtUserMsgWaitForMultipleObjectsEx);

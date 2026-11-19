@@ -424,6 +424,7 @@ namespace sogen
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false, uint64_t stack_commit_size = 0);
         void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
+        bool reply_to_sent_message(sent_window_message& message, uint64_t result);
 
         // PsImpersonateClient keeps the token object itself, so the thread keeps the privileges of the token it was
         // given and the guest closing that handle does not end the impersonation. A token identity is not an object

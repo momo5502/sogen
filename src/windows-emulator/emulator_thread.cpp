@@ -23,6 +23,8 @@ namespace sogen
 
     namespace
     {
+        constexpr uint32_t k_client_thread_info_sending_message = 0x2;
+
         enum class wait_state
         {
             not_signaled,
@@ -1024,13 +1026,28 @@ namespace sogen
         this->message_wait_return_register = abi.return_value(emu);
     }
 
-    // A WH_GETMESSAGE hook sees a message before GetMessage returns it, so a waiting GetMessage runs again instead of
-    // being completed by the scheduler.
-    bool emulator_thread::has_hooked_message(windows_emulator& win_emu)
+    // GetMessage dispatches pending sent messages before retrieving a queued message, and a WH_GETMESSAGE hook sees
+    // the queued message before GetMessage returns it. Both cases require a waiting GetMessage to run again instead
+    // of being completed by the scheduler.
+    bool emulator_thread::needs_message_wait_restart(windows_emulator& win_emu)
     {
-        return this->get_message_hook && this->await_msg &&
-               this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min, this->await_msg->filter_max)
-                   .has_value();
+        if (!this->await_msg)
+        {
+            return false;
+        }
+
+        if (!this->pending_sent_messages.empty())
+        {
+            return true;
+        }
+
+        if (this->get_message_hook)
+        {
+            const auto& wait = *this->await_msg;
+            return this->peek_pending_message(win_emu, wait.hwnd_filter, wait.filter_min, wait.filter_max).has_value();
+        }
+
+        return false;
     }
 
     // A parked thread resumes right after its syscall instruction.
@@ -1054,6 +1071,7 @@ namespace sogen
         this->await_objects = {};
         this->await_msg = {};
         this->await_msg_mask = {};
+        this->await_msg_ready_status = {};
         this->await_io_completion = {};
         this->await_debug_event = {};
         this->await_file_io = {};
@@ -1201,6 +1219,10 @@ namespace sogen
         }
 
         auto status = this->message_queue_status_bits;
+        if (!this->pending_sent_messages.empty())
+        {
+            status |= QS_SENDMESSAGE;
+        }
         const auto has_pending_paint = std::ranges::any_of(win_emu.process.windows, [this, &win_emu](const auto& entry) {
             const auto& win = entry.second;
             return win.thread_id == this->id && (win.update_pending || win.internal_paint_pending) &&
@@ -1490,8 +1512,11 @@ namespace sogen
         }
 
         this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
+            info.flags = (info.flags & ~k_client_thread_info_sending_message) |
+                         (this->active_sent_messages.empty() ? 0 : k_client_thread_info_sending_message);
             info.change_bits = static_cast<uint16_t>(this->queue_status_changed_bits);
-            info.wake_bits = static_cast<uint16_t>(this->message_queue_status_bits);
+            info.wake_bits =
+                static_cast<uint16_t>(this->message_queue_status_bits | (this->pending_sent_messages.empty() ? 0 : QS_SENDMESSAGE));
             info.focus_window = this->focus_window;
             info.active_window = this->active_window;
         });
@@ -1552,6 +1577,11 @@ namespace sogen
         if (this->is_terminated() || this->suspended > 0)
         {
             return false;
+        }
+
+        if (const auto* wait = this->current_sent_message_wait())
+        {
+            return wait->result.has_value() || !this->pending_sent_messages.empty();
         }
 
         auto& process = win_emu.process;
@@ -1625,7 +1655,9 @@ namespace sogen
 
             if (this->await_msg_mask.has_value() && message_ready && (this->await_any || this->await_objects.empty()))
             {
-                this->mark_as_ready(static_cast<NTSTATUS>(STATUS_WAIT_0 + this->await_objects.size()));
+                const auto status =
+                    this->await_msg_ready_status.value_or(static_cast<NTSTATUS>(STATUS_WAIT_0 + this->await_objects.size()));
+                this->mark_as_ready(status);
                 return true;
             }
 
@@ -1805,7 +1837,7 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
-            if (this->get_message_hook)
+            if (this->get_message_hook || !this->pending_sent_messages.empty())
             {
                 return false;
             }

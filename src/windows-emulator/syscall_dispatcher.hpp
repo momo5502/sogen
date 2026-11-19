@@ -334,6 +334,7 @@ namespace sogen
         UINT message{};
         uint64_t scratch_text{}; // guest buffer holding a re-encoded text payload; freed on completion
         bool dispatching_result_callback{};
+        bool dispatching_nested_send{};
         bool destroying_window{};
         window_destroy_data destruction{};
 
@@ -344,6 +345,7 @@ namespace sogen
             buffer.write(this->message);
             buffer.write(this->scratch_text);
             buffer.write(this->dispatching_result_callback);
+            buffer.write(this->dispatching_nested_send);
             buffer.write(this->destroying_window);
             this->destruction.serialize(buffer);
         }
@@ -354,6 +356,7 @@ namespace sogen
             buffer.read(this->message);
             buffer.read(this->scratch_text);
             buffer.read(this->dispatching_result_callback);
+            buffer.read(this->dispatching_nested_send);
             buffer.read(this->destroying_window);
             this->destruction.deserialize(buffer);
         }
@@ -401,18 +404,27 @@ namespace sogen
         }
     };
 
-    struct get_message_hook_state : completion_state
+    enum class message_retrieval_callback : uint8_t
     {
+        get_message_hook,
+        sent_message,
+    };
+
+    struct message_retrieval_state : completion_state
+    {
+        message_retrieval_callback callback{};
         msg message{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
+            buffer.write(this->callback);
             buffer.write(this->message);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
+            buffer.read(this->callback);
             buffer.read(this->message);
         }
     };
