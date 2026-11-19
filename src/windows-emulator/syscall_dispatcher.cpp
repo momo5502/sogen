@@ -4,6 +4,11 @@
 
 #include <utils/string.hpp>
 
+#ifdef _MSC_VER
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+#endif
+
 namespace sogen
 {
     namespace syscalls
@@ -56,6 +61,69 @@ namespace sogen
             }
         }
 
+        // DbgHelp is process-wide and not thread-safe. It only reads the PDBs next to the executable, never a symbol server.
+        class host_symbolizer
+        {
+          public:
+            static host_symbolizer& instance()
+            {
+                static host_symbolizer symbolizer{};
+                return symbolizer;
+            }
+
+            std::string describe(const void* address)
+            {
+                const std::scoped_lock lock(this->mutex_);
+                if (!this->initialized_)
+                {
+                    return {};
+                }
+
+                const auto process = GetCurrentProcess();
+                const auto address_value = reinterpret_cast<DWORD64>(address);
+
+                alignas(SYMBOL_INFO) std::array<std::byte, sizeof(SYMBOL_INFO) + MAX_SYM_NAME> storage{};
+                auto& symbol = *reinterpret_cast<SYMBOL_INFO*>(storage.data());
+                symbol.SizeOfStruct = sizeof(SYMBOL_INFO);
+                symbol.MaxNameLen = MAX_SYM_NAME;
+
+                DWORD64 displacement{};
+                if (!SymFromAddr(process, address_value, &displacement, &symbol))
+                {
+                    return {};
+                }
+
+                std::string description = std::string(symbol.Name) + "+0x" + utils::string::to_hex_number(displacement);
+
+                IMAGEHLP_LINE64 line{};
+                line.SizeOfStruct = sizeof(line);
+                DWORD line_displacement{};
+                if (SymGetLineFromAddr64(process, address_value, &line_displacement, &line))
+                {
+                    description += " " + std::filesystem::path(line.FileName).filename().string() + ":" + std::to_string(line.LineNumber);
+                }
+
+                return description;
+            }
+
+          private:
+            host_symbolizer()
+            {
+                std::array<char, MAX_PATH> executable{};
+                if (GetModuleFileNameA(nullptr, executable.data(), static_cast<DWORD>(executable.size())) == 0)
+                {
+                    return;
+                }
+
+                const auto directory = std::filesystem::path(executable.data()).parent_path().string();
+                SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
+                this->initialized_ = SymInitialize(GetCurrentProcess(), directory.c_str(), TRUE) != FALSE;
+            }
+
+            std::mutex mutex_{};
+            bool initialized_{};
+        };
+
         std::string describe_host_address(const void* address)
         {
             HMODULE module{};
@@ -68,7 +136,12 @@ namespace sogen
             }
 
             const auto offset = reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(module);
-            return std::filesystem::path(path.data()).filename().string() + "+0x" + utils::string::to_hex_number(offset);
+            auto description = std::filesystem::path(path.data()).filename().string() + "+0x" + utils::string::to_hex_number(offset);
+            if (const auto symbol = host_symbolizer::instance().describe(address); !symbol.empty())
+            {
+                description += " (" + symbol + ")";
+            }
+            return description;
         }
 
         std::string describe_host_fault(const host_fault& fault)
