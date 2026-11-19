@@ -79,7 +79,7 @@ namespace sogen
                     return {};
                 }
 
-                const auto process = GetCurrentProcess();
+                auto* const process = GetCurrentProcess();
                 const auto address_value = reinterpret_cast<DWORD64>(address);
 
                 alignas(SYMBOL_INFO) std::array<std::byte, sizeof(SYMBOL_INFO) + MAX_SYM_NAME> storage{};
