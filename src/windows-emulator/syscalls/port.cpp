@@ -886,11 +886,10 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        template <typename Traits>
         NTSTATUS read_completion_association(const syscall_context& c, const emulator_pointer port_information, const uint32_t length,
                                              uint64_t& completion_key, handle& completion_port)
         {
-            ALPC_PORT_ASSOCIATE_COMPLETION_PORT<Traits> association{};
+            ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>> association{};
             if (length < sizeof(association))
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
@@ -923,10 +922,7 @@ namespace sogen
 
             uint64_t completion_key{};
             handle completion_port{};
-            const auto status =
-                c.proc.is_wow64_process
-                    ? read_completion_association<EmulatorTraits<Emu32>>(c, port_information, length, completion_key, completion_port)
-                    : read_completion_association<EmulatorTraits<Emu64>>(c, port_information, length, completion_key, completion_port);
+            const auto status = read_completion_association(c, port_information, length, completion_key, completion_port);
             if (status != STATUS_SUCCESS)
             {
                 return status;
