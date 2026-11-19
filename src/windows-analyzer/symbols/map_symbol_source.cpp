@@ -119,24 +119,31 @@ namespace sogen
                 continue;
             }
 
-            this->win_emu_->log.info("Loading MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
-            const auto symbols = parse_map(input.path);
-            size_t merged_symbols = 0;
-            for (const auto& [address, name] : symbols)
+            try
             {
-                if (const auto rva = symbol_address_to_rva(mod, address.first, address.second))
+                this->win_emu_->log.info("Loading MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
+                const auto symbols = parse_map(input.path);
+                size_t merged_symbols = 0;
+                for (const auto& [address, name] : symbols)
                 {
-                    result.address_names.try_emplace(*rva, name);
-                    ++merged_symbols;
+                    if (const auto rva = symbol_address_to_rva(mod, address.first, address.second))
+                    {
+                        result.address_names.try_emplace(*rva, name);
+                        ++merged_symbols;
+                    }
                 }
-            }
 
-            if (merged_symbols == 0)
+                if (merged_symbols == 0)
+                {
+                    throw std::runtime_error("MSVC MAP file contains no symbols that map into " + mod.name + ": " + input.path.string());
+                }
+
+                this->win_emu_->log.info("Loaded MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
+            }
+            catch (const std::exception& e)
             {
-                throw std::runtime_error("MSVC MAP file contains no symbols that map into " + mod.name + ": " + input.path.string());
+                this->win_emu_->log.warn("Failed to load MAP symbols for %s: %s\n", mod.name.c_str(), e.what());
             }
-
-            this->win_emu_->log.info("Loaded MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
         }
 
         return result;

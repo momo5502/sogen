@@ -1316,22 +1316,15 @@ namespace sogen
             app.add_option("--whp-exec-hook", options.whp_execution_hook_mode, "WHP memory execution hook mode")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
+
             std::string symbol_use_value{"callers"};
-            auto* const symbol_use_option =
-                app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
-                    ->expected(0, 1)
-                    ->default_val("callers")
-                    ->check(CLI::IsMember({"trace", "callers", "all"}));
+            app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
+                ->expected(0, 1)
+                ->default_val("callers")
+                ->check(CLI::IsMember({"trace", "callers", "all"}));
 
-            std::string pdb_use_value{"callers"};
-            auto* const pdb_use_option = app.add_option("--pdb-use", pdb_use_value, "Enable PDB symbols for trace, callers, or all")
-                                             ->expected(0, 1)
-                                             ->default_val("callers")
-                                             ->check(CLI::IsMember({"trace", "callers", "all"}))
-                                             ->excludes(symbol_use_option);
-
-            std::vector<std::string> map_inputs{};
-            app.add_option("--map", map_inputs, "Load MSVC MAP symbols from [MODULE=]PATH (defaults to the main executable)")
+            std::vector<std::string> symbol_sources{};
+            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: pdb or map=PATH for the main executable")
                 ->expected(1, -1)
                 ->allow_extra_args(false);
 
@@ -1413,63 +1406,29 @@ namespace sogen
                     options.backend = get_backend_names().at(backend_name);
                 }
 
-                const auto apply_symbol_use = [&](const std::string_view value) {
-                    if (value == "trace")
+                if (symbol_use_value == "trace")
+                {
+                    options.symbols.use_mode = symbol_use_mode::trace;
+                }
+                else if (symbol_use_value == "all")
+                {
+                    options.symbols.use_mode = symbol_use_mode::all;
+                }
+
+                for (const auto& source : symbol_sources)
+                {
+                    if (source == "pdb")
                     {
-                        options.symbols.use_mode = symbol_use_mode::trace;
+                        options.symbols.pdb.auto_lookup = true;
                     }
-                    else if (value == "all")
+                    else if (source.starts_with("map=") && source.size() > 4)
                     {
-                        options.symbols.use_mode = symbol_use_mode::all;
+                        options.symbols.maps.emplace_back(map_symbol_input{.path = source.substr(4)});
                     }
                     else
                     {
-                        options.symbols.use_mode = symbol_use_mode::callers;
+                        throw std::runtime_error("Invalid --symbol-source: expected pdb or map=PATH");
                     }
-                };
-
-                if (symbol_use_option->count() > 0)
-                {
-                    apply_symbol_use(symbol_use_value);
-                }
-
-                if (pdb_use_option->count() > 0)
-                {
-                    options.symbols.pdb.auto_lookup = true;
-                    apply_symbol_use(pdb_use_value);
-                }
-
-                std::set<std::string> mapped_modules{};
-                for (auto& map_input : map_inputs)
-                {
-                    const auto separator = map_input.find('=');
-                    map_symbol_input input{};
-                    if (separator == std::string::npos)
-                    {
-                        if (map_input.empty())
-                        {
-                            throw std::runtime_error("--map requires a path");
-                        }
-                        input.path = map_input;
-                    }
-                    else
-                    {
-                        if (separator == 0 || separator + 1 == map_input.size())
-                        {
-                            throw std::runtime_error("--map module association must use MODULE=PATH");
-                        }
-                        input = map_symbol_input{
-                            .module = map_input.substr(0, separator),
-                            .path = map_input.substr(separator + 1),
-                        };
-                    }
-
-                    const auto module_key = input.module ? utils::string::to_lower(*input.module) : std::string{};
-                    if (!mapped_modules.insert(module_key).second)
-                    {
-                        throw std::runtime_error("--map accepts only one mapping per module");
-                    }
-                    options.symbols.maps.emplace_back(std::move(input));
                 }
 
                 for (auto& symbol_server : symbol_servers)
