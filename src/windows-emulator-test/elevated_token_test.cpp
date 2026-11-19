@@ -10,6 +10,11 @@ namespace sogen::syscalls
                                   ACCESS_MASK desired_access, emulator_object<EMU_GENERIC_MAPPING> generic_mapping, uint64_t privilege_set,
                                   emulator_object<ULONG> privilege_set_length, emulator_object<ACCESS_MASK> granted_access,
                                   emulator_object<NTSTATUS> access_status);
+    NTSTATUS handle_NtAccessCheckByType(const syscall_context& c, uint64_t security_descriptor, uint64_t principal_self_sid,
+                                        handle client_token, ACCESS_MASK desired_access, uint64_t object_type_list,
+                                        ULONG object_type_list_length, emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
+                                        uint64_t privilege_set, emulator_object<ULONG> privilege_set_length,
+                                        emulator_object<ACCESS_MASK> granted_access, emulator_object<NTSTATUS> access_status);
     NTSTATUS handle_NtImpersonateAnonymousToken(const syscall_context& c, handle thread_handle);
 }
 
@@ -597,6 +602,48 @@ namespace sogen::test
             ASSERT_EQ(STATUS_SUCCESS, this->query(CURRENT_PROCESS_TOKEN, TokenStatistics, sizeof(TOKEN_STATISTICS)));
             const auto stats = emulator_object<TOKEN_STATISTICS>{this->emu->memory, this->storage + 0x100}.read();
             EXPECT_EQ(group_count, stats.GroupCount);
+        }
+    }
+
+    TEST_P(ElevatedTokenTest, AccessCheckByTypeWithoutObjectListChecksTheDacl)
+    {
+        const auto descriptor = this->build_descriptor({{.mask = file_read_data, .sid = interactive_sid}}, {});
+        const emulator_object<EMU_GENERIC_MAPPING> mapping{this->emu->memory, this->storage + 0x800};
+        const emulator_object<ULONG> length{this->emu->memory, this->storage + 0x820};
+        const emulator_object<ACCESS_MASK> granted{this->emu->memory, this->storage + 0x830};
+        const emulator_object<NTSTATUS> status{this->emu->memory, this->storage + 0x840};
+        mapping.write(file_generic_mapping);
+        for (const auto desired : {file_read_data, file_write_data})
+        {
+            length.write(0x40);
+            ASSERT_EQ(STATUS_SUCCESS,
+                      syscalls::handle_NtAccessCheckByType(this->context(), descriptor, 0, DUMMY_IMPERSONATION_TOKEN, desired, 0, 0,
+                                                           mapping, this->storage + 0x880, length, granted, status));
+            EXPECT_EQ(desired == file_read_data ? STATUS_SUCCESS : STATUS_ACCESS_DENIED, status.read());
+            EXPECT_EQ(desired == file_read_data ? file_read_data : 0u, granted.read());
+        }
+    }
+
+    TEST_P(ElevatedTokenTest, AccessCheckByTypeSubstitutesPrincipalSelfSid)
+    {
+        constexpr std::array<uint8_t, 12> principal_self{1, 1, 0, 0, 0, 0, 0, 5, 10, 0, 0, 0};
+        const auto descriptor = this->build_descriptor({{.mask = file_read_data, .sid = principal_self}}, {});
+        const emulator_object<EMU_GENERIC_MAPPING> mapping{this->emu->memory, this->storage + 0x800};
+        const emulator_object<ULONG> length{this->emu->memory, this->storage + 0x820};
+        const emulator_object<ACCESS_MASK> granted{this->emu->memory, this->storage + 0x830};
+        const emulator_object<NTSTATUS> status{this->emu->memory, this->storage + 0x840};
+        const auto principal = this->storage + 0xa00;
+        mapping.write(file_generic_mapping);
+        for (const auto& [sid, expected] :
+             std::array{std::pair{interactive_sid, STATUS_SUCCESS}, std::pair{principal_self, STATUS_ACCESS_DENIED}})
+        {
+            this->emu->memory.write_memory(principal, sid.data(), sid.size());
+            length.write(0x40);
+            ASSERT_EQ(STATUS_SUCCESS,
+                      syscalls::handle_NtAccessCheckByType(this->context(), descriptor, principal, DUMMY_IMPERSONATION_TOKEN,
+                                                           file_read_data, 0, 0, mapping, this->storage + 0x880, length, granted, status));
+            EXPECT_EQ(expected, status.read());
+            EXPECT_EQ(expected == STATUS_SUCCESS ? file_read_data : 0u, granted.read());
         }
     }
 
