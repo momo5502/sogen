@@ -149,10 +149,6 @@ no-access pages stops the other vCPUs once so they arm the new watchpoints.
 - **Linux tracked memory has a flush window.** The cache flush that brings a stale tracked chunk up to
   date needs the chunk readable, so another vCPU can read its old cache lines between the protection
   change and the flush.
-- **The backed `KUSER_SHARED_DATA` refresh races guest readers.** Inside a WoW64 process's low window
-  the page is backed by host memory that every vCPU refreshes before it enters the guest and after a
-  syscall, while other vCPUs' guest code may be reading it. The copy does not follow the kernel's
-  `KSYSTEM_TIME` write order.
 
 A misaligned `LDAR`/`STLR` that faults goes to FEXCore's `HandleUnalignedAccess`, which backpatches
 translated code and emulates host code with naturally aligned atomics. Neither keeps an access that
