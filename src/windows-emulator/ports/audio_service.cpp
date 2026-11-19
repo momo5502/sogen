@@ -39,7 +39,7 @@ namespace sogen
         constexpr std::array<uint8_t, 16> k_iface_audio_client_26100_9549 = {0x75, 0x2e, 0x68, 0xcd, 0x49, 0x37, 0x4d, 0x4a,
                                                                              0xa6, 0xb1, 0xc0, 0x27, 0xed, 0x8a, 0x4c, 0x13};
 
-        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // MMDevice enumeration: [out] serialized blob, no [in]
+        constexpr uint32_t k_audio_opnum_winmm_get_pnp_info = 0;
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // MMDevice enumeration
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // AudioClientRpc
         constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // AudioClientRpc AudioServerIsFormatSupported
@@ -819,8 +819,8 @@ namespace sogen
 
                 switch (procedure_id)
                 {
-                case k_audio_opnum_mmdev_get_blob:
-                    return handle_mmdev_get_blob(writer);
+                case k_audio_opnum_winmm_get_pnp_info:
+                    return handle_winmm_get_pnp_info(writer);
                 case k_audio_opnum_get_default_endpoint:
                     return handle_get_default_endpoint(win_emu, c, writer);
                 default:
@@ -1402,14 +1402,14 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // MMDevice enumeration opnum 0: HRESULT Proc0([out] byte** ppBlob) - no [in] params. mmdevapi's proxy calls
-            // it early (MW3 retries it) and expects a unique pointer to a conformant byte blob (a serialized
-            // property/state store; a live host returned ~584 bytes). We have no faithful blob to hand back, so
-            // report an empty result: a null unique pointer + S_OK. This replaces the RPC_X error the caller got
-            // from an unhandled opnum with a well-formed "nothing here" reply.
-            static NTSTATUS handle_mmdev_get_blob(utils::aligned_binary_writer& writer)
+            // winmmGetNewPnpEvents reads the second DWORD as a PnP change counter, which must change for initial enumeration.
+            static NTSTATUS handle_winmm_get_pnp_info(utils::aligned_binary_writer& writer)
             {
-                writer.write_ndr_pointer(false); // [out] blob: null unique pointer
+                constexpr std::array<uint32_t, 3> pnp_state{12, 1, 0};
+                writer.write<uint32_t>(sizeof(pnp_state));
+                writer.write_ndr_pointer(true);
+                writer.write_pointer_sized(sizeof(pnp_state));
+                writer.write(pnp_state.data(), sizeof(pnp_state), alignof(uint32_t));
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok);
                 return STATUS_SUCCESS;
