@@ -1324,7 +1324,7 @@ namespace sogen
                 ->check(CLI::IsMember({"trace", "callers", "all"}));
 
             std::vector<std::string> symbol_sources{};
-            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: pdb or [MODULE=]map:PATH")
+            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: [MODULE=]pdb, [MODULE=]pdb:PATH, or [MODULE=]map:PATH")
                 ->expected(1, -1)
                 ->allow_extra_args(false);
 
@@ -1421,6 +1421,20 @@ namespace sogen
                     {
                         options.symbols.pdb.auto_lookup = true;
                     }
+                    else if (source.ends_with("=pdb") && source.size() > 4)
+                    {
+                        options.symbols.pdb.inputs.emplace_back(pdb_symbol_input{.module = source.substr(0, source.size() - 4)});
+                    }
+                    else if (source.starts_with("pdb:") && source.size() > 4)
+                    {
+                        options.symbols.pdb.inputs.emplace_back(pdb_symbol_input{.path = source.substr(4)});
+                    }
+                    else if (const auto pdb_separator = source.find("=pdb:");
+                             pdb_separator != std::string::npos && pdb_separator > 0 && pdb_separator + 5 < source.size())
+                    {
+                        options.symbols.pdb.inputs.emplace_back(
+                            pdb_symbol_input{.module = source.substr(0, pdb_separator), .path = source.substr(pdb_separator + 5)});
+                    }
                     else if (source.starts_with("map:") && source.size() > 4)
                     {
                         options.symbols.maps.emplace_back(map_symbol_input{.path = source.substr(4)});
@@ -1433,7 +1447,7 @@ namespace sogen
                     }
                     else
                     {
-                        throw std::runtime_error("Invalid --symbol-source: expected pdb or [MODULE=]map:PATH");
+                        throw std::runtime_error("Invalid --symbol-source: expected [MODULE=]pdb, [MODULE=]pdb:PATH, or [MODULE=]map:PATH");
                     }
                 }
 

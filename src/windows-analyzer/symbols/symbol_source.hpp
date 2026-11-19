@@ -18,10 +18,16 @@ namespace sogen
         }
     };
 
+    struct pdb_symbol_input
+    {
+        std::optional<std::string> module{};
+        std::filesystem::path path{};
+    };
+
     struct pdb_symbol_options
     {
         bool auto_lookup{};
-        std::vector<std::filesystem::path> inputs{};
+        std::vector<pdb_symbol_input> inputs{};
         std::vector<std::string> symbol_servers{};
         std::optional<std::filesystem::path> symbol_cache{};
 

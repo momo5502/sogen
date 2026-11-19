@@ -46,11 +46,6 @@ namespace sogen
             return status == pdb_validation_status::invalid_artifact || status == pdb_validation_status::validation_error;
         }
 
-        bool is_pdb_path(const std::filesystem::path& path)
-        {
-            return utils::string::equals_ignore_case(path.extension().string(), ".pdb"s);
-        }
-
         const char* source_label(const pdb_resolution_source source)
         {
             switch (source)
@@ -177,66 +172,6 @@ namespace sogen
             return std::nullopt;
         }
 
-        std::optional<resolved_pdb> resolve_pe_input(const std::filesystem::path& pe_path, const pdb_symbol_options& options,
-                                                     const logger& log)
-        {
-            auto sig = winpe::read_pdb_signature(pe_path);
-            if (!sig)
-            {
-                throw std::runtime_error("No RSDS PDB reference found in " + pe_path.string());
-            }
-
-            std::vector<std::pair<std::filesystem::path, pdb_resolution_source>> direct_candidates{};
-            const std::filesystem::path recorded_path{sig->path};
-            if (recorded_path.is_absolute())
-            {
-                direct_candidates.emplace_back(recorded_path, pdb_resolution_source::recorded_path);
-            }
-
-            auto sibling_pdb = pe_path;
-            sibling_pdb.replace_extension(".pdb");
-            direct_candidates.emplace_back(std::move(sibling_pdb), pdb_resolution_source::sibling_path);
-            if (!sig->filename().empty())
-            {
-                direct_candidates.emplace_back(pe_path.parent_path() / sig->filename(), pdb_resolution_source::sibling_path);
-            }
-
-            for (const auto& [candidate, source] : direct_candidates)
-            {
-                if (!utils::io::file_exists(candidate))
-                {
-                    continue;
-                }
-
-                const auto validation = pdb_file{candidate}.validate(*sig);
-                if (validation.status == pdb_validation_status::mismatch)
-                {
-                    log.warn("Skipping PDB %s for %s: signature mismatch\n", candidate.string().c_str(),
-                             pe_path.filename().string().c_str());
-                    continue;
-                }
-                if (validation.status != pdb_validation_status::match)
-                {
-                    throw std::runtime_error("Failed to validate PDB " + candidate.string() + ": " + validation.error);
-                }
-
-                return resolved_pdb{
-                    .path = candidate,
-                    .explicit_input = true,
-                    .source = source,
-                };
-            }
-
-            if (const auto resolved = resolve_from_signature(*sig, options, log, pe_path.filename().string(), pe_path))
-            {
-                auto pdb = *resolved;
-                pdb.explicit_input = true;
-                return pdb;
-            }
-
-            return std::nullopt;
-        }
-
         void merge_symbols(loaded_symbols& result, const mapped_module& mod, const pdb_file& pdb)
         {
             for (const auto& [address, name] : pdb.symbols)
@@ -271,26 +206,31 @@ namespace sogen
         }
 
         std::vector<resolved_pdb> candidates{};
+        auto auto_lookup = this->options_.auto_lookup;
 
         for (const auto& input : this->options_.inputs)
         {
-            if (is_pdb_path(input))
+            if (input.module ? !(utils::string::equals_ignore_case(*input.module, mod.name) ||
+                                 (!mod.path.empty() && utils::string::equals_ignore_case(*input.module, mod.path.filename().string())))
+                             : this->win_emu_->mod_manager.executable != &mod)
             {
-                candidates.emplace_back(resolved_pdb{
-                    .path = input,
-                    .explicit_input = true,
-                    .source = pdb_resolution_source::explicit_path,
-                });
                 continue;
             }
 
-            if (auto resolved = resolve_pe_input(input, this->options_, this->win_emu_->log))
+            if (input.path.empty())
             {
-                candidates.push_back(std::move(*resolved));
+                auto_lookup = true;
+                continue;
             }
+
+            candidates.emplace_back(resolved_pdb{
+                .path = input.path,
+                .explicit_input = true,
+                .source = pdb_resolution_source::explicit_path,
+            });
         }
 
-        if (this->options_.auto_lookup && mod.pdb)
+        if (auto_lookup && mod.pdb)
         {
             const auto module_pe_path =
                 (!mod.path.empty() && utils::io::file_exists(mod.path)) ? std::optional<std::filesystem::path>{mod.path} : std::nullopt;
@@ -304,7 +244,7 @@ namespace sogen
                 this->win_emu_->log.warn("No usable PDB found for %s in symbol caches or symbol servers\n", mod.name.c_str());
             }
         }
-        else if (this->options_.auto_lookup)
+        else if (auto_lookup)
         {
             this->win_emu_->log.info("Skipping automatic PDB lookup for %s: no RSDS reference\n", mod.name.c_str());
         }
