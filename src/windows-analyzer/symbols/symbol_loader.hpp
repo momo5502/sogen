@@ -1,7 +1,7 @@
 #pragma once
 
 #include "symbol_source.hpp"
-#include "std_include.hpp"
+#include "../std_include.hpp"
 #include <utils/function.hpp>
 
 namespace sogen

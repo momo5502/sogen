@@ -3,7 +3,7 @@
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "disassembler.hpp"
-#include "symbol_loader.hpp"
+#include "symbols/symbol_loader.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 

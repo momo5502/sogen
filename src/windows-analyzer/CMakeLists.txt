@@ -4,14 +4,15 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
   *.rc
 )
 
-list(REMOVE_ITEM SRC_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/pdb_file.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/cab_file.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/symbol_download.cpp"
+set(SYMBOL_FILE_SOURCES
+  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/pdb_file.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/cab_file.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/symbol_download.cpp"
 )
+list(REMOVE_ITEM SRC_FILES ${SYMBOL_FILE_SOURCES})
 list(SORT SRC_FILES)
 
-add_library(symbol-files STATIC pdb_file.cpp cab_file.cpp symbol_download.cpp)
+add_library(symbol-files STATIC ${SYMBOL_FILE_SOURCES})
 target_include_directories(symbol-files PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(symbol-files PRIVATE emulator-common raw_pdb cab-decoder)
 if(NOT EMSCRIPTEN)
@@ -20,7 +21,7 @@ endif()
 
 add_library(windows-analyzer STATIC ${SRC_FILES})
 
-sogen_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES} ${SYMBOL_FILE_SOURCES})
 
 if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-analyzer PRIVATE std_include.hpp)

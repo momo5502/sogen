@@ -17,7 +17,7 @@
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
-#include "symbol_loader.hpp"
+#include "symbols/symbol_loader.hpp"
 #include "tenet_tracer.hpp"
 #include <subprocess_process_manager.hpp>
 

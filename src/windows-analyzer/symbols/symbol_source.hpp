@@ -1,6 +1,6 @@
 #pragma once
 
-#include "std_include.hpp"
+#include "../std_include.hpp"
 
 namespace sogen
 {
