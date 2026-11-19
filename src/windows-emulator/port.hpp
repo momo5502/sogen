@@ -497,6 +497,10 @@ namespace sogen
         virtual lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) = 0;
     };
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324) // padding is the intent of bound_interface_'s alignment
+#endif
     struct rpc_port : port
     {
         lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override;
@@ -559,6 +563,9 @@ namespace sogen
         lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
         lpc_request_result handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c);
     };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
     std::unique_ptr<port> create_port(std::u16string_view port);
 
