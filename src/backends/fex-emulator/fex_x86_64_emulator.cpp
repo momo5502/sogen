@@ -843,6 +843,22 @@ namespace sogen::fex
 
             return memory_operation::write;
         }
+
+        // Arm ARM, ESR_EL1 ISS for data aborts: DFSC 0b0011xx is a permission fault, 0b100001 an alignment fault. Darwin
+        // reports a store to a read-only page that is not resident as a translation fault (DFSC 0b0001xx) instead.
+        bool is_permission_fault(const uint64_t esr)
+        {
+            constexpr uint64_t fault_status_mask = 0x3C;
+            constexpr uint64_t permission_fault = 0x0C;
+            return (esr & fault_status_mask) == permission_fault;
+        }
+
+        bool is_alignment_fault(const uint64_t esr)
+        {
+            constexpr uint64_t fault_status_mask = 0x3F;
+            constexpr uint64_t alignment_fault = 0x21;
+            return (esr & fault_status_mask) == alignment_fault;
+        }
 #endif
 
         // Bit-for-bit reimplementation of FEXCore::Context::ContextImpl::ReconstructCompactedEFLAGS /
@@ -2355,7 +2371,12 @@ namespace sogen::fex
             // this backend's guest VA == host VA is backed by real host mprotect state, so the write
             // needs a temporary permission bump. Every page must be checked, not just the first: a write
             // straddling into a read-only region would otherwise fault mid-memmove.
+#ifdef __APPLE__
+            const bool needs_temporary_write =
+                !this->range_is_writable(address, size) || !this->range_is_host_writable_apple(address, size);
+#else
             const bool needs_temporary_write = !this->range_is_writable(address, size);
+#endif
 
             if (needs_temporary_write)
             {
@@ -3777,7 +3798,7 @@ namespace sogen::fex
             for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
             {
                 // The page stays claimed while it is accessible, so only its protection changes.
-                const auto declared = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
+                const auto declared = this->host_permission_apple(host_page).value_or(memory_permission::none);
                 ::mprotect(reinterpret_cast<void*>(this->to_host_address(host_page)), host_page_size_apple,
                            to_prot_apple(enable ? declared | added : declared));
             }
@@ -3995,7 +4016,7 @@ namespace sogen::fex
             }
 
             if (::mprotect(reinterpret_cast<void*>(this->to_host_address(host_page_addr)), host_page_size_apple,
-                           to_prot_apple(*effective)) != 0)
+                           to_prot_apple(this->host_permission_apple(host_page_addr).value_or(memory_permission::none))) != 0)
             {
                 throw std::runtime_error("FEX backend failed to change memory protection");
             }
@@ -4014,6 +4035,113 @@ namespace sogen::fex
             }
 
             return effective;
+        }
+
+        // FEXCore's default SMCChecks=mtrack only reports translated pages; the frontend has to write-protect them
+        // and invalidate on the first store.
+        bool is_code_write_trapped_apple(const uint64_t host_page_addr) const
+        {
+            if (this->hypervisor_)
+            {
+                return false;
+            }
+
+            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
+            {
+                const auto shadow = this->page_shadow_apple_.find(page);
+                if (shadow != this->page_shadow_apple_.end() && (shadow->second & memory_permission::write) != memory_permission::none &&
+                    this->code_pages_.contains(page))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        std::optional<memory_permission> host_permission_apple(const uint64_t host_page_addr) const
+        {
+            auto permission = this->shadow_permission_apple(host_page_addr);
+            if (permission && this->is_code_write_trapped_apple(host_page_addr))
+            {
+                *permission &= ~(memory_permission::write | memory_permission::exec);
+            }
+
+            return permission;
+        }
+
+        bool range_is_host_writable_apple(const uint64_t address, const size_t size) const
+        {
+            const uint64_t start = host_page_align_down_apple(address);
+            const uint64_t end = host_page_align_up_apple(address + size);
+            const auto first_code_page = this->code_pages_.lower_bound(start);
+            if (first_code_page == this->code_pages_.end() || *first_code_page >= end)
+            {
+                return true;
+            }
+
+            for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
+            {
+                if (this->is_code_write_trapped_apple(host_page))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool any_code_write_trapped_apple(const uint64_t first_host_page, const uint64_t last_host_page) const
+        {
+            for (uint64_t host_page = first_host_page; host_page <= last_host_page; host_page += host_page_size_apple)
+            {
+                if (this->is_code_write_trapped_apple(host_page))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool handle_code_write_fault_apple(const uint64_t host_fault_address, const ucontext_t* uctx)
+        {
+            const uint64_t esr = uctx->uc_mcontext->__es.__esr;
+            const auto operation = memory_access_operation(esr);
+
+            // A misaligned read-modify-write atomic (SWPAL) reports an alignment fault with WnR clear, and its emulation
+            // stores to both aligned 16-byte halves of the operand with the tables lock held, so every host page the
+            // operand reaches has to be untrapped beforehand.
+            if (t_tables_access != tables_access::none || !operation || (*operation != memory_operation::write && !is_alignment_fault(esr)))
+            {
+                return false;
+            }
+
+            constexpr uint64_t atomic_operand_reach = 15;
+            const uint64_t fault_address = this->to_guest_address(host_fault_address);
+            const uint64_t first_host_page = host_page_align_down_apple(fault_address);
+            const uint64_t last_host_page =
+                is_alignment_fault(esr) ? host_page_align_down_apple(fault_address + atomic_operand_reach) : first_host_page;
+            {
+                const shared_tables_lock lock(this->tables_mutex_);
+                if (!this->any_code_write_trapped_apple(first_host_page, last_host_page))
+                {
+                    const auto permission = this->host_permission_apple(first_host_page).value_or(memory_permission::none);
+                    return is_permission_fault(esr) && (permission & memory_permission::write) != memory_permission::none;
+                }
+            }
+
+            const auto invalidation = this->lock_code_invalidation();
+            const exclusive_tables_lock lock(this->tables_mutex_);
+            for (uint64_t host_page = first_host_page; host_page <= last_host_page; host_page += host_page_size_apple)
+            {
+                if (this->is_code_write_trapped_apple(host_page))
+                {
+                    this->invalidate_code_range(host_page, host_page_size_apple);
+                }
+            }
+
+            return !is_alignment_fault(esr);
         }
 
         void sync_host_pages_covering_apple(uint64_t address, size_t size)
@@ -4056,7 +4184,7 @@ namespace sogen::fex
 
                 const uint64_t zero_start = std::max(address, host_page);
                 const size_t zero_size = static_cast<size_t>(std::min(end, host_page + host_page_size_apple) - zero_start);
-                const auto host_permission = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
+                const auto host_permission = this->host_permission_apple(host_page).value_or(memory_permission::none);
                 const bool needs_temporary_write = (host_permission & memory_permission::write) == memory_permission::none;
 
                 if (needs_temporary_write)
@@ -5414,6 +5542,13 @@ namespace sogen::fex
                 return false;
             }
 
+#ifdef __APPLE__
+            if ((sig == SIGSEGV || sig == SIGBUS) && this->handle_code_write_fault_apple(reinterpret_cast<uint64_t>(info->si_addr), uctx))
+            {
+                return true;
+            }
+#endif
+
             const shared_tables_lock lock(this->tables_mutex_);
             return this->handle_vcpu_fault_signal(*t_running_vcpu, sig, info, uctx);
         }
@@ -5977,8 +6112,47 @@ namespace sogen::fex
 #endif
             }
 
+#ifdef __APPLE__
+            std::vector<uint64_t> trapped_host_pages{};
+            for (auto page = this->code_pages_.lower_bound(address & ~(page_size - 1));
+                 page != this->code_pages_.end() && *page < address + size; ++page)
+            {
+                const auto host_page = host_page_align_down_apple(*page);
+                if ((trapped_host_pages.empty() || trapped_host_pages.back() != host_page) && this->is_code_write_trapped_apple(host_page))
+                {
+                    trapped_host_pages.push_back(host_page);
+                }
+            }
+#endif
+
             this->code_pages_.erase(this->code_pages_.lower_bound(address & ~(page_size - 1)),
                                     this->code_pages_.lower_bound(address + size));
+
+#ifdef __APPLE__
+            for (const auto host_page : trapped_host_pages)
+            {
+                if (this->shadow_permission_apple(host_page) && this->host_range_is_claimed(host_page, host_page_size_apple))
+                {
+                    this->sync_host_page_apple(host_page);
+                }
+            }
+#endif
+        }
+
+        void add_code_page(const uint64_t page)
+        {
+            if (!this->code_pages_.insert(page).second)
+            {
+                return;
+            }
+
+#ifdef __APPLE__
+            const auto host_page = host_page_align_down_apple(page);
+            if (this->is_code_write_trapped_apple(host_page))
+            {
+                this->sync_host_page_apple(host_page);
+            }
+#endif
         }
 
         bool range_has_code(uint64_t address, size_t size) const
@@ -6572,7 +6746,7 @@ namespace sogen::fex
         const exclusive_tables_lock lock(this->emulator_.tables_mutex_);
         for (uint64_t page = start & ~(page_size - 1); page < start + length; page += page_size)
         {
-            this->emulator_.code_pages_.insert(page);
+            this->emulator_.add_code_page(page);
         }
     }
 
