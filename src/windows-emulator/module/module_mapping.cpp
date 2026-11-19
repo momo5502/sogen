@@ -528,6 +528,32 @@ namespace sogen
             return optional_header.SectionAlignment < page_align_up(1);
         }
 
+        struct section_file_range
+        {
+            size_t offset{};
+            size_t size{};
+        };
+
+        // In a page-aligned image, the kernel reads the data of a section in whole 0x200-byte sectors: the start of the
+        // raw data rounds down and its end rounds up, limited to the section and the end of the file. Packers such as
+        // Upack set PointerToRawData below 0x200 to map the headers into a section.
+        section_file_range get_section_file_range(const IMAGE_SECTION_HEADER& section, const uint64_t section_size,
+                                                  const uint64_t file_size, const bool mapped_as_one_region)
+        {
+            const uint64_t raw_start = section.PointerToRawData;
+            const uint64_t raw_end = raw_start + section.SizeOfRawData;
+            if (mapped_as_one_region)
+            {
+                return {static_cast<size_t>(raw_start), static_cast<size_t>(std::min<uint64_t>(section_size, section.SizeOfRawData))};
+            }
+
+            constexpr uint64_t sector_size = 0x200;
+            const auto start = align_down(raw_start, sector_size);
+            const auto sector_end = std::max(raw_end, std::min(align_up(raw_end, sector_size), file_size));
+            const auto end = std::min(sector_end, start + section_size);
+            return {static_cast<size_t>(start), static_cast<size_t>(end - start)};
+        }
+
         template <typename T>
         bool map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                           const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
@@ -568,8 +594,9 @@ namespace sogen
 
                 if (section.SizeOfRawData > 0)
                 {
-                    const auto* source_ptr = buffer.get_pointer_for_range(section.PointerToRawData, size_of_data);
-                    memory.write_memory(target_ptr, source_ptr, size_of_data);
+                    const auto range = get_section_file_range(section, size_of_section, buffer.get_buffer().size(), mapped_as_one_region);
+                    const auto* source_ptr = buffer.get_pointer_for_range(range.offset, range.size);
+                    memory.write_memory(target_ptr, source_ptr, range.size);
                 }
 
                 const auto permissions = get_section_permissions(section, nt_headers.FileHeader.Machine);
