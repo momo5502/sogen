@@ -531,7 +531,9 @@ namespace sogen
         }
 
       protected:
-        std::array<uint8_t, 16> bound_interface_{};
+        // MSVC 19.52 reads this member with an aligned vmovaps in protected_storage_port::handle_rpc, although its type only
+        // guarantees byte alignment, so the load faulted. Aligning the member makes that load valid.
+        alignas(16) std::array<uint8_t, 16> bound_interface_{};
 
       private:
         struct rpc_binding
