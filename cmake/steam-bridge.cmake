@@ -6,12 +6,9 @@
 # are fetched, never committed.
 
 option(SOGEN_ENABLE_STEAM "Build the Steam bridge (fetches Proton SDK snapshots; needs the libclang pip package)" ON)
-# Proton's proton_11.0 branch as of 1f089f56. Its steamworks_sdk_* directories carry the header snapshots.
-set(SOGEN_STEAMWORKS_PROTON_URL
-    "https://github.com/ValveSoftware/Proton/archive/1f089f5610a882c8bfcb4b58a3c86ee88bb4b9f1.tar.gz"
-    CACHE STRING "Source archive carrying vendored steamworks_sdk_* header snapshots")
-set(SOGEN_STEAMWORKS_PROTON_SHA256 "46aa87e3c190a3fb0c0155924ce23e6c2bade0c83dd0109143b8c9f1be10a193"
-    CACHE STRING "SHA256 of SOGEN_STEAMWORKS_PROTON_URL")
+set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
+    CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
+set(SOGEN_STEAMWORKS_PROTON_TAG "proton_11.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
 
 # Answers the guest's Steam calls from a provider inside the emulator instead of a host Steam client, for
 # hosts without one (Android).
@@ -25,6 +22,39 @@ set(SOGEN_STEAM_HOST_PLATFORM FALSE)
 if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR SOGEN_ENABLE_STEAM_LOCAL_PROVIDER)
   set(SOGEN_STEAM_HOST_PLATFORM TRUE)
 endif()
+
+# GitHub intermittently refuses clones with HTTP 403. FetchContent only retries three times without waiting, so
+# clone directly and back off between attempts.
+function(sogen_clone_steamworks_snapshots source_dir)
+  set(ref "${SOGEN_STEAMWORKS_PROTON_REPO}@${SOGEN_STEAMWORKS_PROTON_TAG}")
+  set(ref_file "${source_dir}.ref")
+  if(EXISTS "${ref_file}")
+    file(READ "${ref_file}" cloned_ref)
+    if(cloned_ref STREQUAL ref)
+      return()
+    endif()
+  endif()
+
+  find_package(Git REQUIRED)
+  set(delay 15)
+  foreach(attempt RANGE 1 6)
+    file(REMOVE_RECURSE "${source_dir}")
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" clone --depth 1 --branch "${SOGEN_STEAMWORKS_PROTON_TAG}"
+              "${SOGEN_STEAMWORKS_PROTON_REPO}" "${source_dir}"
+      RESULT_VARIABLE result)
+    if(result EQUAL 0)
+      file(WRITE "${ref_file}" "${ref}")
+      return()
+    endif()
+    if(attempt LESS 6)
+      message(STATUS "Cloning ${ref} failed; retrying in ${delay}s")
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep ${delay})
+      math(EXPR delay "${delay} * 2")
+    endif()
+  endforeach()
+  message(FATAL_ERROR "Failed to clone ${ref}")
+endfunction()
 
 # A build that asked for the provider must not quietly come out without Steam.
 function(sogen_steam_unavailable reason)
@@ -41,13 +71,8 @@ if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
   if(NOT Python3_Interpreter_FOUND)
     sogen_steam_unavailable("SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
   else()
-    include(FetchContent)
-    # Headers only: SOURCE_SUBDIR points at a nonexistent path so the archive is extracted but Proton's own
-    # build never runs.
-    FetchContent_Declare(steamworks_snapshots URL "${SOGEN_STEAMWORKS_PROTON_URL}"
-      URL_HASH "SHA256=${SOGEN_STEAMWORKS_PROTON_SHA256}" SOURCE_SUBDIR __sogen_headers_only__)
-    FetchContent_MakeAvailable(steamworks_snapshots)
-    set(_snap_root "${steamworks_snapshots_SOURCE_DIR}")
+    set(_snap_root "${CMAKE_BINARY_DIR}/_deps/steamworks_snapshots-src")
+    sogen_clone_steamworks_snapshots("${_snap_root}")
     if(EXISTS "${_snap_root}/lsteamclient")
       set(_snap_root "${_snap_root}/lsteamclient")
     endif()
@@ -78,12 +103,12 @@ if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
       list(LENGTH SOGEN_STEAM_TAG_LIST _tag_count)
 
       # The generated output is fully determined by the generator script, the target width, and the SDK
-      # snapshot set (which only changes when the Proton headers are fetched from a new archive). Fingerprint
+      # snapshot set (which only changes when the Proton headers are re-fetched for a new ref). Fingerprint
       # those into a stamp and skip the run -- libclang parses every snapshot, so it is by far the slowest
       # part of configure -- whenever the stamp is unchanged since the last successful generation.
       file(SHA256 "${_gen_py}" _gen_py_hash)
-      set(_gen_stamp "gen=${_gen_py_hash};bits=${_bits};proton=${SOGEN_STEAMWORKS_PROTON_SHA256}")
-      string(APPEND _gen_stamp ";tags=${SOGEN_STEAM_TAG_LIST}")
+      set(_gen_stamp "gen=${_gen_py_hash};bits=${_bits};repo=${SOGEN_STEAMWORKS_PROTON_REPO}")
+      string(APPEND _gen_stamp ";ref=${SOGEN_STEAMWORKS_PROTON_TAG};tags=${SOGEN_STEAM_TAG_LIST}")
       set(_gen_stamp_file "${SOGEN_STEAM_GEN_DIR}/.inputs.stamp")
       set(_do_generate TRUE)
       if(EXISTS "${_gen_stamp_file}" AND EXISTS "${SOGEN_STEAM_GEN_DIR}/steam_tags.generated.hxx")
