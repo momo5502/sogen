@@ -1011,6 +1011,11 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case ProcessJobMemoryInformation:
+                // The emulated process never belongs to a job.
+                return process_information_length == sizeof(PROCESS_JOB_MEMORY_INFO) ? STATUS_ERROR_PROCESS_NOT_IN_JOB
+                                                                                     : STATUS_INFO_LENGTH_MISMATCH;
+
             case ProcessImageFileName: {
                 const auto image_path = c.win_emu.mod_manager.executable->module_path.to_device_path();
                 const auto string_length = image_path.size() * sizeof(char16_t);

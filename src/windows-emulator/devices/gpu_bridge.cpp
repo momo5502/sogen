@@ -2797,8 +2797,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t view = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset, request.range, view);
+                const int32_t result = this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset,
+                                                                        request.range, request.usage, view);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
             }
 
@@ -3171,13 +3171,24 @@ namespace sogen
                     std::memcpy(dynamic_states.data(), trailer.data() + vertex_input_bytes, dynamic_bytes);
                 }
 
-                // The two per-stage specialization-constant blocks (vertex then fragment) trail the dynamic
-                // states: each is `entry_count` specialization_map_entry records followed by `data_size` bytes.
+                // The stages trail the dynamic states, then each stage's specialization constants: `spec_entry_count`
+                // specialization_map_entry records followed by `spec_data_size` bytes.
+                constexpr uint32_t max_graphics_stages = 5;
                 size_t spec_cursor = vertex_input_bytes + dynamic_bytes;
-                std::vector<vulkan_host::spec_entry> vs_entries;
-                std::vector<vulkan_host::spec_entry> fs_entries;
-                std::vector<uint8_t> vs_data;
-                std::vector<uint8_t> fs_data;
+                const size_t stages_bytes = static_cast<size_t>(request.stage_count) * sizeof(gpu_bridge::pipeline_shader_stage);
+                if (request.stage_count > max_graphics_stages || stages_bytes > trailer.size() - spec_cursor)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                std::vector<gpu_bridge::pipeline_shader_stage> wire_stages(request.stage_count);
+                if (request.stage_count > 0)
+                {
+                    std::memcpy(wire_stages.data(), trailer.data() + spec_cursor, stages_bytes);
+                }
+                spec_cursor += stages_bytes;
+
+                std::vector<std::vector<vulkan_host::spec_entry>> stage_spec_entries(wire_stages.size());
+                std::vector<std::vector<uint8_t>> stage_spec_data(wire_stages.size());
                 const auto parse_spec = [&](uint32_t entry_count, uint32_t data_size, std::vector<vulkan_host::spec_entry>& entries,
                                             std::vector<uint8_t>& data) -> bool {
                     const size_t entries_bytes = static_cast<size_t>(entry_count) * sizeof(gpu_bridge::specialization_map_entry);
@@ -3206,10 +3217,21 @@ namespace sogen
                     }
                     return true;
                 };
-                if (!parse_spec(request.vs_spec_entry_count, request.vs_spec_data_size, vs_entries, vs_data) ||
-                    !parse_spec(request.fs_spec_entry_count, request.fs_spec_data_size, fs_entries, fs_data))
+
+                std::vector<vulkan_host::pipeline_stage> stages(wire_stages.size());
+                for (size_t i = 0; i < wire_stages.size(); ++i)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    const gpu_bridge::pipeline_shader_stage& wire = wire_stages[i];
+                    if (wire.source.identifier_size > gpu_bridge::max_shader_module_identifier_size ||
+                        !parse_spec(wire.spec_entry_count, wire.spec_data_size, stage_spec_entries[i], stage_spec_data[i]))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    stages[i] = {
+                        .stage = wire.stage,
+                        .source = {.module = wire.source.module,
+                                   .identifier = std::span<const uint8_t>{wire.source.identifier.data(), wire.source.identifier_size}},
+                        .spec = {.entries = stage_spec_entries[i], .data = stage_spec_data[i]}};
                 }
 
                 const size_t libraries_bytes = static_cast<size_t>(request.library_count) * sizeof(gpu_bridge::object_id);
@@ -3223,15 +3245,30 @@ namespace sogen
                     std::memcpy(libraries.data(), trailer.data() + spec_cursor, libraries_bytes);
                 }
 
-                const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
-                                                     .write_enable = request.depth_write_enable,
-                                                     .compare_op = request.depth_compare_op};
+                const auto to_stencil_op_state = [](const gpu_bridge::pipeline_stencil_op_state& state) {
+                    return vulkan_host::stencil_op_state{.fail_op = state.fail_op,
+                                                         .pass_op = state.pass_op,
+                                                         .depth_fail_op = state.depth_fail_op,
+                                                         .compare_op = state.compare_op,
+                                                         .compare_mask = state.compare_mask,
+                                                         .write_mask = state.write_mask,
+                                                         .reference = state.reference};
+                };
+                const gpu_bridge::pipeline_depth_stencil_state& ds = request.depth_stencil;
+                const vulkan_host::depth_stencil_state depth_stencil{.present = ds.present != 0,
+                                                                     .flags = ds.flags,
+                                                                     .depth_test_enable = ds.depth_test_enable,
+                                                                     .depth_write_enable = ds.depth_write_enable,
+                                                                     .depth_compare_op = ds.depth_compare_op,
+                                                                     .depth_bounds_test_enable = ds.depth_bounds_test_enable,
+                                                                     .stencil_test_enable = ds.stencil_test_enable,
+                                                                     .front = to_stencil_op_state(ds.front),
+                                                                     .back = to_stencil_op_state(ds.back),
+                                                                     .min_depth_bounds = ds.min_depth_bounds,
+                                                                     .max_depth_bounds = ds.max_depth_bounds};
 
                 const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
                 const std::span<const uint32_t> color_formats{request.color_formats.data(), color_count};
-
-                const vulkan_host::specialization vs_spec{.entries = vs_entries, .data = vs_data};
-                const vulkan_host::specialization fs_spec{.entries = fs_entries, .data = fs_data};
 
                 const uint32_t blend_count = std::min<uint32_t>(request.blend_attachment_count, gpu_bridge::max_color_attachments);
                 std::vector<vulkan_host::color_blend_attachment> blend_attachments(blend_count);
@@ -3248,21 +3285,12 @@ namespace sogen
                                                .color_write_mask = b.color_write_mask};
                 }
 
-                if (request.vertex_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size ||
-                    request.fragment_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size)
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-                const uint32_t vertex_identifier_size = request.vertex_shader.identifier_size;
-                const uint32_t fragment_identifier_size = request.fragment_shader.identifier_size;
-                const vulkan_host::shader_stage_source vertex_shader{
-                    .module = request.vertex_shader.module,
-                    .identifier = std::span<const uint8_t>{request.vertex_shader.identifier.data(), vertex_identifier_size},
-                };
-                const vulkan_host::shader_stage_source fragment_shader{
-                    .module = request.fragment_shader.module,
-                    .identifier = std::span<const uint8_t>{request.fragment_shader.identifier.data(), fragment_identifier_size},
-                };
+                const gpu_bridge::pipeline_tessellation_state& ts = request.tessellation;
+                const vulkan_host::tessellation_state tessellation{.present = ts.present != 0,
+                                                                   .flags = ts.flags,
+                                                                   .patch_control_points = ts.patch_control_points,
+                                                                   .domain_origin_present = ts.domain_origin_present != 0,
+                                                                   .domain_origin = ts.domain_origin};
 
                 uint64_t pipeline = gpu_bridge::null_object;
                 const vulkan_host::graphics_pipeline_desc desc{
@@ -3271,8 +3299,8 @@ namespace sogen
                     .render_pass = request.render_pass,
                     .subpass = request.subpass,
                     .pipeline_layout = request.pipeline_layout,
-                    .vertex_shader = vertex_shader,
-                    .fragment_shader = fragment_shader,
+                    .stages = stages,
+                    .tessellation = tessellation,
                     .flags = request.flags,
                     .library_parts = request.library_parts,
                     .libraries = libraries,
@@ -3281,7 +3309,7 @@ namespace sogen
                     .bindings = bindings,
                     .attributes = attributes,
                     .divisors = divisors,
-                    .depth = depth,
+                    .depth_stencil = depth_stencil,
                     .color_formats = color_formats,
                     .depth_format = request.depth_format,
                     .stencil_format = request.stencil_format,
@@ -3291,8 +3319,6 @@ namespace sogen
                     .rasterization_stream = request.rasterization_stream,
                     .rasterization_stream_flags = request.rasterization_stream_flags,
                     .dynamic_states = dynamic_states,
-                    .vs_spec = vs_spec,
-                    .fs_spec = fs_spec,
                     .blend_attachments = blend_attachments,
                 };
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
@@ -3301,10 +3327,9 @@ namespace sogen
                 if (result != 0)
                 {
                     win_emu.log.error(
-                        "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx vs=0x%llx fs=0x%llx %ux%u)\n", result,
+                        "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx stages=%u parts=0x%x %ux%u)\n", result,
                         static_cast<unsigned long long>(request.render_pass), static_cast<unsigned long long>(request.pipeline_layout),
-                        static_cast<unsigned long long>(request.vertex_shader.module),
-                        static_cast<unsigned long long>(request.fragment_shader.module), request.width, request.height);
+                        request.stage_count, request.library_parts, request.width, request.height);
                 }
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }
@@ -4500,10 +4525,62 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask,
-                                                              req.src_access_mask, req.dst_access_mask, req.old_layout, req.new_layout,
-                                                              req.src_queue_family_index, req.dst_queue_family_index,
-                                                              to_host_range(req.subresource));
+                    const size_t memory_bytes = static_cast<size_t>(req.memory_barrier_count) * sizeof(gpu_bridge::barrier_masks);
+                    const size_t buffer_bytes = static_cast<size_t>(req.buffer_barrier_count) * sizeof(gpu_bridge::buffer_memory_barrier);
+                    const size_t image_bytes = static_cast<size_t>(req.image_barrier_count) * sizeof(gpu_bridge::image_memory_barrier);
+                    if (size - sizeof(req) != memory_bytes + buffer_bytes + image_bytes)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+
+                    const auto* cursor = payload + sizeof(req);
+                    const auto to_masks = [](const gpu_bridge::barrier_masks& masks) {
+                        return vulkan_host::barrier_masks{.src_stage_mask = masks.src_stage_mask,
+                                                          .src_access_mask = masks.src_access_mask,
+                                                          .dst_stage_mask = masks.dst_stage_mask,
+                                                          .dst_access_mask = masks.dst_access_mask};
+                    };
+
+                    std::vector<vulkan_host::barrier_masks> memory_barriers(req.memory_barrier_count);
+                    for (auto& barrier : memory_barriers)
+                    {
+                        gpu_bridge::barrier_masks wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = to_masks(wire);
+                    }
+
+                    std::vector<vulkan_host::buffer_barrier> buffer_barriers(req.buffer_barrier_count);
+                    for (auto& barrier : buffer_barriers)
+                    {
+                        gpu_bridge::buffer_memory_barrier wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = {.masks = to_masks(wire.masks),
+                                   .src_queue_family_index = wire.src_queue_family_index,
+                                   .dst_queue_family_index = wire.dst_queue_family_index,
+                                   .buffer = wire.buffer,
+                                   .offset = wire.offset,
+                                   .size = wire.size};
+                    }
+
+                    std::vector<vulkan_host::image_barrier> image_barriers(req.image_barrier_count);
+                    for (auto& barrier : image_barriers)
+                    {
+                        gpu_bridge::image_memory_barrier wire{};
+                        std::memcpy(&wire, cursor, sizeof(wire));
+                        cursor += sizeof(wire);
+                        barrier = {.masks = to_masks(wire.masks),
+                                   .old_layout = wire.old_layout,
+                                   .new_layout = wire.new_layout,
+                                   .src_queue_family_index = wire.src_queue_family_index,
+                                   .dst_queue_family_index = wire.dst_queue_family_index,
+                                   .image = wire.image,
+                                   .range = to_host_range(wire.subresource)};
+                    }
+
+                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.dependency_flags, memory_barriers, buffer_barriers,
+                                                              image_barriers);
                 }
                 case gpu_bridge::command::cmd_clear_color_image: {
                     gpu_bridge::cmd_clear_color_image_request req{};

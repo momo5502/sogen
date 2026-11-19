@@ -249,6 +249,24 @@ namespace sogen
         TYPE_GENERIC = 255
     };
 
+    // Undocumented win32k DPI_INFORMATION; the layout follows shcore's CImmersiveOrPrimaryMonitor::InitImpl.
+    struct EMU_DPI_INFORMATION
+    {
+        uint32_t Reserved0[2];
+        uint32_t ScaleFactor;
+        uint32_t ScaleFactorY;
+        uint32_t Reserved1[2];
+        uint32_t MonitorWidth;
+        uint32_t MonitorHeight;
+        uint32_t PhysicalHeight;
+        uint32_t PhysicalWidth;
+        uint32_t DpiX;
+        uint32_t DpiY;
+        uint32_t Reserved2[12];
+    };
+
+    static_assert(sizeof(EMU_DPI_INFORMATION) == 96);
+
     struct USER_MONITOR
     {
         EMULATOR_CAST(uint64_t, HMONITOR) hmon;
