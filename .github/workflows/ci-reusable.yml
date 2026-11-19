@@ -1466,6 +1466,21 @@ jobs:
             echo "systemProp.org.gradle.internal.network.retry.initial.backOff=15000"
           } >> ~/.gradle/gradle.properties
 
+      # Flutter's included Gradle build declares no plugin repositories, so its plugins and their Kotlin dependencies
+      # resolve only through the Gradle Plugin Portal, whose Maven Central proxy intermittently answers 404. Gradle does
+      # not retry a 404, so resolve from Maven Central first in every build, included builds too.
+      - name: Resolve Gradle Plugins From Maven Central
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/plugin-repositories.gradle << 'EOF'
+          beforeSettings { settings ->
+              settings.pluginManagement.repositories {
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          EOF
+
       - name: Build APK
         working-directory: app
         run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
