@@ -538,17 +538,13 @@ namespace sogen
         // raw data rounds down and its end rounds up, limited to the section and the end of the file. Packers such as
         // Upack set PointerToRawData below 0x200 to map the headers into a section.
         section_file_range get_section_file_range(const IMAGE_SECTION_HEADER& section, const uint64_t section_size,
-                                                  const uint64_t file_size, const bool mapped_as_one_region)
+                                                  const uint64_t file_size)
         {
+            constexpr uint64_t sector_size = 0x200;
             const uint64_t raw_start = section.PointerToRawData;
             const uint64_t raw_end = raw_start + section.SizeOfRawData;
-            if (mapped_as_one_region)
-            {
-                return {static_cast<size_t>(raw_start), static_cast<size_t>(std::min<uint64_t>(section_size, section.SizeOfRawData))};
-            }
-
-            constexpr uint64_t sector_size = 0x200;
             const auto start = align_down(raw_start, sector_size);
+            // The end of the file limits only the rounded part, so raw data that goes past the end of the file fails the read.
             const auto sector_end = std::max(raw_end, std::min(align_up(raw_end, sector_size), file_size));
             const auto end = std::min(sector_end, start + section_size);
             return {static_cast<size_t>(start), static_cast<size_t>(end - start)};
@@ -594,7 +590,8 @@ namespace sogen
 
                 if (section.SizeOfRawData > 0)
                 {
-                    const auto range = get_section_file_range(section, size_of_section, buffer.get_buffer().size(), mapped_as_one_region);
+                    const auto range = mapped_as_one_region ? section_file_range{section.PointerToRawData, size_of_data}
+                                                            : get_section_file_range(section, size_of_section, buffer.get_buffer().size());
                     const auto* source_ptr = buffer.get_pointer_for_range(range.offset, range.size);
                     memory.write_memory(target_ptr, source_ptr, range.size);
                 }
