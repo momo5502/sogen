@@ -976,9 +976,15 @@ jobs:
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
   smoke-test-kvm:
-    name: Smoke Test KVM x86_64
+    name: Smoke Test KVM (${{ matrix.sample }})
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        sample:
+          - x86_64
+          - x86
     steps:
       - name: Enable KVM
         run: |
@@ -992,11 +998,11 @@ jobs:
           name: Linux x86_64 Clang Release Artifacts
           path: build/release/artifacts
 
-      - name: Download Windows Artifacts
+      - name: Download Test Sample
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows x86_64 Release Artifacts
-          path: build/release/artifacts
+          name: Windows ${{ matrix.sample }} Release Artifacts
+          path: windows-artifacts
 
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
@@ -1005,7 +1011,7 @@ jobs:
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
-        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+        run: cp windows-artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: Print KVM Diagnostics
         run: |
