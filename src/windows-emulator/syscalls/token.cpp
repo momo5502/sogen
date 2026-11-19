@@ -32,6 +32,7 @@ namespace sogen
             constexpr std::array<uint8_t, 16> ntlm_authentication_sid{1, 2, 0, 0, 0, 0, 0, 5, 64, 0, 0, 0, 10, 0, 0, 0}; // S-1-5-64-10
             constexpr std::array<uint8_t, 12> medium_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x20, 0, 0};           // S-1-16-8192
             constexpr std::array<uint8_t, 12> high_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x30, 0, 0};             // S-1-16-12288
+            constexpr std::array<uint8_t, 12> untrusted_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0};
 
             // S-1-5-5-0-4099, the logon session SID winlogon hands LsaLogonUser for the interactive logon.
             constexpr std::array<uint8_t, 20> logon_session_sid{1, 3, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x10, 0, 0};
@@ -172,7 +173,7 @@ namespace sogen
             {
                 if (anonymous)
                 {
-                    return {};
+                    return {{.sid = {untrusted_integrity_sid.begin(), untrusted_integrity_sid.end()}, .attributes = se_group_integrity}};
                 }
 
                 std::vector<token_group> groups{};
@@ -192,7 +193,7 @@ namespace sogen
             {
                 if (anonymous)
                 {
-                    return 0;
+                    return 1;
                 }
 
                 size_t count = is_account_domain_user(user_sid) ? 1 : 0;
@@ -1328,8 +1329,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto level =
-                    !anonymous && get_token_type(token_handle) == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
+                const auto level = get_token_type(token_handle) == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 emulator_object<SECURITY_IMPERSONATION_LEVEL>{c.emu, token_information}.write(level);
                 return STATUS_SUCCESS;
             }
@@ -1453,7 +1453,7 @@ namespace sogen
                 stats.AuthenticationId.LowPart = token_authentication_id;
                 stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
-                stats.ImpersonationLevel = !anonymous && stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
+                stats.ImpersonationLevel = stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 stats.GroupCount = static_cast<ULONG>(count_token_groups(c.win_emu, sid, anonymous));
                 const auto* privileges = find_token_privileges(c, requested_token);
                 stats.PrivilegeCount = privileges ? static_cast<ULONG>(privileges->size()) : 0;

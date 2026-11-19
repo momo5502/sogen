@@ -979,11 +979,6 @@ namespace sogen
             {
                 return STATUS_NO_TOKEN;
             }
-            if (impersonation_token == ANONYMOUS_IMPERSONATION_TOKEN)
-            {
-                return STATUS_CANT_OPEN_ANONYMOUS;
-            }
-
             // NtOpenThreadTokenEx opens the token object the thread impersonates, so the privileges it reports and
             // adjusts are that token's own. Another process's token object can only be copied here.
             if (remote_token)
