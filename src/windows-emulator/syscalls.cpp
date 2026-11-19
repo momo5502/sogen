@@ -539,6 +539,11 @@ namespace sogen
                                       ACCESS_MASK desired_access, emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
                                       uint64_t privilege_set, emulator_object<ULONG> privilege_set_length,
                                       emulator_object<ACCESS_MASK> granted_access, emulator_object<NTSTATUS> access_status);
+        NTSTATUS handle_NtAccessCheckByType(const syscall_context& c, uint64_t security_descriptor, uint64_t principal_self_sid,
+                                            handle client_token, ACCESS_MASK desired_access, uint64_t object_type_list,
+                                            ULONG object_type_list_length, emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
+                                            uint64_t privilege_set, emulator_object<ULONG> privilege_set_length,
+                                            emulator_object<ACCESS_MASK> granted_access, emulator_object<NTSTATUS> access_status);
         NTSTATUS handle_NtPrivilegeCheck(const syscall_context& c, handle client_token, emulator_pointer required_privileges,
                                          emulator_object<BOOLEAN> result);
         NTSTATUS handle_NtAdjustPrivilegesToken(const syscall_context& c, handle requested_token, BOOLEAN disable_all_privileges,
@@ -958,6 +963,7 @@ namespace sogen
         BOOL handle_NtGdiFillRgn(const syscall_context& c, hdc dc, handle region, hbrush brush);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
+        BOOL handle_NtGdiGetDCPoint(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, hdc dc, uint32_t method, uint32_t value, emulator_pointer result);
         BOOL handle_NtGdiSetBrushOrg(const syscall_context& c, hdc dc, int x, int y, emulator_pointer prev);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
@@ -1915,6 +1921,7 @@ namespace sogen
         add_handler(NtGdiSelectBitmap);
         add_handler(NtGdiGetDCforBitmap);
         add_handler(NtGdiGetDCDword);
+        add_handler(NtGdiGetDCPoint);
         add_handler(NtGdiGetAndSetDCDword);
         add_handler(NtGdiSetBrushOrg);
         add_handler(NtGdiHfontCreate);
@@ -2004,6 +2011,7 @@ namespace sogen
         add_handler(NtQueryKey);
         add_handler(NtGetNlsSectionPtr);
         add_handler(NtAccessCheck);
+        add_handler(NtAccessCheckByType);
         add_handler(NtPrivilegeCheck);
         add_handler(NtCreateKey);
         add_handler(NtSetValueKey);

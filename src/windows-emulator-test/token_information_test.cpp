@@ -143,13 +143,13 @@ namespace sogen::test
         EXPECT_EQ(DUMMY_IMPERSONATION_TOKEN, output.read());
     }
 
-    TEST_F(TokenInformationTest, AnonymousImpersonationUsesAnonymousIdentityAndCannotBeOpened)
+    TEST_F(TokenInformationTest, AnonymousImpersonationUsesOpenableAnonymousLogonToken)
     {
         EXPECT_EQ(0x179cu, offsetof(TEB64, IsImpersonating));
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtImpersonateAnonymousToken(this->context(), CURRENT_THREAD));
         EXPECT_EQ(ANONYMOUS_IMPERSONATION_TOKEN, this->emu->vcpu(0).active_thread->impersonation_token);
-        EXPECT_EQ(STATUS_CANT_OPEN_ANONYMOUS,
-                  syscalls::handle_NtOpenThreadToken(this->context(), CURRENT_THREAD, 0, true, {this->emu->memory, this->storage + 0x200}));
+        const emulator_object<handle> opened{this->emu->memory, this->storage + 0x200};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtOpenThreadToken(this->context(), CURRENT_THREAD, 0, true, opened));
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_THREAD_EFFECTIVE_TOKEN, TokenUser,
                                                                            this->storage + 0x100, 512, {this->emu->memory, this->storage}));
         const auto user = emulator_object<TOKEN_USER64>{this->emu->memory, this->storage + 0x100}.read();
@@ -158,10 +158,14 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS,
                   syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_THREAD_EFFECTIVE_TOKEN, TokenImpersonationLevel,
                                                            this->storage + 0x100, 4, {this->emu->memory, this->storage}));
-        EXPECT_EQ(SecurityAnonymous, (emulator_object<SECURITY_IMPERSONATION_LEVEL>{this->emu->memory, this->storage + 0x100}.read()));
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_THREAD_EFFECTIVE_TOKEN, TokenGroups,
-                                                                           this->storage + 0x100, 8, {this->emu->memory, this->storage}));
-        EXPECT_EQ(0u, (emulator_object<ULONG>{this->emu->memory, this->storage + 0x100}.read()));
+        EXPECT_EQ(SecurityImpersonation, (emulator_object<SECURITY_IMPERSONATION_LEVEL>{this->emu->memory, this->storage + 0x100}.read()));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(this->context(), opened.read(), TokenGroups,
+                                                                           this->storage + 0x100, 512, {this->emu->memory, this->storage}));
+        EXPECT_EQ(1u, (emulator_object<ULONG>{this->emu->memory, this->storage + 0x100}.read()));
+        const auto group = emulator_object<SID_AND_ATTRIBUTES64>{this->emu->memory, this->storage + 0x108}.read();
+        constexpr std::array<uint8_t, 12> untrusted_sid{1, 1, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0};
+        EXPECT_EQ(untrusted_sid, (emulator_object<std::array<uint8_t, 12>>{this->emu->memory, group.Sid}.read()));
+        EXPECT_EQ(0x60u, group.Attributes);
     }
 
     TEST_F(TokenInformationTest, AnEmptyGroupListStillTakesTheWholeTokenGroupsHeader)

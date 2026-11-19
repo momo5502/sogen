@@ -4,6 +4,7 @@ namespace sogen::syscalls
 {
     hwnd handle_NtUserSetParent(const syscall_context& c, hwnd hwnd_child, hwnd hwnd_new_parent);
     hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
+    BOOL handle_NtGdiGetDCPoint(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
     COLORREF handle_NtGdiSetPixel(const syscall_context& c, hdc dc, int x, int y, COLORREF color);
     BOOL handle_NtUserGetUpdateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
 }
@@ -125,6 +126,23 @@ namespace sogen::test
         EXPECT_TRUE(this->is_surface_root(child_of_desktop));
         EXPECT_TRUE(this->is_surface_root(owned_popup));
         EXPECT_TRUE(this->is_surface_root(child_and_popup));
+    }
+
+    TEST_F(WindowRelationshipTest, DcOriginIsTheClientOriginInScreenCoordinates)
+    {
+        const auto parent = this->create_window(0, WS_POPUP | WS_BORDER, {.left = 100, .top = 200, .right = 200, .bottom = 300});
+        const auto child = this->create_window(parent, WS_CHILD | WS_BORDER, {.left = 10, .top = 20, .right = 50, .bottom = 60});
+        const auto dc = syscalls::handle_NtUserGetDC(this->context(), child);
+        const auto address = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        for (const auto index : {0x20u, 0x60u})
+        {
+            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetDCPoint(this->context(), dc, index, address));
+            const auto point = this->emu.memory.read_memory<POINT>(address);
+            EXPECT_EQ(112, point.x);
+            EXPECT_EQ(222, point.y);
+        }
+        EXPECT_EQ(FALSE, syscalls::handle_NtGdiGetDCPoint(this->context(), 0, 0x60, address));
+        EXPECT_EQ(FALSE, syscalls::handle_NtGdiGetDCPoint(this->context(), dc, 0x60, 0));
     }
 
     TEST_F(WindowRelationshipTest, AChildMovedUnderTheDesktopGetsAHostAndItsOldParentRepaintsWhereItWas)

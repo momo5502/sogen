@@ -4003,8 +4003,8 @@ namespace sogen
 
         uint16_t handle_NtUserGetClassInfoEx(const syscall_context& c, const hinstance /*instance*/,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                             const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
-                                             const BOOL /*ansi*/)
+                                             const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer menu_name,
+                                             const BOOL ansi)
         {
             const auto cls = read_class_argument(c, class_name);
             const auto* entry = find_class(c, cls);
@@ -4026,7 +4026,16 @@ namespace sogen
 
             if (wnd_class_ex)
             {
-                wnd_class_ex.write(entry->wnd_class);
+                auto result = entry->wnd_class;
+                result.lpszClassName = 0;
+                result.lpszMenuName = 0;
+                wnd_class_ex.write(result);
+            }
+
+            if (menu_name)
+            {
+                const auto value = ansi ? entry->menu_name.pszClientAnsiMenuName : entry->menu_name.pwszClientUnicodeMenuName;
+                emulator_object<uint64_t>{c.emu, menu_name}.write(value);
             }
 
             return entry->atom;

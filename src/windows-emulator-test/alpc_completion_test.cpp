@@ -3,6 +3,12 @@
 #include "rpc_test_utils.hpp"
 #include <io_completion_wait.hpp>
 
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtAlpcSetInformation(const syscall_context& c, handle port_handle, uint32_t port_information_class,
+                                         emulator_pointer port_information, uint32_t length);
+}
+
 namespace sogen::test
 {
     namespace
@@ -76,6 +82,23 @@ namespace sogen::test
         EXPECT_FALSE(this->container().has_pending_reply());
         io_completion_message message{};
         EXPECT_FALSE(this->dequeue(message));
+    }
+
+    TEST_F(AlpcCompletionTest, Wow64CompletionAssociationUsesNativeStructure)
+    {
+        this->emu->process.is_wow64_process = true;
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        const ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>> association{
+            .CompletionKey = completion_key,
+            .CompletionPort = this->completion.bits,
+        };
+        this->emu->memory.write_memory(this->storage, association);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAlpcSetInformation(context, this->port_handle, 2, this->storage, sizeof(association)));
+        ASSERT_EQ(STATUS_SUCCESS, this->send_handshake().status);
+        io_completion_message message{};
+        ASSERT_TRUE(this->dequeue(message));
+        EXPECT_EQ(completion_key, message.key_context);
     }
 
     TEST_F(AlpcCompletionTest, SendOnlyMessageWithAssociationQueuesReplyAndPostsCompletion)

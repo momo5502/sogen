@@ -3883,6 +3883,37 @@ namespace sogen
             return 0;
         }
 
+        BOOL handle_NtGdiGetDCPoint(const syscall_context& c, const hdc dc, const uint32_t index, const emulator_pointer result)
+        {
+            constexpr uint32_t redirected_dc_flag = 0x40;
+            constexpr uint32_t get_dc_origin = 0x20;
+            if ((index & ~redirected_dc_flag) != get_dc_origin || result == 0)
+            {
+                return FALSE;
+            }
+
+            uint64_t dc_attr{};
+            const auto state = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (state == c.proc.gdi_dc_states.end() || !get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                return FALSE;
+            }
+
+            POINT origin{};
+            if (state->second.target_window != 0)
+            {
+                const auto* win = c.proc.windows.get(state->second.target_window);
+                if (!win)
+                {
+                    return FALSE;
+                }
+                origin = c.proc.window_screen_origin(*win);
+                origin.x += win->client_x_offset();
+                origin.y += win->client_y_offset();
+            }
+            return c.emu.try_write_memory(result, &origin, sizeof(origin)) ? TRUE : FALSE;
+        }
+
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, const hdc dc, const uint32_t /*index*/, const emulator_pointer result)
         {
             if (dc == 0 || result == 0)

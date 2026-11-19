@@ -32,6 +32,7 @@ namespace sogen
             constexpr std::array<uint8_t, 16> ntlm_authentication_sid{1, 2, 0, 0, 0, 0, 0, 5, 64, 0, 0, 0, 10, 0, 0, 0}; // S-1-5-64-10
             constexpr std::array<uint8_t, 12> medium_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x20, 0, 0};           // S-1-16-8192
             constexpr std::array<uint8_t, 12> high_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x30, 0, 0};             // S-1-16-12288
+            constexpr std::array<uint8_t, 12> untrusted_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0};
 
             // S-1-5-5-0-4099, the logon session SID winlogon hands LsaLogonUser for the interactive logon.
             constexpr std::array<uint8_t, 20> logon_session_sid{1, 3, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x10, 0, 0};
@@ -172,7 +173,7 @@ namespace sogen
             {
                 if (anonymous)
                 {
-                    return {};
+                    return {{.sid = {untrusted_integrity_sid.begin(), untrusted_integrity_sid.end()}, .attributes = se_group_integrity}};
                 }
 
                 std::vector<token_group> groups{};
@@ -192,7 +193,7 @@ namespace sogen
             {
                 if (anonymous)
                 {
-                    return 0;
+                    return 1;
                 }
 
                 size_t count = is_account_domain_user(user_sid) ? 1 : 0;
@@ -268,6 +269,7 @@ namespace sogen
             constexpr ULONG minimum_privilege_set_size = 20;
 
             constexpr std::array<uint8_t, 12> owner_rights_sid{1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0}; // S-1-3-4
+            constexpr std::array<uint8_t, 12> principal_self_sid_bytes{1, 1, 0, 0, 0, 0, 0, 5, 10, 0, 0, 0};
 
             // MM_USER_PROBE_ADDRESS: a probe on behalf of user mode faults on a range that reaches it.
             constexpr uint64_t user_probe_address = 0x7FFFFFFF0000;
@@ -923,13 +925,16 @@ namespace sogen
             // grants everything, MAXIMUM_ALLOWED in the mapping's GenericAll.
             access_check_result check_access(const windows_emulator& win_emu, const handle token,
                                              const std::optional<std::vector<dacl_ace>>& dacl, const bool is_owner, ACCESS_MASK desired,
-                                             const ACCESS_MASK generic_all)
+                                             const ACCESS_MASK generic_all, const std::span<const uint8_t> principal_self)
             {
                 // SepNormalAccessCheck skips inherit-only ACEs and compares the masks as stored: an ACE's generic bits are
                 // not mapped, so they match no specific right. An OWNER RIGHTS ACE stands for the owner.
                 const auto applies = [&](const dacl_ace& ace) {
+                    const std::span<const uint8_t> sid = !principal_self.empty() && std::ranges::equal(ace.sid, principal_self_sid_bytes)
+                                                             ? principal_self
+                                                             : std::span<const uint8_t>{ace.sid};
                     return (ace.flags & INHERIT_ONLY_ACE) == 0 && !ace.sid.empty() &&
-                           (token_holds_sid(win_emu, token, ace.sid) || (is_owner && std::ranges::equal(ace.sid, owner_rights_sid)));
+                           (token_holds_sid(win_emu, token, sid) || (is_owner && std::ranges::equal(ace.sid, owner_rights_sid)));
                 };
 
                 // RtlpOwnerAcesPresent: an OWNER RIGHTS ACE that is not inherit-only, of any type, replaces the owner's implicit
@@ -1328,8 +1333,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto level =
-                    !anonymous && get_token_type(token_handle) == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
+                const auto level = get_token_type(token_handle) == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 emulator_object<SECURITY_IMPERSONATION_LEVEL>{c.emu, token_information}.write(level);
                 return STATUS_SUCCESS;
             }
@@ -1453,7 +1457,7 @@ namespace sogen
                 stats.AuthenticationId.LowPart = token_authentication_id;
                 stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
-                stats.ImpersonationLevel = !anonymous && stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
+                stats.ImpersonationLevel = stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 stats.GroupCount = static_cast<ULONG>(count_token_groups(c.win_emu, sid, anonymous));
                 const auto* privileges = find_token_privileges(c, requested_token);
                 stats.PrivilegeCount = privileges ? static_cast<ULONG>(privileges->size()) : 0;
@@ -1554,11 +1558,19 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtAccessCheck(const syscall_context& c, const uint64_t security_descriptor, const handle requested_token,
-                                      const ACCESS_MASK desired_access, const emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
-                                      const uint64_t privilege_set, const emulator_object<ULONG> privilege_set_length,
-                                      const emulator_object<ACCESS_MASK> granted_access, const emulator_object<NTSTATUS> access_status)
+        NTSTATUS handle_NtAccessCheckByType(const syscall_context& c, const uint64_t security_descriptor, const uint64_t principal_self_sid,
+                                            const handle requested_token, const ACCESS_MASK desired_access, const uint64_t object_type_list,
+                                            const ULONG object_type_list_length, const emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
+                                            const uint64_t privilege_set, const emulator_object<ULONG> privilege_set_length,
+                                            const emulator_object<ACCESS_MASK> granted_access,
+                                            const emulator_object<NTSTATUS> access_status)
         {
+            if (object_type_list_length)
+            {
+                c.win_emu.log.error("Unsupported NtAccessCheckByType object type list\n");
+                return STATUS_NOT_SUPPORTED;
+            }
+            (void)object_type_list;
             // SeAccessCheckByType reads the privilege set's length first. For a caller in user mode
             // SeAccessCheckByTypeWithAdminlessChecks then probes AccessStatus, GrantedAccess and PrivilegeSetLength for
             // writing and the privilege set for its length, clears a set that has room for one, and copies the GenericMapping,
@@ -1627,6 +1639,21 @@ namespace sogen
                 return STATUS_INVALID_SECURITY_DESCR;
             }
 
+            std::vector<uint8_t> principal_self{};
+            if (principal_self_sid)
+            {
+                uint8_t count{};
+                if (const auto status = read_user_memory(c, principal_self_sid + offsetof(SID, SubAuthorityCount), &count, sizeof(count));
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+                if (const auto status = copy_sid(c, principal_self_sid, count, principal_self); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+            }
+
             // SePrivilegePolicyCheck answers ACCESS_SYSTEM_SECURITY, which takes SeSecurityPrivilege, before the privilege set
             // is sized: the token holds no privileges, so the request is refused and grants nothing.
             if ((desired_access & access_system_security) != 0)
@@ -1655,10 +1682,19 @@ namespace sogen
             }
 
             const auto is_owner = token_holds_sid(c.win_emu, client_token, descriptor->owner);
-            const auto result = check_access(c.win_emu, client_token, dacl, is_owner, desired_access, mapping.GenericAll);
+            const auto result = check_access(c.win_emu, client_token, dacl, is_owner, desired_access, mapping.GenericAll, principal_self);
             granted_access.write(result.granted);
             access_status.write(result.status);
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtAccessCheck(const syscall_context& c, const uint64_t security_descriptor, const handle requested_token,
+                                      const ACCESS_MASK desired_access, const emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
+                                      const uint64_t privilege_set, const emulator_object<ULONG> privilege_set_length,
+                                      const emulator_object<ACCESS_MASK> granted_access, const emulator_object<NTSTATUS> access_status)
+        {
+            return handle_NtAccessCheckByType(c, security_descriptor, 0, requested_token, desired_access, 0, 0, generic_mapping,
+                                              privilege_set, privilege_set_length, granted_access, access_status);
         }
 
         NTSTATUS handle_NtPrivilegeCheck(const syscall_context& c, const handle client_token, const emulator_pointer required_privileges,

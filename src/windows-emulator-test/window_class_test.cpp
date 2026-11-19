@@ -7,6 +7,9 @@ namespace sogen::syscalls
                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
                                              emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name, DWORD function_id,
                                              DWORD flags, emulator_pointer wow);
+    uint16_t handle_NtUserGetClassInfoEx(const syscall_context& c, hinstance instance,
+                                         emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                         emulator_object<EMU_WNDCLASSEX> wnd_class_ex, emulator_pointer menu_name, BOOL ansi);
     emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong, BOOL Ansi);
 }
 
@@ -60,14 +63,17 @@ namespace sogen::test
 
                 auto registered = test_class;
                 registered.cbClsExtra = class_extra;
+                registered.lpszClassName = name_buffer;
+                registered.lpszMenuName = menu_name_value;
                 wnd_class.write(registered);
                 this->emu.memory.write_memory(name_buffer, class_name.data(), class_name.size() * sizeof(char16_t));
                 name.write({.Length = static_cast<USHORT>(class_name.size() * sizeof(char16_t)),
                             .MaximumLength = static_cast<USHORT>(class_name.size() * sizeof(char16_t)),
                             .Buffer = name_buffer});
                 menu_string.write({.Length = 0, .MaximumLength = 0, .Buffer = menu_name_value});
-                class_menu_name.write(
-                    {.pszClientAnsiMenuName = 0x5000, .pwszClientUnicodeMenuName = 0x6000, .pusMenuName = this->storage + 0x280});
+                class_menu_name.write({.pszClientAnsiMenuName = menu_name_value ? 0x5000u : 0u,
+                                       .pwszClientUnicodeMenuName = menu_name_value ? 0x6000u : 0u,
+                                       .pusMenuName = this->storage + 0x280});
 
                 return syscalls::handle_NtUserRegisterClassExWOW(this->context, wnd_class, name, {this->emu.memory}, class_menu_name, 0,
                                                                  unicode_class_flags, 0);
@@ -119,6 +125,22 @@ namespace sogen::test
         EXPECT_EQ(test_class.hIconSm, cls.hIconSm);
         EXPECT_EQ(test_class.hInstance, cls.hModule);
         EXPECT_EQ(test_class.hbrBackground, cls.hbrBackground);
+    }
+
+    TEST_F(WindowClassTest, GetClassInfoClearsNameFieldsAndReturnsNullMenu)
+    {
+        const auto atom = this->register_class(0);
+        ASSERT_NE(0u, atom);
+        const emulator_object<EMU_WNDCLASSEX> result{this->emu.memory, this->storage + 0x600};
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> name{this->emu.memory, this->storage + 0x100};
+        const emulator_object<uint64_t> menu{this->emu.memory, this->storage + 0x700};
+        result.write(test_class);
+        menu.write(0x12345678);
+        EXPECT_EQ(atom, syscalls::handle_NtUserGetClassInfoEx(this->context, 0, name, result, menu.value(), FALSE));
+        const auto info = result.read();
+        EXPECT_EQ(0u, info.lpszClassName);
+        EXPECT_EQ(0u, info.lpszMenuName);
+        EXPECT_EQ(0u, menu.read());
     }
 
     TEST_F(WindowClassTest, ResourceIdMenuNameIsNotMarked)
