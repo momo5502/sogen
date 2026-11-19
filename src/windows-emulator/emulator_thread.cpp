@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 #include "process_context.hpp"
 #include "io_completion_wait.hpp"
+#include "worker_factory_support.hpp"
 #include "debug_object.hpp"
 #include "syscall_utils.hpp"
 
@@ -1808,6 +1809,11 @@ namespace sogen
             {
                 if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
+                    if (wait.worker_factory && !worker_factory_support::end_worker_wait_by_timeout(win_emu, *this, wait))
+                    {
+                        return false;
+                    }
+
                     // NtRemoveIoCompletionEx stores the count of KeRemoveQueueEx's one entry, STATUS_TIMEOUT, under try;
                     // NtWaitForWorkViaWorkerFactory stores its count only when it succeeds (19041).
                     auto status = STATUS_SUCCESS;

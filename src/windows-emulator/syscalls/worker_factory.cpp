@@ -69,6 +69,9 @@ namespace sogen
     {
         namespace
         {
+            constexpr int64_t default_worker_idle_timeout = -670'000'000;
+            constexpr int64_t minimum_worker_idle_timeout = -10'000'000;
+
             std::u16string read_object_name(const syscall_context& c,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
             {
@@ -206,6 +209,20 @@ namespace sogen
                 }
             }
 
+            void arm_idle_deadline(windows_emulator& win_emu, const worker_factory& factory, pending_io_completion_wait& wait)
+            {
+                wait.timeout.reset();
+                if (factory.idle_timeout == 0)
+                {
+                    return;
+                }
+
+                LARGE_INTEGER idle{};
+                idle.QuadPart = factory.idle_timeout;
+                wait.timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), idle);
+                wait.timeout_absolute = utils::is_absolute_due_time(idle);
+            }
+
             // The end of NtWaitForWorkViaWorkerFactory once its worker took work.
             void check_for_more_work(windows_emulator& win_emu, worker_factory& factory)
             {
@@ -255,6 +272,7 @@ namespace sogen
             }
 
             worker_factory factory{};
+            factory.idle_timeout = default_worker_idle_timeout;
             factory.name = name;
             factory.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
@@ -357,6 +375,11 @@ namespace sogen
                 }
 
                 const auto value = value_i64.read().QuadPart;
+                if (info_class == WorkerFactoryIdleTimeout && value >= 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 factory->last_info_value = static_cast<uint64_t>(value);
 
                 if (info_class == WorkerFactoryTimeout)
@@ -369,7 +392,7 @@ namespace sogen
                 }
                 else
                 {
-                    factory->idle_timeout = value;
+                    factory->idle_timeout = std::min(value, minimum_worker_idle_timeout);
                 }
                 return STATUS_SUCCESS;
             }
@@ -661,6 +684,10 @@ namespace sogen
                     return STATUS_TIMEOUT;
                 }
             }
+            else
+            {
+                arm_idle_deadline(c.win_emu, *factory, wait);
+            }
 
             io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, false);
@@ -676,6 +703,34 @@ namespace sogen
             {
                 syscalls::check_for_more_work(win_emu, *factory);
             }
+        }
+
+        bool end_worker_wait_by_timeout(windows_emulator& win_emu, emulator_thread& worker, pending_io_completion_wait& wait)
+        {
+            auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(wait.worker_factory);
+            if (!factory)
+            {
+                return true;
+            }
+
+            if (factory->timeout != 0)
+            {
+                return true;
+            }
+
+            syscalls::prune_worker_factory_threads(win_emu, *factory);
+            const auto is_worker = [&](const handle thread_handle) { return win_emu.process.threads.get(thread_handle) == &worker; };
+
+            const auto other_workers = std::ranges::count_if(factory->worker_threads, std::not_fn(is_worker));
+            if (static_cast<size_t>(other_workers) + 1 <= factory->thread_minimum)
+            {
+                syscalls::arm_idle_deadline(win_emu, *factory, wait);
+                return false;
+            }
+
+            std::erase_if(factory->worker_threads, is_worker);
+            syscalls::check_for_more_work(win_emu, *factory);
+            return true;
         }
 
         void on_io_completion_queued(windows_emulator& win_emu, const io_completion& completion)
