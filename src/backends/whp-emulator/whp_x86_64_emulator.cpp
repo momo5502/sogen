@@ -2328,6 +2328,12 @@ namespace sogen::whp
                     values.push_back(xcr0);
                 }
 
+                // Windows keeps the processor number in IA32_TSC_AUX, which RDTSCP and RDPID hand to user mode.
+                names.push_back(WHvX64RegisterTscAux);
+                WHV_REGISTER_VALUE tsc_aux{};
+                tsc_aux.Reg64 = vcpu.vp_index_;
+                values.push_back(tsc_aux);
+
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vcpu.vp_index_, names.data(),
                                                              static_cast<UINT32>(names.size()), values.data()));
             }

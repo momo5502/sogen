@@ -896,7 +896,7 @@ namespace sogen
                 }
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
-                    event->set_signaled(true);
+                    win_emu.signal_event(*event);
                 }
                 if (context.apc_routine)
                 {

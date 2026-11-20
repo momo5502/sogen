@@ -77,6 +77,7 @@ CALL :collect credssp.dll
 CALL :collect crtdll.dll
 CALL :collect crypt32.dll
 CALL :collect cryptbase.dll
+CALL :collect cryptnet.dll
 CALL :collect cryptsp.dll
 CALL :collect d3d10.dll
 CALL :collect d3d10core.dll
@@ -219,6 +220,7 @@ CALL :collect vcruntime140_1.dll
 CALL :collect vcruntime140_1d.dll
 CALL :collect vcruntime140d.dll
 CALL :collect version.dll
+CALL :collect webio.dll
 CALL :collect wer.dll
 CALL :collect win32u.dll
 CALL :collect windows.internal.graphics.display.displaycolormanagement.dll
@@ -228,9 +230,11 @@ CALL :collect windows.ui.immersive.dll
 CALL :collect windowscodecs.dll
 CALL :collect winhttp.dll
 CALL :collect wininet.dll
+CALL :collect_file "%WINDIR%\SystemResources", wininet.dll.mun, %EMU_SYSTEMRESOURCESDIR%
 CALL :collect winmm.dll
 CALL :collect winmmbase.dll
 CALL :collect winnlsres.dll
+CALL :collect_file "%WINDIR%\System32\en-US", winnlsres.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect wintrust.dll
 CALL :collect wintypes.dll
 CALL :collect wkscli.dll

@@ -417,7 +417,8 @@ namespace sogen
                                 const auto expansion_slots = t.teb32->field<std::uint32_t>(offsetof(TEB32, TlsExpansionSlots)).read();
                                 if (expansion_slots)
                                 {
-                                    c.emu.write_memory<uint32_t>(expansion_slots + (4 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
+                                    c.emu.write_memory<uint32_t>(expansion_slots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint32_t),
+                                                                 0);
                                 }
                             }
                         }
@@ -426,7 +427,7 @@ namespace sogen
                             const auto expansion_slots = t.teb64->field<std::uint64_t>(offsetof(TEB64, TlsExpansionSlots)).read();
                             if (expansion_slots)
                             {
-                                c.emu.write_memory<uint64_t>(expansion_slots + (8 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
+                                c.emu.write_memory<uint64_t>(expansion_slots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint64_t), 0);
                             }
                         }
                     }
