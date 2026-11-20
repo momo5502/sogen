@@ -995,10 +995,9 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            auto* internal_port = port->get_internal_port();
-            if (internal_port->disconnected)
+            if (message_size > maximum_message_size)
             {
-                return STATUS_PORT_DISCONNECTED;
+                return STATUS_BUFFER_OVERFLOW;
             }
 
             if (message_size < minimum_message_size)
@@ -1006,9 +1005,10 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (message_size > maximum_message_size)
+            auto* internal_port = port->get_internal_port();
+            if (internal_port->disconnected)
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return STATUS_PORT_DISCONNECTED;
             }
 
             const auto reserve = internal_port->next_resource_reserve;

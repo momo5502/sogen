@@ -125,6 +125,16 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, this->create(this->first_port, id, 0xFFD7));
     }
 
+    // AlpcpCreateReserve checks the size before whether the port is disconnected.
+    TEST_F(AlpcResourceReserveTest, ADisconnectedPortReportsTheSizeErrorFirst)
+    {
+        this->emu->process.ports.get(this->first_port)->get_internal_port()->disconnected = true;
+        ULONG id{};
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->create(this->first_port, id, 0xFFD8));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create(this->first_port, id, 0x27));
+        EXPECT_EQ(STATUS_PORT_DISCONNECTED, this->create(this->first_port, id));
+    }
+
     TEST_F(AlpcResourceReserveTest, AnUnwritableIdentifierCreatesNoReserve)
     {
         EXPECT_EQ(STATUS_ACCESS_VIOLATION,
