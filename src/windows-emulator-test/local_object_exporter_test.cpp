@@ -136,9 +136,22 @@ namespace sogen::test
 
     namespace
     {
-        // A four-floor ncalrpc tower: the interface (UUID and major version, minor version), the NDR transfer syntax, LRPC
-        // and the endpoint name.
-        std::vector<uint8_t> lookup_tower(const std::array<uint8_t, 16>& interface_id)
+        constexpr std::array<uint8_t, 16> ndr_syntax{0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11,
+                                                     0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60};
+        constexpr std::array<uint8_t, 16> ndr64_syntax{0x33, 0x05, 0x71, 0x71, 0xba, 0xbe, 0x37, 0x49,
+                                                       0x83, 0x19, 0xb5, 0xdb, 0xef, 0x9c, 0xcc, 0x36};
+
+        struct tower_floors
+        {
+            uint16_t interface_major{1};
+            bool ndr64{};
+            uint8_t transport{0x0c};
+            uint8_t endpoint{0x10};
+        };
+
+        // A four-floor ncalrpc tower: the interface (UUID and major version, minor version), the NDR or NDR64 transfer syntax
+        // (2.0 or 1.0), LRPC and the endpoint name.
+        std::vector<uint8_t> lookup_tower(const std::array<uint8_t, 16>& interface_id, const tower_floors& floors = {})
         {
             std::vector<uint8_t> tower{};
             const auto add = [&](const std::vector<uint8_t>& bytes) { tower.insert(tower.end(), bytes.begin(), bytes.end()); };
@@ -148,16 +161,17 @@ namespace sogen::test
                 add({static_cast<uint8_t>(rhs.size()), 0});
                 add(rhs);
             };
+            const auto uuid_floor = [&](const std::array<uint8_t, 16>& uuid, const uint16_t major) {
+                std::vector<uint8_t> lhs{0x0d};
+                lhs.insert(lhs.end(), uuid.begin(), uuid.end());
+                lhs.insert(lhs.end(), {static_cast<uint8_t>(major), static_cast<uint8_t>(major >> 8)});
+                floor(lhs, {0, 0});
+            };
             add({4, 0});
-            std::vector<uint8_t> interface_lhs{0x0d};
-            interface_lhs.insert(interface_lhs.end(), interface_id.begin(), interface_id.end());
-            interface_lhs.insert(interface_lhs.end(), {1, 0});
-            floor(interface_lhs, {0, 0});
-            std::vector<uint8_t> syntax_lhs(19, 0x5a);
-            syntax_lhs[0] = 0x0d;
-            floor(syntax_lhs, {0, 0});
-            floor({0x0c}, {0, 0});
-            floor({0x10}, {'x', 0});
+            uuid_floor(interface_id, floors.interface_major);
+            uuid_floor(floors.ndr64 ? ndr64_syntax : ndr_syntax, floors.ndr64 ? 1 : 2);
+            floor({floors.transport}, {0, 0});
+            floor({floors.endpoint}, {'x', 0});
             return tower;
         }
 
@@ -192,12 +206,23 @@ namespace sogen::test
         for (const size_t width : {size_t{4}, size_t{8}})
         {
             this->bind(u"\\RPC Control\\epmapper", endpoint_mapper_interface, width);
-            const auto result = this->call(3, map_request(width, std::nullopt, lookup_tower(nsi_service_interface)));
+            const auto result = this->call(3, map_request(width, std::nullopt, lookup_tower(nsi_service_interface, {.ndr64 = width == 8})));
             ASSERT_EQ(STATUS_SUCCESS, result.status);
             ASSERT_TRUE(result.payload.has_value());
             EXPECT_EQ(1u, read<uint32_t>(*result.payload, 44));
             EXPECT_TRUE(contains(*result.payload, "SogenNsiService"));
             EXPECT_EQ(0u, read<uint32_t>(*result.payload, result.payload->size() - 4));
+        }
+    }
+
+    TEST_F(LocalObjectExporterTest, EndpointMapperOnlyAnswersTheSupportedNsiTower)
+    {
+        this->bind(u"\\RPC Control\\epmapper", endpoint_mapper_interface, 8);
+        for (const auto& floors : {tower_floors{.interface_major = 2}, tower_floors{.transport = 0x07}, tower_floors{.endpoint = 0x0f}})
+        {
+            const auto result = this->call(3, map_request(8, std::nullopt, lookup_tower(nsi_service_interface, floors)));
+            ASSERT_TRUE(result.payload.has_value());
+            EXPECT_EQ(0x16c9a0d6u, read<uint32_t>(*result.payload, result.payload->size() - 4));
         }
     }
 

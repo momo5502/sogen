@@ -24,15 +24,40 @@ namespace sogen::test
                 this->bind(u"\\RPC Control\\" + std::u16string(nsi_service_endpoint), nsi_service_interface, width);
             }
 
-            // What to watch: a module id pointer and the object; the service only needs it present.
-            static std::vector<uint8_t> registration_descriptor()
+            // The registration descriptor as winnsi marshals it: a ULONG, a unique pointer to the NPI_MODULEID and a ULONG (NDR64
+            // keeps the 24-byte memory layout, classic NDR packs 12 bytes), then the module id: Length, Type and the union
+            // with its discriminant, here a GUID.
+            std::vector<uint8_t> registration_descriptor(const uint32_t discriminant = 1) const
             {
-                return std::vector<uint8_t>(24, 0x11);
+                std::vector<uint8_t> data{};
+                utils::aligned_binary_writer writer(data, this->pointer_size);
+                writer.write<uint32_t>(7);
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(1);
+                writer.align_to(this->pointer_size == 8 ? 8 : 4);
+                writer.write<uint16_t>(0x18);
+                writer.write<uint32_t>(1);
+                writer.write<uint32_t>(discriminant);
+                const std::array<uint8_t, 16> guid{0xeb, 0x00, 0x4a, 0xf2, 0x51, 0x86, 0xd1, 0x11,
+                                                   0x99, 0x89, 0x00, 0xa0, 0xc9, 0x0c, 0x0c, 0xd2};
+                writer.write(guid.data(), guid.size(), 4);
+                return data;
+            }
+
+            // The descriptor, then the 8-byte structure the call passes by value.
+            std::vector<uint8_t> registration_request(const uint32_t discriminant = 1) const
+            {
+                auto data = this->registration_descriptor(discriminant);
+                utils::aligned_binary_writer writer(data, this->pointer_size);
+                writer.align_to(4);
+                writer.write<uint32_t>(0);
+                writer.write<uint32_t>(0);
+                return data;
             }
 
             context_handle register_notification()
             {
-                const auto reply = this->call(register_change_notification, registration_descriptor());
+                const auto reply = this->call(register_change_notification, this->registration_request());
                 EXPECT_EQ(STATUS_SUCCESS, reply.status);
                 context_handle context{};
                 if (!reply.payload || reply.payload->size() < rpc_response_header_size + context.size())
@@ -51,7 +76,7 @@ namespace sogen::test
 
             lpc_message_result deregister(const context_handle& context)
             {
-                auto request = registration_descriptor();
+                auto request = this->registration_descriptor();
                 request.insert(request.end(), context.begin(), context.end());
                 return this->send_message(deregister_change_notification, request);
             }
@@ -63,10 +88,32 @@ namespace sogen::test
         };
     }
 
-    TEST_F(NsiServiceTest, RegistrationWithoutADescriptorIsRejected)
+    TEST_F(NsiServiceTest, RegistrationDecodesTheDescriptorInBothNdrEncodings)
+    {
+        for (const size_t width : {size_t{4}, size_t{8}})
+        {
+            this->bind_service(width);
+            const auto context = this->register_notification();
+            EXPECT_EQ(STATUS_SUCCESS, this->deregister(context).status) << width;
+        }
+    }
+
+    TEST_F(NsiServiceTest, MalformedRegistrationsAreRejected)
     {
         this->bind_service(8);
         EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, {}).status);
+        EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, std::vector<uint8_t>{0}).status);
+        // A union discriminant that disagrees with the module id's type, and one that names no arm.
+        EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, this->registration_request(2)).status);
+        EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, this->registration_request(9)).status);
+
+        auto truncated = this->registration_request();
+        truncated.pop_back();
+        EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, truncated).status);
+
+        auto trailing = this->registration_request();
+        trailing.push_back(0);
+        EXPECT_NE(STATUS_SUCCESS, this->call(register_change_notification, trailing).status);
     }
 
     TEST_F(NsiServiceTest, ChangeRequestStaysPendingUntilDeregistrationCancelsIt)

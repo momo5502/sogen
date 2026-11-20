@@ -54,6 +54,147 @@ namespace sogen
             uint64_t pointer_size{};
         };
 
+        // Reads the NDR-encoded parameters of a request in order and fails on anything the layout does not allow.
+        class ndr_request_reader
+        {
+          public:
+            ndr_request_reader(const std::span<const uint8_t> data, const size_t pointer_size)
+                : data_(data),
+                  pointer_size_(pointer_size)
+            {
+            }
+
+            template <typename T>
+            std::optional<T> read()
+            {
+                if (!this->align(alignof(T)) || this->data_.size() - this->offset_ < sizeof(T))
+                {
+                    return std::nullopt;
+                }
+                T value{};
+                std::memcpy(&value, this->data_.data() + this->offset_, sizeof(value));
+                this->offset_ += sizeof(value);
+                return value;
+            }
+
+            std::optional<uint64_t> pointer()
+            {
+                if (this->pointer_size_ == utils::aligned_binary_writer::pointer_size_64)
+                {
+                    return this->read<uint64_t>();
+                }
+                return this->read<uint32_t>();
+            }
+
+            bool skip(const size_t size, const size_t alignment)
+            {
+                if (!this->align(alignment) || this->data_.size() - this->offset_ < size)
+                {
+                    return false;
+                }
+                this->offset_ += size;
+                return true;
+            }
+
+            std::span<const uint8_t> take(const size_t size, const size_t alignment)
+            {
+                if (!this->align(alignment) || this->data_.size() - this->offset_ < size)
+                {
+                    return {};
+                }
+                const auto taken = this->data_.subspan(this->offset_, size);
+                this->offset_ += size;
+                return taken;
+            }
+
+            bool at_end() const
+            {
+                return this->offset_ == this->data_.size();
+            }
+
+            bool is_ndr64() const
+            {
+                return this->pointer_size_ == utils::aligned_binary_writer::pointer_size_64;
+            }
+
+          private:
+            std::span<const uint8_t> data_{};
+            size_t pointer_size_{};
+            size_t offset_{};
+
+            bool align(const size_t alignment)
+            {
+                const auto aligned = (this->offset_ + alignment - 1) & ~(alignment - 1);
+                if (aligned > this->data_.size())
+                {
+                    return false;
+                }
+                this->offset_ = aligned;
+                return true;
+            }
+        };
+
+        // NPI_MODULEID: Length, Type, then a union switched on Type whose discriminant is marshalled again: a GUID (1) or an
+        // interface LUID (2).
+        bool read_module_id(ndr_request_reader& reader)
+        {
+            constexpr uint32_t module_id_guid = 1;
+            constexpr uint32_t module_id_luid = 2;
+
+            const auto length = reader.read<uint16_t>();
+            const auto type = reader.read<uint32_t>();
+            const auto discriminant = reader.read<uint32_t>();
+            if (!length || !type || !discriminant || *discriminant != *type)
+            {
+                return false;
+            }
+
+            switch (*discriminant)
+            {
+            case module_id_guid:
+                return reader.skip(16, 4);
+            case module_id_luid:
+                return reader.skip(8, 4);
+            default:
+                return false;
+            }
+        }
+
+        // The registration descriptor (winnsi's format strings): a structure of a ULONG, a unique pointer to the module id
+        // and a ULONG. NDR64 lays it out as in memory, 24 bytes with 8-byte pointers; classic NDR packs it into 12 bytes.
+        // The pointee follows the structure.
+        bool read_registration_descriptor(ndr_request_reader& reader)
+        {
+            const auto first = reader.read<uint32_t>();
+            if (!first)
+            {
+                return false;
+            }
+            if (reader.is_ndr64() && !reader.skip(4, 4))
+            {
+                return false;
+            }
+
+            const auto module_id = reader.pointer();
+            const auto last = reader.read<uint32_t>();
+            if (!module_id || !last)
+            {
+                return false;
+            }
+            if (reader.is_ndr64() && !reader.skip(4, 4))
+            {
+                return false;
+            }
+
+            return *module_id == 0 || read_module_id(reader);
+        }
+
+        std::optional<uint64_t> read_context_handle(ndr_request_reader& reader)
+        {
+            const auto handle = reader.take(context_handle_size, 4);
+            return handle.empty() ? std::nullopt : read_registration(handle, 0);
+        }
+
         class nsi_service_port final : public rpc_port
         {
           public:
@@ -78,7 +219,7 @@ namespace sogen
                 case deregister_change_notification:
                     return this->deregister_notification(request, writer);
                 case request_change_notification:
-                    return this->request_notification(request, writer.pointer_size());
+                    return this->request_notification(request, writer);
                 default:
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -103,10 +244,12 @@ namespace sogen
             }
 
           private:
-            // The request carries what to watch; a call without it is malformed.
+            // NsiRpcRegisterChangeNotification(Ex): the descriptor, then an 8-byte structure by value; the context handle is
+            // only an output.
             NTSTATUS register_notification(const std::span<const uint8_t> request, utils::aligned_binary_writer& writer)
             {
-                if (request.empty())
+                ndr_request_reader reader(request, writer.pointer_size());
+                if (!read_registration_descriptor(reader) || !reader.skip(8, 4) || !reader.at_end())
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -118,16 +261,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // The registration descriptor comes first and the [in, out] context handle last.
+            // NsiRpcDeregisterChangeNotification(Ex): the descriptor, then the [in, out] context handle.
             NTSTATUS deregister_notification(const std::span<const uint8_t> request, utils::aligned_binary_writer& writer)
             {
-                if (request.size() <= context_handle_size)
+                ndr_request_reader reader(request, writer.pointer_size());
+                if (!read_registration_descriptor(reader))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto registration = read_registration(request, request.size() - context_handle_size);
-                if (!registration || !this->registrations_.erase(*registration))
+                const auto registration = read_context_handle(reader);
+                if (!registration || !reader.at_end() || !this->registrations_.erase(*registration))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -143,12 +287,15 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // The context handle is the first parameter. The emulated network never changes, so a change request stays
-            // pending until its registration closes.
-            NTSTATUS request_notification(const std::span<const uint8_t> request, const size_t pointer_size)
+            // The context handle is the only input; the rest of the change request's parameters are outputs. The emulated
+            // network never changes, so a change request stays pending until its registration closes.
+            NTSTATUS request_notification(const std::span<const uint8_t> request, const utils::aligned_binary_writer& writer)
             {
-                const auto registration = read_registration(request, 0);
-                if (!registration || !this->registrations_.contains(*registration) || this->pending_requests_.contains(*registration))
+                const auto pointer_size = writer.pointer_size();
+                ndr_request_reader reader(request, pointer_size);
+                const auto registration = read_context_handle(reader);
+                if (!registration || !reader.at_end() || !this->registrations_.contains(*registration) ||
+                    this->pending_requests_.contains(*registration))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }

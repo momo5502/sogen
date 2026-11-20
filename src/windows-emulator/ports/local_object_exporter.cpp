@@ -304,15 +304,50 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            // An ncalrpc tower floor of the NSI service: the interface (protocol 0x0d, its UUID and major version, then the
+            // minor version), the NDR or NDR64 transfer syntax the same way, LRPC (0x0c) and the endpoint name (0x10).
+            static bool is_supported_floor(const uint16_t floor, const std::span<const uint8_t> lhs, const std::span<const uint8_t> rhs)
+            {
+                constexpr uint8_t uuid_protocol = 0x0d;
+                constexpr uint8_t lrpc_protocol = 0x0c;
+                constexpr uint8_t endpoint_protocol = 0x10;
+                constexpr std::array<uint8_t, 16> ndr_syntax{0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11,
+                                                             0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60};
+                constexpr std::array<uint8_t, 16> ndr64_syntax{0x33, 0x05, 0x71, 0x71, 0xba, 0xbe, 0x37, 0x49,
+                                                               0x83, 0x19, 0xb5, 0xdb, 0xef, 0x9c, 0xcc, 0x36};
+
+                const auto version = [](const std::span<const uint8_t> bytes) {
+                    uint16_t value{};
+                    std::memcpy(&value, bytes.data(), sizeof(value));
+                    return value;
+                };
+                const auto names_uuid = [&](const std::array<uint8_t, 16>& uuid, const uint16_t major) {
+                    return lhs.size() == 1 + uuid.size() + sizeof(uint16_t) && rhs.size() == sizeof(uint16_t) && lhs[0] == uuid_protocol &&
+                           std::ranges::equal(lhs.subspan(1, uuid.size()), uuid) && version(lhs.subspan(1 + uuid.size())) == major &&
+                           version(rhs) == 0;
+                };
+
+                switch (floor)
+                {
+                case 0:
+                    return names_uuid(nsi_service_interface, nsi_service_interface_major_version);
+                case 1:
+                    return names_uuid(ndr_syntax, 2) || names_uuid(ndr64_syntax, 1);
+                case 2:
+                    return lhs.size() == 1 && lhs[0] == lrpc_protocol && rhs.size() == sizeof(uint16_t);
+                case 3:
+                    return lhs.size() == 1 && lhs[0] == endpoint_protocol;
+                default:
+                    return false;
+                }
+            }
+
             // Answers the lookup tower of an interface an emulated service hosts: the same floors, with the endpoint floor
             // naming that service's LRPC endpoint. A tower is a floor count, then floors of a length-prefixed protocol id and
-            // a length-prefixed address; the first floor names the interface (protocol 0x0d, its UUID and major version).
+            // a length-prefixed address.
             static std::optional<std::vector<uint8_t>> hosted_service_tower(const std::span<const uint8_t> lookup)
             {
                 constexpr uint16_t floor_count = 4;
-                constexpr uint8_t uuid_protocol = 0x0d;
-                constexpr size_t interface_lhs_size = 1 + 16 + sizeof(uint16_t);
-                constexpr size_t interface_rhs_size = sizeof(uint16_t);
 
                 size_t offset = 0;
                 const auto read_u16 = [&](const size_t at) -> std::optional<uint16_t> {
@@ -347,8 +382,7 @@ namespace sogen
                         return std::nullopt;
                     }
 
-                    if (floor == 0 && (*lhs != interface_lhs_size || *rhs != interface_rhs_size || lhs_data[0] != uuid_protocol ||
-                                       !std::ranges::equal(lhs_data.subspan(1, nsi_service_interface.size()), nsi_service_interface)))
+                    if (!is_supported_floor(floor, lhs_data, lookup.subspan(rhs_at + sizeof(uint16_t), *rhs)))
                     {
                         return std::nullopt;
                     }
