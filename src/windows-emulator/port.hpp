@@ -267,6 +267,8 @@ namespace sogen
         std::optional<std::vector<uint8_t>> payload{};
         std::vector<alpc_reply_handle> handles{};
         std::vector<uint8_t> view_payload{};
+        // The request was accepted without a reply; the port delivers one later under this token.
+        std::optional<uint64_t> deferred_token{};
 
         lpc_request_result() = default;
 
@@ -296,6 +298,7 @@ namespace sogen
         std::vector<alpc_reply_handle> handles{};
         std::vector<uint8_t> view_payload{};
         uint64_t message_context{};
+        std::optional<uint64_t> deferred_token{};
 
         [[nodiscard]] ULONG total_length() const
         {
@@ -392,6 +395,9 @@ namespace sogen
         std::vector<uint64_t> security_context_handles{};
         uint64_t next_section_handle{0x10};
         std::map<uint64_t, alpc_port_section> sections{};
+        // The reply headers of requests accepted without a reply, by deferral token.
+        std::map<uint64_t, lpc_port_message> deferred_replies{};
+        std::vector<std::pair<uint64_t, std::vector<uint8_t>>> completed_deferred_payloads{};
 
         port() = default;
         ~port() override = default;
@@ -414,6 +420,7 @@ namespace sogen
             buffer.write_vector(this->security_context_handles);
             buffer.write(this->next_section_handle);
             buffer.write_map(this->sections);
+            buffer.write_map(this->deferred_replies);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -427,6 +434,7 @@ namespace sogen
             buffer.read_vector(this->security_context_handles);
             buffer.read(this->next_section_handle);
             buffer.read_map(this->sections);
+            buffer.read_map(this->deferred_replies);
         }
 
         virtual void create(windows_emulator& win_emu, const port_creation_data& data)
@@ -494,6 +502,12 @@ namespace sogen
             return false;
         }
 
+        // Replies to deferred requests that are ready for delivery, each carrying the token of the request it answers.
+        std::vector<lpc_message_result> take_completed_replies();
+
+        // A deferred request that ends without a reply, because its sender went away.
+        void forget_deferred_request(uint64_t token);
+
         virtual lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) = 0;
     };
 
@@ -531,11 +545,20 @@ namespace sogen
         }
 
       protected:
+        // Accepts the RPC call being handled without replying now; complete_deferred_call answers it later. Only a call
+        // sent without waiting for its reply can be deferred.
+        std::optional<uint64_t> defer_current_call();
+        void complete_deferred_call(uint64_t token, const std::vector<uint8_t>& ndr_reply);
+
         // MSVC 19.52 reads this member with an aligned vmovaps in protected_storage_port::handle_rpc, although its type only
         // guarantees byte alignment, so the load faulted. Aligning the member makes that load valid.
         alignas(16) std::array<uint8_t, 16> bound_interface_{};
 
       private:
+        uint32_t current_call_id_{};
+        bool current_call_deferrable_{};
+        bool current_call_deferred_{};
+
         struct rpc_binding
         {
             std::array<uint8_t, 16> interface_id{};
@@ -603,6 +626,7 @@ namespace sogen
             buffer.write(this->completion_key_);
             buffer.write(this->completion_port_);
             buffer.write(this->last_message_id_);
+            buffer.write_map(this->deferred_contexts_);
             this->port_->serialize(buffer);
         }
 
@@ -613,6 +637,7 @@ namespace sogen
             buffer.read(this->completion_key_);
             buffer.read(this->completion_port_);
             buffer.read(this->last_message_id_);
+            buffer.read_map(this->deferred_contexts_);
             this->setup();
             this->port_->deserialize(buffer);
         }
@@ -660,8 +685,11 @@ namespace sogen
         uint64_t completion_key_{};
         object_reference completion_port_{};
         ULONG last_message_id_{};
+        // The ALPC message context of each deferred request, which its eventual reply carries back.
+        std::map<uint64_t, uint64_t> deferred_contexts_{};
 
         void post_completion(windows_emulator& win_emu) const;
+        void deliver_completed_replies(windows_emulator& win_emu);
 
         void setup()
         {
