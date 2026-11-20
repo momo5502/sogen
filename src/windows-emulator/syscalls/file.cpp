@@ -1797,6 +1797,7 @@ namespace sogen
             template <typename Predicate>
             size_t cancel_change_watches(const syscall_context& c, file& directory, const Predicate& matches)
             {
+                std::vector<object_reference> completion_events{};
                 const auto cancelled = std::erase_if(directory.change_watches, [&](directory_change_watch& watch) {
                     if (!matches(watch))
                     {
@@ -1808,14 +1809,19 @@ namespace sogen
                         write_io_status_block(c, watch.io_status_block, STATUS_CANCELLED);
                     }
 
-                    auto event_reference = watch.event;
-                    if (auto* event = c.proc.get_object_as<sogen::event>(event_reference))
-                    {
-                        event->set_signaled(true);
-                    }
-                    io_completion_wait::release_reference(c.proc, event_reference);
+                    completion_events.push_back(watch.event);
                     return true;
                 });
+
+                // Signaling evaluates the released waiters right away, so it runs once the cancelled watches are gone.
+                for (auto& event_reference : completion_events)
+                {
+                    if (auto* event = c.proc.get_object_as<sogen::event>(event_reference))
+                    {
+                        c.win_emu.signal_event(*event);
+                    }
+                    io_completion_wait::release_reference(c.proc, event_reference);
+                }
 
                 if (cancelled != 0)
                 {
