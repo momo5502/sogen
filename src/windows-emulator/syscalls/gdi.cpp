@@ -6147,7 +6147,7 @@ namespace sogen
             c.emu.try_write_memory(command_ptr + 4, &ack_length, sizeof(ack_length));
             if (auto* entry = c.proc.events.get(completion))
             {
-                entry->set_signaled(true);
+                c.win_emu.signal_event(*entry);
             }
         }
 
@@ -6866,7 +6866,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            entry->set_signaled(true);
+            c.win_emu.signal_event(*entry);
             return STATUS_SUCCESS;
         }
 

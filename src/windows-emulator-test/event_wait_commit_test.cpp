@@ -8,6 +8,7 @@ namespace sogen::syscalls
     NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtPulseEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
+    NTSTATUS handle_NtResetEvent(const syscall_context& c, handle event_handle, emulator_object<LONG> previous_state);
 }
 
 namespace sogen::test
@@ -92,6 +93,28 @@ namespace sogen::test
 
             EXPECT_TRUE(this->waiting_thread().is_thread_ready(*this->emu));
             EXPECT_EQ(this->waiting_thread().pending_status, std::optional<NTSTATUS>{STATUS_WAIT_0});
+        }
+
+        // A wait-all waiter is only woken to check its objects again; the signal stays until then. Here the waiter also needs
+        // a manual-reset event that is signaled, and the reset still finds the event signaled.
+        TEST_P(EventWaitCommitTest, ResetAfterSetTakesTheSignalBackFromAWaitAllWaiter)
+        {
+            const auto signaled_handle = this->allocator->reserve<handle>();
+            ASSERT_EQ(STATUS_SUCCESS,
+                      syscalls::handle_NtCreateEvent(this->context(), signaled_handle, 0, {this->emu->memory}, NotificationEvent, TRUE));
+            auto& thread = this->waiting_thread();
+            thread.await_objects = {*this->emu->process.events.reference_of(this->event),
+                                    *this->emu->process.events.reference_of(signaled_handle.read())};
+            thread.await_any = false;
+            ASSERT_FALSE(thread.is_thread_ready(*this->emu));
+
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetEvent(this->context(), this->event.bits, {this->emu->memory}));
+            const auto previous_state = this->allocator->reserve<LONG>();
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtResetEvent(this->context(), this->event, previous_state));
+
+            EXPECT_EQ(1, previous_state.read());
+            EXPECT_FALSE(thread.is_thread_ready(*this->emu));
+            EXPECT_FALSE(thread.pending_status.has_value());
         }
 
         INSTANTIATE_TEST_SUITE_P(EventTypes, EventWaitCommitTest, testing::Values(SynchronizationEvent, NotificationEvent));
