@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -42,7 +44,7 @@ namespace
     bool g_connected = false;
     // The calling emulator's grants for the invocation in progress; the backend lock covers the whole invocation.
     uint32_t g_call_grants = 0;
-    bool g_app_id_explicit = false;
+    bool g_game_app_id_configured = false;
 
     void* g_client = nullptr;
     int32_t g_pipe = 0;
@@ -122,6 +124,16 @@ namespace
     }
 #endif
 
+    // The host session takes its app id from SteamAppId. A game's id is a positive number other than the Spacewar
+    // fallback (480).
+    bool is_game_app_id(const std::string_view value)
+    {
+        constexpr uint32_t spacewar_app_id = 480;
+        uint32_t id{};
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), id);
+        return error == std::errc{} && end == value.data() + value.size() && id != 0 && id != spacewar_app_id;
+    }
+
     bool connect_locked()
     {
         if (g_init_attempted)
@@ -132,7 +144,7 @@ namespace
 
         if (const char* app_id = std::getenv("SteamAppId"))
         {
-            g_app_id_explicit = true;
+            g_game_app_id_configured = is_game_app_id(app_id);
             std::fprintf(stderr, "[steam] host session bound to app %s\n", app_id);
         }
         else
@@ -194,10 +206,10 @@ namespace
 
 namespace sogen::steam_host
 {
-    // A ticket for the Spacewar fallback session would authenticate the wrong app, so it needs an explicit app id.
+    // A ticket for the Spacewar fallback session would authenticate the wrong app, so it needs a game's app id.
     bool app_tickets_granted()
     {
-        return (g_call_grants & sogen_steam_grant_app_tickets) != 0 && g_app_id_explicit;
+        return (g_call_grants & sogen_steam_grant_app_tickets) != 0 && g_game_app_id_configured;
     }
 
     // Dedupes by pointer, so repeated getters for the same object share one handle.

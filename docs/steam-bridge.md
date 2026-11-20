@@ -153,8 +153,8 @@ Encrypted app tickets (`ISteamUser::RequestEncryptedAppTicket`/`GetEncryptedAppT
 way unless the host passes `--steam-app-tickets`, which requires `--network live`. They authenticate the host
 account to the game's publisher, which DRM such as Denuvo needs to activate. The grant is host configuration,
 enforced in the host backend (`APP_TICKET_METHODS` in `generate.py`); the guest cannot enable it. The host
-session must also run under the game's explicit `SteamAppId`, so a ticket is never issued for the Spacewar
-fallback.
+backend also needs `SteamAppId` to be set to a game's numeric app id (not Spacewar's 480), which the host session
+is created under; it does not check that id against the game that runs.
 
 Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: with
 `--network live` the guest already has host network access through the emulated AFD socket device, so

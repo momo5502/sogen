@@ -202,7 +202,7 @@ namespace sogen::steam_host
         }
     }
 
-    // Whether the host granted encrypted app tickets and the host session is bound to the game's own app id.
+    // Whether the host granted encrypted app tickets and SteamAppId names a game rather than the Spacewar fallback.
     // Defined in the backend TU; must be called with the backend lock held (as the thunks are).
     bool app_tickets_granted();
 

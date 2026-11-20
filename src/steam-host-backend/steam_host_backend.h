@@ -48,8 +48,8 @@ extern "C"
     // Permissions the calling emulator grants its guest for one invocation; none by default.
     enum
     {
-        // Encrypted app tickets authenticate the host account to the game's publisher. The host session must also run
-        // under the game's explicit SteamAppId.
+        // Encrypted app tickets authenticate the host account to the game's publisher. SteamAppId must also name a game
+        // (a positive id other than Spacewar's 480).
         sogen_steam_grant_app_tickets = 1
     };
 

@@ -289,6 +289,12 @@ namespace
 
 namespace sogen::steam_host
 {
+    // The local provider has no host account to authenticate, so it never issues app tickets.
+    bool app_tickets_granted()
+    {
+        return false;
+    }
+
     uint64_t register_returned_interface(const char* version, void*)
     {
         return version ? open_interface(version) : 0;
