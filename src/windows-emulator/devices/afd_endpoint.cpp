@@ -1556,11 +1556,12 @@ namespace sogen
                 auto& emu = win_emu.emu();
 
                 // AFD captures the buffer descriptors when the request arrives; the caller's descriptor array (often on its
-                // stack) is gone by the time a pended receive completes.
+                // stack) is gone by the time a pended receive completes. The captured ones belong to the pended receive only.
                 std::vector<EMU_WSABUF<Traits>> buffers{};
                 if (this->executing_delayed_ioctl_ && this->pended_receive_buffers_)
                 {
-                    buffers = *this->pended_receive_buffers_;
+                    buffers = std::move(*this->pended_receive_buffers_);
+                    this->pended_receive_buffers_.reset();
                 }
                 else
                 {
@@ -1587,7 +1588,6 @@ namespace sogen
                         buffers.push_back(wsabuf);
                     }
                 }
-                this->pended_receive_buffers_.reset();
 
                 size_t transfer_size = 0;
                 for (const auto& wsabuf : buffers)
