@@ -618,14 +618,7 @@ namespace sogen::test
 
         constexpr std::string_view data = "SOGEN-RECEIVE";
         ASSERT_EQ(static_cast<sent_size>(data.size()), accepted->send(std::as_bytes(std::span{data})));
-
-        // Over host sockets the data reaches the endpoint asynchronously; the pended receive completes once it is there.
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (this->status_block().read().Information == 0 && std::chrono::steady_clock::now() < deadline)
-        {
-            this->emu->process.devices.get(this->endpoint)->work(*this->emu);
-            std::this_thread::yield();
-        }
+        this->emu->process.devices.get(this->endpoint)->work(*this->emu);
 
         std::array<char, data.size()> first{};
         this->emu->memory.read_memory(this->storage + first_buffer_offset, first.data(), first.size());
