@@ -560,7 +560,7 @@ namespace sogen
             // The end of the file limits only the rounded part, so raw data that goes past the end of the file fails the read.
             const auto aligned_end = std::max(raw_end, std::min(align_up(raw_end, file_alignment), file_size));
             const auto end = std::min({aligned_end, start + section_size, start + page_align_up(section.SizeOfRawData)});
-            return {static_cast<size_t>(start), static_cast<size_t>(end - start)};
+            return {.offset = static_cast<size_t>(start), .size = static_cast<size_t>(end - start)};
         }
 
         template <typename T>
@@ -604,7 +604,7 @@ namespace sogen
                 if (section.SizeOfRawData > 0)
                 {
                     const auto range = mapped_as_one_region
-                                           ? section_file_range{section.PointerToRawData, size_of_data}
+                                           ? section_file_range{.offset = section.PointerToRawData, .size = size_of_data}
                                            : get_section_file_range(section, size_of_section, nt_headers.OptionalHeader.FileAlignment,
                                                                     buffer.get_buffer().size());
                     const auto* source_ptr = buffer.get_pointer_for_range(range.offset, range.size);
