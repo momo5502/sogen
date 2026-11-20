@@ -2945,7 +2945,7 @@ namespace sogen
                 continue;
             }
 
-            if (!entry->set_signaled(true))
+            if (!this->signal_event(*entry))
             {
                 if (--it->second == 0)
                 {
@@ -3001,6 +3001,30 @@ namespace sogen
                 vcpu.cpu.stop();
             }
         }
+    }
+
+    bool windows_emulator::signal_event(event& e)
+    {
+        const auto was_signaled = e.set_signaled(true);
+        for (auto& thread : this->process.threads | std::views::values)
+        {
+            // KeSetEvent ends wait-any waits (single-object waits included) right away. A wait-all waiter is only woken to
+            // check all its objects again when it runs, and the signal stays for that check.
+            if (!thread.await_any)
+            {
+                continue;
+            }
+
+            const auto waits_on_event = std::ranges::any_of(
+                thread.await_objects, [&](const object_reference& awaited) { return this->process.get_object(awaited) == &e; });
+            if (waits_on_event)
+            {
+                (void)thread.is_thread_ready(*this);
+            }
+        }
+
+        this->wake_idle_vcpu();
+        return was_signaled;
     }
 
     void windows_emulator::wake_idle_vcpu()
