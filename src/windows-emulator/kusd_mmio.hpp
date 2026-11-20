@@ -5,13 +5,17 @@
 
 #include "arch_emulator.hpp"
 
+#include <atomic>
+#include <condition_variable>
 #include <mutex>
+#include <utils/nt_handle.hpp>
 #include <utils/time.hpp>
 
 namespace sogen
 {
 
     struct process_context;
+    struct emulator_settings;
     struct fake_environment_config;
     class windows_emulator;
     class windows_version_manager;
@@ -80,7 +84,18 @@ namespace sogen
         // QueryPerformanceCounter for a guest TSC value, as ntdll computes it from the reference TSC page.
         uint64_t query_performance_counter(uint64_t tsc) const;
 
-        void refresh();
+        // Rewrites the page's time fields as KiUpdateTime does at every clock interrupt: once clock_interval (100 ns units)
+        // has passed since the last rewrite or the clock went back, and right away without an interval. The vCPUs call it
+        // under the kernel lock and the interrupt thread without it, while the vCPUs run; the second of two calls that
+        // found the page due finds it no longer due under the KUSD's mutex. Readers retry a read that a rewrite straddled
+        // (TimeUpdateLock, High1Time and High2Time).
+        void refresh(ULONG clock_interval = 0);
+
+        // Whether every guest read is trapped; refresh() leaves a trapped page alone.
+        bool traps_reads() const
+        {
+            return this->intercept_;
+        }
 
       private:
         memory_manager* memory_{};
@@ -88,6 +103,7 @@ namespace sogen
 
         bool registered_{};
         bool intercept_{};
+        std::atomic<utils::clock::steady_time_point> last_refresh_{};
 
         std::function<std::optional<native_tsc>()> read_tsc_{};
 
@@ -106,6 +122,7 @@ namespace sogen
         KUSER_SHARED_DATA64 kusd_{};
 
         void read(uint64_t addr, void* data, size_t size);
+        bool refresh_due(ULONG clock_interval) const;
         void write_page();
 
         void update();
@@ -114,6 +131,41 @@ namespace sogen
         void deregister_mmio();
         void map_reference_tsc_page();
         native_tsc read_native_tsc() const;
+    };
+
+    // Whether every guest read of the KUSD traps. An unset KUSD setting keeps the page plain only where the interrupt thread
+    // keeps its time (kusd_clock). Elsewhere every read is trapped, so it reads the current time.
+    bool intercepts_kusd(const emulator_settings& settings, bool instruction_precision, guest_machine& emu);
+
+    // The interrupt thread's wait for its next preemption, which stop() ends early. Where the thread keeps a plain KUSD's
+    // time, the wait rewrites the page at every clock interval on the way, as KeClockInterruptNotify has KiUpdateTime do
+    // whatever the CPUs run. It takes no kernel lock for that: the KUSD's mutex keeps its rewrites apart from the vCPUs',
+    // which would otherwise queue behind each of them.
+    class kusd_clock
+    {
+      public:
+        kusd_clock(kusd_mmio& kusd, bool instruction_precision, bool relative_time, guest_machine& emu);
+
+        // Returns at until, or once stop() was called; until then it rewrites a plain KUSD whose time it keeps every
+        // clock_interval (100 ns units).
+        void wait_until(std::chrono::steady_clock::time_point until, ULONG clock_interval);
+
+        // Ends the current wait and every later one.
+        void stop();
+
+      private:
+        kusd_mmio* kusd_{};
+        bool keeps_time_{};
+
+        std::atomic_bool stopped_{false};
+        std::mutex mutex_{};
+        std::condition_variable condition_{};
+#ifdef OS_WINDOWS
+        utils::nt::handle<> timer_{};
+        utils::nt::handle<> stop_event_{};
+#endif
+
+        void sleep_until(std::chrono::steady_clock::time_point wake);
     };
 
 } // namespace sogen

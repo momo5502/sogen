@@ -122,11 +122,14 @@ namespace sogen
         // and KUSER_SHARED_DATA accesses trap through the emulated clock for exact/reproducible timing. Turning
         // them off (as the sandbox does) lets the guest read the host counter natively and KUSD from a plain
         // mapped page, removing those VM exits. The cost is exact/reproducible timing; with KUSD interception
-        // off, its time fields only advance in steps of the interrupt thread's 20 ms period.
+        // off, the vCPUs rewrite its time fields once a clock interval has passed when they schedule a thread and
+        // at their system calls, and the interrupt thread at every clock interval in between where the backend
+        // lets it write guest memory while the vCPUs run, as Windows does at every clock interrupt.
         // An unset counter-interception setting follows the backend's capability; explicitly enabling
-        // unsupported interception fails.
+        // unsupported interception fails. An unset KUSD setting keeps the page plain only where the interrupt
+        // thread rewrites it so, and traps every read elsewhere.
         std::optional<bool> intercept_rdtsc{};
-        bool intercept_kusd{true};
+        std::optional<bool> intercept_kusd{true};
 
         // Whether snapshots keep the guest's time: its steady time (interrupt time, tick count, waits and timers) and
         // timestamp counter stand still while the process is saved, written or loaded, and continue from the save. A
@@ -858,7 +861,6 @@ namespace sogen
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
-        bool intercept_kusd_{true};
         bool keep_guest_time_across_snapshots_{false};
         bool spoof_gpu_features_{false};
         bool steam_app_tickets_{false};

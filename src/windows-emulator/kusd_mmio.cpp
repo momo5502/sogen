@@ -117,6 +117,16 @@ namespace sogen
             kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
             kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
         }
+
+        // Whether the interrupt thread rewrites a plain KUSD at every clock interval, as KiUpdateTime does: the thread runs where
+        // the vCPUs can be stopped from another thread without instruction precision, and may write guest memory while they run
+        // where the backend allows it. A relative clock counts the instructions the vCPUs execute, which the thread can't read
+        // while they run.
+        bool interrupt_thread_keeps_kusd_time(const bool instruction_precision, const bool relative_time, guest_machine& emu)
+        {
+            return !instruction_precision && !relative_time && emu.get_guest_cpu(0).is_stop_thread_safe() &&
+                   emu.supports_concurrent_memory_writes();
+        }
     }
 
     void apply_arm64_processor(KUSER_SHARED_DATA64& kusd, const uint64_t isar0, const uint64_t isar1)
@@ -246,14 +256,33 @@ namespace sogen
         return reference_time(tsc, this->reference_tsc_scale_) + static_cast<uint64_t>(this->reference_tsc_offset_) + bias;
     }
 
-    void kusd_mmio::refresh()
+    bool kusd_mmio::refresh_due(const ULONG clock_interval) const
     {
         if (this->intercept_ || !this->registered_)
+        {
+            return false;
+        }
+
+        const auto now = this->clock_->steady_now();
+        const auto last = this->last_refresh_.load(std::memory_order_relaxed);
+        const std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>> interval{clock_interval};
+        return now < last || now - last >= interval;
+    }
+
+    void kusd_mmio::refresh(const ULONG clock_interval)
+    {
+        if (!this->refresh_due(clock_interval))
         {
             return;
         }
 
         const std::scoped_lock lock(this->mutex_);
+        if (!this->refresh_due(clock_interval))
+        {
+            return;
+        }
+
+        this->last_refresh_.store(this->clock_->steady_now(), std::memory_order_relaxed);
         this->update();
         this->write_page();
     }
@@ -268,11 +297,25 @@ namespace sogen
             this->memory_->write_memory(KUSD_ADDRESS + offset + offsetof(KSYSTEM_TIME, High2Time), &high2_time, sizeof(high2_time));
         };
 
+        // KiUpdateTime makes TimeUpdateLock odd before it rewrites the time and even again after, so a reader that started
+        // before a rewrite, such as RtlGetSystemTimePrecise around its NtQueryPerformanceCounter call, sees it change and reads
+        // the time again. The page copy carries the odd value.
+        const auto write_time_update_lock = [this] {
+            const ULONGLONG lock = this->kusd_.TimeUpdateLock;
+            this->memory_->write_memory(KUSD_ADDRESS + offsetof(KUSER_SHARED_DATA64, TimeUpdateLock), &lock, sizeof(lock));
+        };
+
+        ++this->kusd_.TimeUpdateLock;
+        write_time_update_lock();
+
         write_high2_time(offsetof(KUSER_SHARED_DATA64, InterruptTime), this->kusd_.InterruptTime);
         write_high2_time(offsetof(KUSER_SHARED_DATA64, SystemTime), this->kusd_.SystemTime);
         write_high2_time(offsetof(KUSER_SHARED_DATA64, TickCount), this->kusd_.TickCount.TickCount);
 
         this->memory_->write_memory(KUSD_ADDRESS, &this->kusd_, KUSD_SIZE);
+
+        ++this->kusd_.TimeUpdateLock;
+        write_time_update_lock();
     }
 
     void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
@@ -455,6 +498,86 @@ namespace sogen
                                              .tsc_scale = this->reference_tsc_scale_,
                                              .tsc_offset = this->reference_tsc_offset_};
         this->memory_->write_memory(REFERENCE_TSC_PAGE_ADDRESS, &page, sizeof(page));
+    }
+
+    bool intercepts_kusd(const emulator_settings& settings, const bool instruction_precision, guest_machine& emu)
+    {
+        return settings.intercept_kusd.value_or(!interrupt_thread_keeps_kusd_time(instruction_precision, settings.use_relative_time, emu));
+    }
+
+#if defined(OS_WINDOWS) && !defined(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)
+    // synchapi.h defines it only when targeting Windows 10 1803 or later.
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+    kusd_clock::kusd_clock(kusd_mmio& kusd, const bool instruction_precision, const bool relative_time, guest_machine& emu)
+        : kusd_(&kusd),
+          keeps_time_(!kusd.traps_reads() && interrupt_thread_keeps_kusd_time(instruction_precision, relative_time, emu))
+    {
+#ifdef OS_WINDOWS
+        this->timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        this->stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+#endif
+    }
+
+    void kusd_clock::wait_until(const std::chrono::steady_clock::time_point until, const ULONG clock_interval)
+    {
+        const std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>> interval{clock_interval};
+        while (true)
+        {
+            const auto wake = this->keeps_time_ ? (std::min)(until, std::chrono::steady_clock::now() + interval) : until;
+            this->sleep_until(wake);
+
+            if (this->stopped_ || !this->keeps_time_ || std::chrono::steady_clock::now() >= until)
+            {
+                return;
+            }
+
+            this->kusd_->refresh(clock_interval);
+        }
+    }
+
+    void kusd_clock::stop()
+    {
+        {
+            const std::scoped_lock lock{this->mutex_};
+            this->stopped_ = true;
+        }
+
+        this->condition_.notify_all();
+#ifdef OS_WINDOWS
+        if (this->stop_event_)
+        {
+            SetEvent(this->stop_event_);
+        }
+#endif
+    }
+
+    // Windows ends a timed condition-variable wait only at the process' timer resolution, 15.6 ms unless something in the
+    // process asked for a finer one, which would leave a plain KUSD's time that long behind; a high-resolution waitable timer
+    // ends on time. Elsewhere, and where Windows can't make one (before Windows 10 1803), the condition variable waits.
+    void kusd_clock::sleep_until(const std::chrono::steady_clock::time_point wake)
+    {
+#ifdef OS_WINDOWS
+        if (this->timer_ && this->stop_event_)
+        {
+            // A negative due time is relative, in 100 ns units.
+            using hundred_nanoseconds = std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>>;
+            const auto remaining = std::chrono::duration_cast<hundred_nanoseconds>(wake - std::chrono::steady_clock::now());
+            LARGE_INTEGER due{};
+            due.QuadPart = -std::max<int64_t>(remaining.count(), 1);
+            if (SetWaitableTimer(this->timer_, &due, 0, nullptr, nullptr, FALSE))
+            {
+                const std::array<HANDLE, 2> handles{this->timer_, this->stop_event_};
+                WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), FALSE, INFINITE);
+                return;
+            }
+        }
+#endif
+        std::unique_lock lock{this->mutex_};
+        this->condition_.wait_until(lock, wake, [this] {
+            return this->stopped_.load(); //
+        });
     }
 
 } // namespace sogen
