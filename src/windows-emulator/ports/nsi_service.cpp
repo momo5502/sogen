@@ -135,15 +135,23 @@ namespace sogen
         };
 
         // NPI_MODULEID: Length, Type, then a union switched on Type whose discriminant is marshalled again: a GUID (1) or an
-        // interface LUID (2).
+        // interface LUID (2). Type and the discriminant are enum16, two bytes in classic NDR and four in NDR64.
         bool read_module_id(ndr_request_reader& reader)
         {
             constexpr uint32_t module_id_guid = 1;
             constexpr uint32_t module_id_luid = 2;
 
+            const auto read_enum = [&]() -> std::optional<uint32_t> {
+                if (reader.is_ndr64())
+                {
+                    return reader.read<uint32_t>();
+                }
+                return reader.read<uint16_t>();
+            };
+
             const auto length = reader.read<uint16_t>();
-            const auto type = reader.read<uint32_t>();
-            const auto discriminant = reader.read<uint32_t>();
+            const auto type = read_enum();
+            const auto discriminant = read_enum();
             if (!length || !type || !discriminant || *discriminant != *type)
             {
                 return false;

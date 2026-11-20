@@ -34,8 +34,17 @@ namespace sogen::test
                 writer.write<uint32_t>(1);
                 writer.align_to(this->pointer_size == 8 ? 8 : 4);
                 writer.write<uint16_t>(0x18);
-                writer.write<uint32_t>(1);
-                writer.write<uint32_t>(discriminant);
+                // Type and the union discriminant are enum16: two bytes in classic NDR, four in NDR64.
+                if (this->pointer_size == 8)
+                {
+                    writer.write<uint32_t>(1);
+                    writer.write<uint32_t>(discriminant);
+                }
+                else
+                {
+                    writer.write<uint16_t>(1);
+                    writer.write<uint16_t>(static_cast<uint16_t>(discriminant));
+                }
                 const std::array<uint8_t, 16> guid{0xeb, 0x00, 0x4a, 0xf2, 0x51, 0x86, 0xd1, 0x11,
                                                    0x99, 0x89, 0x00, 0xa0, 0xc9, 0x0c, 0x0c, 0xd2};
                 writer.write(guid.data(), guid.size(), 4);
@@ -102,6 +111,19 @@ namespace sogen::test
             const auto context = this->register_notification();
             EXPECT_EQ(STATUS_SUCCESS, this->deregister(context).status) << width;
         }
+    }
+
+    // A 32-bit winnsi sends the 12-byte descriptor, Length at 12, Type at 14, the discriminant at 16 and the GUID at 20, then
+    // the by-value structure: 44 bytes.
+    TEST_F(NsiServiceTest, ClassicRegistrationHasWinnsisLayout)
+    {
+        this->bind_service(4);
+        const auto request = this->registration_request();
+        ASSERT_EQ(44u, request.size());
+        EXPECT_EQ(1u, read<uint16_t>(request, 14));
+        EXPECT_EQ(1u, read<uint16_t>(request, 16));
+        EXPECT_EQ(0xf24a00ebu, read<uint32_t>(request, 20));
+        EXPECT_EQ(STATUS_SUCCESS, this->call(register_change_notification, request).status);
     }
 
     TEST_F(NsiServiceTest, MalformedRegistrationsAreRejected)
