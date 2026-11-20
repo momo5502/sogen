@@ -567,6 +567,23 @@ namespace sogen
             return true;
         }
 
+        // Callers usually receive the reply into the attributes they sent the request with. A reply without a view must
+        // not keep reporting the request's view, or rpcrt4 reads it as a malformed small response.
+        void clear_reply_view_attribute(const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
+        {
+            if (!attributes)
+            {
+                return;
+            }
+
+            auto header = attributes.read();
+            if ((header.ValidAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE) != 0)
+            {
+                header.ValidAttributes &= ~ALPC_MESSAGE_VIEW_ATTRIBUTE;
+                attributes.write(header);
+            }
+        }
+
         // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver via
         // an ALPC HANDLE message attribute. We only emit a single attribute (the common case for NDR system
         // handles).
@@ -775,6 +792,10 @@ namespace sogen
                     }
 
                     c.proc.pending_alpc_reply_views[port_key].push_back({view_base, view_size});
+                }
+                else
+                {
+                    clear_reply_view_attribute(receive_message_attributes);
                 }
 
                 result.message.write(receive_message);
