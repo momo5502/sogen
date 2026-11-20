@@ -102,7 +102,11 @@ namespace sogen
             // Takes the parts of new_wow64_context that its ContextFlags select, as SetThreadContext does.
             void merge_wow64_context(WOW64_CONTEXT& merged_context, const WOW64_CONTEXT& new_wow64_context)
             {
-                merged_context.ContextFlags = new_wow64_context.ContextFlags;
+                // A partial write updates only the parts it names; the saved context stays complete. It must never claim
+                // CONTEXT_XSTATE either: no CONTEXT_EX/XSAVE area follows it, so wow64's RtlCopyContext from it would fail
+                // with STATUS_BUFFER_OVERFLOW and drop every guest NtRaiseException.
+                merged_context.ContextFlags =
+                    (merged_context.ContextFlags | new_wow64_context.ContextFlags) & ~(CONTEXT_XSTATE_32 & ~CONTEXT_X86_MAIN);
 
                 // PspWow64SetContextThread sets them through PspSetContextThreadInternal, as a 64-bit context's
                 // (cpu_context::restore); a 32-bit breakpoint address is always a user one.
