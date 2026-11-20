@@ -417,7 +417,8 @@ namespace sogen
                                 t.teb32->access([&](TEB32& teb32) {
                                     if (teb32.TlsExpansionSlots)
                                     {
-                                        c.emu.write_memory<uint32_t>(teb32.TlsExpansionSlots + (4 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
+                                        c.emu.write_memory<uint32_t>(
+                                            teb32.TlsExpansionSlots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint32_t), 0);
                                     }
                                 });
                             }
@@ -427,7 +428,8 @@ namespace sogen
                             t.teb64->access([&](TEB64& teb64) {
                                 if (teb64.TlsExpansionSlots)
                                 {
-                                    c.emu.write_memory<uint64_t>(teb64.TlsExpansionSlots + (8 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
+                                    c.emu.write_memory<uint64_t>(
+                                        teb64.TlsExpansionSlots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint64_t), 0);
                                 }
                             });
                         }
