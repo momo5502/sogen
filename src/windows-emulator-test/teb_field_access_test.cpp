@@ -97,6 +97,15 @@ namespace sogen::test
 
                 const auto storage = this->emu->memory.allocate_memory(0x40000, memory_permission::read_write);
                 this->allocator.emplace(this->emu->memory, storage, 0x40000);
+
+                // The process list names the process after its image.
+                this->executable.name = "test.exe";
+                this->emu->mod_manager.executable = &this->executable;
+            }
+
+            void TearDown() override
+            {
+                this->emu->mod_manager.executable = nullptr;
             }
 
             syscall_context context()
@@ -112,6 +121,7 @@ namespace sogen::test
 
             std::unique_ptr<windows_emulator> emu{};
             std::optional<emulator_allocator> allocator{};
+            mapped_module executable{};
             handle querier{};
             handle peer{};
         };
