@@ -82,8 +82,7 @@ namespace sogen::test
                 context.receive_message.set_address(this->storage + receive_offset);
                 context.receive_buffer_length = receive_length;
             }
-            context.reply_can_be_deferred = !wait_for_reply && has_completion_port;
-            return this->endpoint->handle_message(*this->emu, context);
+            return this->endpoint->handle_message(*this->emu, context, !wait_for_reply && has_completion_port);
         }
 
         template <typename T>

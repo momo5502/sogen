@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include "rpc_test_utils.hpp"
+#include <io_completion_wait.hpp>
 
 namespace sogen::test
 {
@@ -163,5 +164,122 @@ namespace sogen::test
         const auto replies = this->endpoint->take_completed_replies();
         ASSERT_EQ(1u, replies.size());
         EXPECT_EQ(token, replies[0].deferred_token);
+    }
+
+    namespace
+    {
+        constexpr uint64_t completion_key = 0x1234;
+
+        // The deferring service behind a port container, which delivers deferred replies through its completion port.
+        class DeferredRpcContainerTest : public RpcProtocolTest
+        {
+          protected:
+            void SetUp() override
+            {
+                RpcProtocolTest::SetUp();
+                this->port_handle = this->emu->process.ports.store(port_container{u"DeferringService", std::make_unique<deferring_port>()});
+                this->completion = this->emu->process.io_completions.store(io_completion{});
+
+                std::array<uint8_t, 72> bind{};
+                bind[0] = 1;
+                std::memcpy(bind.data() + 12, test_interface.data(), test_interface.size());
+                bind[32] = 3;
+                ASSERT_EQ(STATUS_SUCCESS, this->send(bind, 0, true).status);
+            }
+
+            port_container& container()
+            {
+                return *this->emu->process.ports.get(this->port_handle);
+            }
+
+            deferring_port& service()
+            {
+                return *this->container().get_internal_port<deferring_port>();
+            }
+
+            NTSTATUS associate()
+            {
+                return this->container().associate_completion_port(*this->emu, this->emu->vcpu(0).active_thread, completion_key,
+                                                                   this->completion);
+            }
+
+            lpc_message_result send(const std::span<const uint8_t> body, const uint64_t message_context, const bool wait_for_reply)
+            {
+                PORT_MESSAGE64 header{};
+                header.u1.s1.DataLength = static_cast<CSHORT>(body.size());
+                header.u1.s1.TotalLength = static_cast<CSHORT>(sizeof(header) + body.size());
+                header.u2.s2.Type = LPC_REQUEST;
+                this->emu->memory.write_memory(this->storage, &header, sizeof(header));
+                this->emu->memory.write_memory(this->storage + sizeof(header), body.data(), body.size());
+
+                lpc_message_context context{this->emu->memory};
+                context.send_message = {this->emu->memory, this->storage};
+                context.send_message_context = message_context;
+                if (wait_for_reply)
+                {
+                    context.receive_message = {this->emu->memory, this->storage + 0x4000};
+                    context.receive_buffer_length = 0x1000;
+                }
+                return this->container().handle_message(*this->emu, context);
+            }
+
+            lpc_message_result call(const uint32_t procedure, const uint64_t message_context, const bool wait_for_reply)
+            {
+                std::array<uint8_t, 64> body{};
+                const auto call_id = ++this->last_call_id;
+                std::memcpy(body.data() + 12, &call_id, sizeof(call_id));
+                std::memcpy(body.data() + 20, &procedure, sizeof(procedure));
+                return this->send(body, message_context, wait_for_reply);
+            }
+
+            lpc_message_result receive()
+            {
+                lpc_message_context context{this->emu->memory};
+                context.receive_message = {this->emu->memory, this->storage + 0x4000};
+                context.receive_buffer_length = 0x1000;
+                return this->container().handle_message(*this->emu, context);
+            }
+
+            bool dequeue()
+            {
+                io_completion_message message{};
+                return io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message) &&
+                       message.key_context == completion_key;
+            }
+
+            handle port_handle{};
+            handle completion{};
+        };
+    }
+
+    TEST_F(DeferredRpcContainerTest, EachDeferredCallGetsOneCompletionAndItsReply)
+    {
+        // Sent without a completion port, the call is not taken on; once the port is associated the same call is.
+        (void)this->call(defer_procedure, 0x10, false);
+        EXPECT_TRUE(this->service().pending.empty());
+        EXPECT_FALSE(this->container().has_pending_reply());
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->call(defer_procedure, 0x11, false).status);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(defer_procedure, 0x22, false).status);
+        EXPECT_EQ(2u, this->service().pending.size());
+        EXPECT_FALSE(this->dequeue());
+        EXPECT_FALSE(this->container().has_pending_reply());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->call(complete_procedure, 0x33, true).status);
+
+        std::set<uint64_t> contexts{};
+        for (int i = 0; i < 2; ++i)
+        {
+            ASSERT_TRUE(this->dequeue());
+            const auto reply = this->receive();
+            ASSERT_EQ(STATUS_SUCCESS, reply.status);
+            ASSERT_GT(reply.payload.size(), rpc_response_header_size);
+            EXPECT_EQ(completion_marker, reply.payload[rpc_response_header_size]);
+            contexts.insert(reply.message_context);
+        }
+        EXPECT_EQ((std::set<uint64_t>{0x11, 0x22}), contexts);
+        EXPECT_FALSE(this->dequeue());
+        EXPECT_FALSE(this->container().has_pending_reply());
     }
 }

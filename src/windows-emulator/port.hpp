@@ -163,8 +163,6 @@ namespace sogen
         uint64_t send_view_base{};
         uint64_t send_view_size{};
         uint64_t send_message_context{};
-        // The sender does not wait and a completion port will deliver a later reply.
-        bool reply_can_be_deferred{};
 
         lpc_message_context(memory_interface& emu)
             : send_message(emu),
@@ -186,7 +184,6 @@ namespace sogen
             buffer.write(send_view_base);
             buffer.write(send_view_size);
             buffer.write(send_message_context);
-            buffer.write(reply_can_be_deferred);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -198,7 +195,6 @@ namespace sogen
             buffer.read(send_view_base);
             buffer.read(send_view_size);
             buffer.read(send_message_context);
-            buffer.read(reply_can_be_deferred);
         }
     };
 
@@ -508,6 +504,8 @@ namespace sogen
         void release_sections(windows_emulator& win_emu);
 
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);
+        // reply_can_be_deferred: the sender does not wait and a completion port will deliver a later reply.
+        lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c, bool reply_can_be_deferred);
 
         virtual bool accepts_send_only_messages() const
         {
@@ -610,6 +608,13 @@ namespace sogen
         {
             this->setup();
             this->port_->create(win_emu, data);
+        }
+
+        // Serves a port that is already made. A restore recreates the port from its name.
+        port_container(std::u16string name, std::unique_ptr<port> port)
+            : port_name_(std::move(name)),
+              port_(std::move(port))
+        {
         }
 
         lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override

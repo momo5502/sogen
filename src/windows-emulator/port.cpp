@@ -486,9 +486,7 @@ namespace sogen
         }
 
         // The service only defers a reply that the completion port can deliver later.
-        auto message = c;
-        message.reply_can_be_deferred = !c.receive_message && static_cast<bool>(this->completion_port_);
-        auto result = this->port_->handle_message(win_emu, message);
+        auto result = this->port_->handle_message(win_emu, c, !c.receive_message && static_cast<bool>(this->completion_port_));
         const auto deliver_completed = [&] { this->deliver_completed_replies(win_emu); };
 
         if (result.deferred_token)
@@ -555,6 +553,11 @@ namespace sogen
 
     lpc_message_result port::handle_message(windows_emulator& win_emu, const lpc_message_context& c)
     {
+        return this->handle_message(win_emu, c, false);
+    }
+
+    lpc_message_result port::handle_message(windows_emulator& win_emu, const lpc_message_context& c, const bool reply_can_be_deferred)
+    {
         if (!c.send_message)
         {
             return {.status = STATUS_INVALID_PARAMETER};
@@ -594,7 +597,7 @@ namespace sogen
         context.send_handle = c.send_handle;
         context.send_view_base = c.send_view_base;
         context.send_view_size = c.send_view_size;
-        context.reply_can_be_deferred = c.reply_can_be_deferred;
+        context.reply_can_be_deferred = reply_can_be_deferred;
 
         auto request_result = this->handle_request(win_emu, context);
         if (request_result.deferred_token)
