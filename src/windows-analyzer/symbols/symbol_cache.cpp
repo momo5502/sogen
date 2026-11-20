@@ -1,7 +1,6 @@
 #include "symbol_cache.hpp"
 #include "pdb_file.hpp"
 
-#include <logger.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <platform/platform.hpp>
@@ -348,7 +347,7 @@ namespace sogen
             }
         }
 
-        void prune(const logger& log, const std::optional<std::filesystem::path>& explicit_cache)
+        void prune(const symbol_event_callback& on_event, const std::optional<std::filesystem::path>& explicit_cache)
         {
             if (explicit_cache)
             {
@@ -407,7 +406,12 @@ namespace sogen
 
             if (ec)
             {
-                log.warn("PDB cache cleanup encountered an error: %s\n", ec.message().c_str());
+                on_event(cache_maintenance_event{
+                    .status = cache_status::cleanup_failed,
+                    .module = {},
+                    .path = {},
+                    .error = ec.message(),
+                });
             }
         }
     }
@@ -510,8 +514,8 @@ namespace sogen
     }
 
     std::optional<std::filesystem::path> symbol_cache::find(const pdb_signature& sig,
-                                                            const std::optional<std::filesystem::path>& explicit_cache, const logger& log,
-                                                            const std::string_view module_name)
+                                                            const std::optional<std::filesystem::path>& explicit_cache,
+                                                            const symbol_event_callback& on_event, const std::string_view module_name)
     {
         for (const auto& root : existing_roots(explicit_cache))
         {
@@ -529,16 +533,19 @@ namespace sogen
             if (validation.status == pdb_validation_status::invalid_artifact ||
                 validation.status == pdb_validation_status::validation_error)
             {
-                log.warn("Failed to validate cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                         path.string().c_str(), validation.error.c_str());
+                on_event(cache_validation_event{
+                    .module = std::string{module_name},
+                    .path = path,
+                    .error = validation.error,
+                });
             }
         }
 
         return std::nullopt;
     }
 
-    symbol_cache::target_result symbol_cache::prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
-                                                             const std::string_view module_name)
+    symbol_cache::target_result symbol_cache::prepare_target(const std::filesystem::path& root, const pdb_signature& sig,
+                                                             const symbol_event_callback& on_event, const std::string_view module_name)
     {
         const auto target = store_path(root, sig);
         if (!utils::io::file_exists(target))
@@ -553,22 +560,33 @@ namespace sogen
         }
         if (validation.status == pdb_validation_status::invalid_artifact || validation.status == pdb_validation_status::validation_error)
         {
-            log.warn("Failed to validate cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                     target.string().c_str(), validation.error.c_str());
+            on_event(cache_validation_event{
+                .module = std::string{module_name},
+                .path = target,
+                .error = validation.error,
+            });
             if (validation.status == pdb_validation_status::validation_error)
             {
                 return {.path = target, .status = target_status::unavailable};
             }
         }
 
-        log.warn("Removing unusable cached PDB for %.*s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                 target.string().c_str());
+        on_event(cache_maintenance_event{
+            .status = cache_status::removing,
+            .module = std::string{module_name},
+            .path = target,
+            .error = {},
+        });
         std::error_code ec{};
         std::filesystem::remove(target, ec);
         if (ec)
         {
-            log.warn("Failed to remove unusable cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                     target.string().c_str(), ec.message().c_str());
+            on_event(cache_maintenance_event{
+                .status = cache_status::removal_failed,
+                .module = std::string{module_name},
+                .path = target,
+                .error = ec.message(),
+            });
             return {.path = target, .status = target_status::unavailable};
         }
 
@@ -651,13 +669,13 @@ namespace sogen
         std::filesystem::remove(slot.path, ec);
     }
 
-    void symbol_cache::initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache)
+    void symbol_cache::initialize(const symbol_event_callback& on_event, const std::optional<std::filesystem::path>& explicit_cache)
     {
         if (!explicit_cache)
         {
             ensure_default_marker();
         }
-        prune(log, explicit_cache);
+        prune(on_event, explicit_cache);
     }
 
 } // namespace sogen::symbol_cache

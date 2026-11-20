@@ -30,17 +30,20 @@ namespace sogen
         }
     }
 
-    symbol_loader::symbol_loader(windows_emulator& win_emu, symbol_options options)
+    symbol_loader::symbol_loader(windows_emulator& win_emu, symbol_options options, symbol_event_callback callback)
         : win_emu_(&win_emu),
-          options_(std::move(options))
+          options_(std::move(options)),
+          on_event_(std::move(callback))
     {
         if (this->options_.pdb.enabled())
         {
             this->pdb_ = std::make_unique<pdb_symbol_source>(win_emu, this->options_.pdb);
+            this->pdb_->on_event = std::as_const(this->on_event_);
         }
         if (!this->options_.maps.empty())
         {
             this->map_ = std::make_unique<map_symbol_source>(win_emu, this->options_.maps);
+            this->map_->on_event = std::as_const(this->on_event_);
         }
 
         this->module_load_callback_ =
@@ -96,7 +99,6 @@ namespace sogen
     {
         if (mod.pe_sections.empty())
         {
-            this->win_emu_->log.info("Skipping symbols for %s: no PE section metadata\n", mod.name.c_str());
             return;
         }
 
@@ -114,7 +116,12 @@ namespace sogen
             }
             catch (const std::exception& e)
             {
-                this->win_emu_->log.warn("Failed to load MAP symbols for %s: %s\n", mod.name.c_str(), e.what());
+                this->on_event_(map_load_event{
+                    .status = map_load_status::failed,
+                    .module = mod.name,
+                    .path = {},
+                    .error = std::string{e.what()},
+                });
             }
         }
         if (this->pdb_)
@@ -125,7 +132,13 @@ namespace sogen
             }
             catch (const std::exception& e)
             {
-                this->win_emu_->log.warn("Failed to load PDB symbols for %s: %s\n", mod.name.c_str(), e.what());
+                this->on_event_(pdb_load_event{
+                    .status = pdb_load_status::source_failed,
+                    .module = mod.name,
+                    .path = {},
+                    .origin = {},
+                    .error = std::string{e.what()},
+                });
             }
         }
 

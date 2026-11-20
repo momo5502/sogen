@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace sogen
 {
@@ -208,12 +209,22 @@ namespace sogen
 
             void report(const analysis_event& event) override
             {
+                if (std::holds_alternative<symbol_event>(event))
+                {
+                    return;
+                }
                 std::string line{};
                 line.reserve(768);
 
                 {
                     json_object_builder object{line};
-                    std::visit(make_overloaded([&](const auto& e) { write_record(object, e); }), event);
+                    std::visit(make_overloaded([&](const auto& e) {
+                                   if constexpr (!std::is_same_v<std::decay_t<decltype(e)>, symbol_event>)
+                                   {
+                                       write_record(object, e);
+                                   }
+                               }),
+                               event);
                 }
 
                 this->file_ << line << '\n';

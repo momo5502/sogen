@@ -5,7 +5,6 @@
 #include "symbol_download.hpp"
 #include "cab_file.hpp"
 
-#include <logger.hpp>
 #include <utils/finally.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
@@ -98,7 +97,7 @@ namespace sogen
         }
 
         server_attempt publish_download(const symbol_cache::download_slot& slot, const std::filesystem::path& path,
-                                        const pdb_signature& sig, const std::string& server, const logger& log,
+                                        const pdb_signature& sig, const std::string& server, const symbol_event_callback& on_event,
                                         const std::string_view module_name)
         {
             const auto validation = pdb_file{path}.validate(sig);
@@ -106,13 +105,21 @@ namespace sogen
             {
                 if (validation.status == pdb_validation_status::mismatch)
                 {
-                    log.warn("Downloaded PDB for %.*s from %s did not match expected GUID and age\n", static_cast<int>(module_name.size()),
-                             module_name.data(), server.c_str());
+                    on_event(artifact_processing_event{
+                        .status = artifact_error::mismatch,
+                        .module = std::string{module_name},
+                        .server = server,
+                        .error = {},
+                    });
                 }
                 else
                 {
-                    log.warn("Downloaded symbol artifact for %.*s from %s was not a usable PDB: %s\n", static_cast<int>(module_name.size()),
-                             module_name.data(), server.c_str(), validation.error.c_str());
+                    on_event(artifact_processing_event{
+                        .status = artifact_error::invalid,
+                        .module = std::string{module_name},
+                        .server = server,
+                        .error = validation.error,
+                    });
                 }
                 return {.stop = validation.status == pdb_validation_status::validation_error};
             }
@@ -120,8 +127,12 @@ namespace sogen
             const auto publication = symbol_cache::publish(slot, path, sig);
             if (!publication.success)
             {
-                log.warn("Failed to cache downloaded PDB for %.*s from %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                         server.c_str(), publication.reason.c_str());
+                on_event(artifact_processing_event{
+                    .status = artifact_error::cache_failed,
+                    .module = std::string{module_name},
+                    .server = server,
+                    .error = publication.reason,
+                });
                 return {};
             }
 
@@ -133,21 +144,29 @@ namespace sogen
         }
 
         server_attempt find_on_http_server(const std::string& server, const pdb_signature& sig,
-                                           const std::filesystem::path& download_target, const logger& log,
+                                           const std::filesystem::path& download_target, const symbol_event_callback& on_event,
                                            const std::string_view module_name)
         {
             std::error_code ec{};
             const auto slot = symbol_cache::acquire_download_slot(download_target, ec);
             if (!slot)
             {
-                log.warn("Failed to create a PDB download file for %.*s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                         ec.message().c_str());
+                on_event(artifact_processing_event{
+                    .status = artifact_error::create_file_failed,
+                    .module = std::string{module_name},
+                    .server = {},
+                    .error = ec.message(),
+                });
                 return {};
             }
 
             auto cleanup = utils::finally([&] { symbol_cache::discard(*slot); });
-            log.info("Downloading PDB symbols for %.*s from %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                     server.c_str());
+            on_event(symbol_download_event{
+                .status = download_status::started,
+                .module = std::string{module_name},
+                .server = server,
+                .error = {},
+            });
 
             {
                 const auto compressed_path = std::filesystem::path{slot->path.string() + ".compressed"};
@@ -161,7 +180,7 @@ namespace sogen
                     std::filesystem::remove(compressed_path, ec);
                     if (decompressed.success)
                     {
-                        const auto result = publish_download(*slot, expanded_path, sig, server, log, module_name);
+                        const auto result = publish_download(*slot, expanded_path, sig, server, on_event, module_name);
                         if (result.result)
                         {
                             if (result.result->temporary)
@@ -178,8 +197,12 @@ namespace sogen
                     }
                     else
                     {
-                        log.warn("Failed to decompress PDB for %.*s from %s, falling back to the uncompressed artifact: %s\n",
-                                 static_cast<int>(module_name.size()), module_name.data(), server.c_str(), decompressed.reason.c_str());
+                        on_event(artifact_processing_event{
+                            .status = artifact_error::decompression_failed,
+                            .module = std::string{module_name},
+                            .server = server,
+                            .error = decompressed.reason,
+                        });
                     }
                 }
                 std::filesystem::remove(compressed_path, ec);
@@ -199,18 +222,26 @@ namespace sogen
             {
                 if (download.not_found)
                 {
-                    log.info("PDB symbols for %.*s were not found on %s\n", static_cast<int>(module_name.size()), module_name.data(),
-                             server.c_str());
+                    on_event(symbol_download_event{
+                        .status = download_status::not_found,
+                        .module = std::string{module_name},
+                        .server = server,
+                        .error = {},
+                    });
                 }
                 else
                 {
-                    log.warn("Failed to download PDB symbols for %.*s from %s: %s\n", static_cast<int>(module_name.size()),
-                             module_name.data(), server.c_str(), download.reason.c_str());
+                    on_event(symbol_download_event{
+                        .status = download_status::failed,
+                        .module = std::string{module_name},
+                        .server = server,
+                        .error = download.reason,
+                    });
                 }
                 return {};
             }
 
-            const auto result = publish_download(*slot, slot->path, sig, server, log, module_name);
+            const auto result = publish_download(*slot, slot->path, sig, server, on_event, module_name);
             if (result.result && result.result->temporary)
             {
                 cleanup.cancel();
@@ -218,8 +249,8 @@ namespace sogen
             return result;
         }
 
-        std::optional<symbol_server::result> find_in_symbol_store(const std::string& server, const pdb_signature& sig, const logger& log,
-                                                                  const std::string_view module_name)
+        std::optional<symbol_server::result> find_in_symbol_store(const std::string& server, const pdb_signature& sig,
+                                                                  const symbol_event_callback& on_event, const std::string_view module_name)
         {
             const auto path = symbol_cache::store_path(server, sig);
             if (!utils::io::file_exists(path))
@@ -234,25 +265,31 @@ namespace sogen
             }
             if (pdb_validation_failed(validation.status))
             {
-                log.warn("Failed to validate PDB for %.*s in symbol store %s: %s\n", static_cast<int>(module_name.size()),
-                         module_name.data(), server.c_str(), validation.error.c_str());
+                on_event(artifact_processing_event{
+                    .status = artifact_error::store_validation_failed,
+                    .module = std::string{module_name},
+                    .server = server,
+                    .error = validation.error,
+                });
             }
             return std::nullopt;
         }
     }
 
-    std::optional<symbol_server::result> symbol_server::find(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
-                                                             const std::string_view module_name)
+    std::optional<symbol_server::result> symbol_server::find(const pdb_signature& sig, const pdb_symbol_options& options,
+                                                             const symbol_event_callback& on_event, const std::string_view module_name)
     {
         if (!sig.has_safe_filename())
         {
-            log.warn("Skipping symbol server lookup for %.*s: invalid PDB filename in debug signature\n",
-                     static_cast<int>(module_name.size()), module_name.data());
+            on_event(pdb_lookup_event{
+                .status = pdb_lookup_result::invalid_filename,
+                .module = std::string{module_name},
+            });
             return std::nullopt;
         }
 
         const auto download_root = options.symbol_cache.value_or(symbol_cache::default_root());
-        const auto target = symbol_cache::prepare_target(download_root, sig, log, module_name);
+        const auto target = symbol_cache::prepare_target(download_root, sig, on_event, module_name);
         if (target.status == symbol_cache::target_status::available)
         {
             return result{.path = target.path, .origin = source::cache};
@@ -269,14 +306,14 @@ namespace sogen
         {
             if (!is_http_server(server))
             {
-                if (const auto result = find_in_symbol_store(server, sig, log, module_name))
+                if (const auto result = find_in_symbol_store(server, sig, on_event, module_name))
                 {
                     return result;
                 }
                 continue;
             }
 
-            const auto attempt = find_on_http_server(server, sig, target.path, log, module_name);
+            const auto attempt = find_on_http_server(server, sig, target.path, on_event, module_name);
             if (attempt.result)
             {
                 return attempt.result;

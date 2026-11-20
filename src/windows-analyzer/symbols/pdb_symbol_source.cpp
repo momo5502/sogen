@@ -23,20 +23,11 @@ namespace sogen
     {
         using namespace std::literals;
 
-        enum class pdb_resolution_source
-        {
-            explicit_path,
-            sibling_path,
-            cache,
-            symbol_store,
-            download,
-        };
-
         struct resolved_pdb
         {
             std::filesystem::path path{};
             bool explicit_input{};
-            pdb_resolution_source source{};
+            pdb_origin source{};
             bool temporary{};
         };
 
@@ -45,42 +36,23 @@ namespace sogen
             return status == pdb_validation_status::invalid_artifact || status == pdb_validation_status::validation_error;
         }
 
-        const char* source_label(const pdb_resolution_source source)
-        {
-            switch (source)
-            {
-            case pdb_resolution_source::explicit_path:
-                return "disk explicit PDB";
-            case pdb_resolution_source::sibling_path:
-                return "disk sibling PDB";
-            case pdb_resolution_source::cache:
-                return "disk symbol cache";
-            case pdb_resolution_source::symbol_store:
-                return "disk symbol store";
-            case pdb_resolution_source::download:
-                return "downloaded PDB";
-            }
-
-            return "PDB";
-        }
-
-        pdb_resolution_source resolution_source(const symbol_server::source source)
+        pdb_origin resolution_source(const symbol_server::source source)
         {
             switch (source)
             {
             case symbol_server::source::cache:
-                return pdb_resolution_source::cache;
+                return pdb_origin::cache;
             case symbol_server::source::symbol_store:
-                return pdb_resolution_source::symbol_store;
+                return pdb_origin::symbol_store;
             case symbol_server::source::download:
-                return pdb_resolution_source::download;
+                return pdb_origin::download;
             }
 
-            return pdb_resolution_source::download;
+            return pdb_origin::download;
         }
 
-        std::optional<resolved_pdb> resolve_from_signature(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
-                                                           const std::string_view module_name,
+        std::optional<resolved_pdb> resolve_from_signature(const pdb_signature& sig, const pdb_symbol_options& options,
+                                                           const symbol_event_callback& on_event, const std::string_view module_name,
                                                            const std::optional<std::filesystem::path>& module_pe_path = std::nullopt)
         {
             if (!sig.valid() || !sig.has_safe_filename())
@@ -115,29 +87,33 @@ namespace sogen
                     }
                     if (pdb_validation_failed(validation.status))
                     {
-                        log.warn("Failed to validate sibling PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()),
-                                 module_name.data(), candidate.string().c_str(), validation.error.c_str());
+                        on_event(pdb_lookup_event{
+                            .status = pdb_lookup_result::candidate_validation_failed,
+                            .module = std::string{module_name},
+                            .path = candidate,
+                            .error = validation.error,
+                        });
                         continue;
                     }
 
                     return resolved_pdb{
                         .path = candidate,
                         .explicit_input = false,
-                        .source = pdb_resolution_source::sibling_path,
+                        .source = pdb_origin::sibling_path,
                     };
                 }
             }
 
-            if (const auto cached = symbol_cache::find(sig, options.symbol_cache, log, module_name))
+            if (const auto cached = symbol_cache::find(sig, options.symbol_cache, on_event, module_name))
             {
                 return resolved_pdb{
                     .path = *cached,
                     .explicit_input = false,
-                    .source = pdb_resolution_source::cache,
+                    .source = pdb_origin::cache,
                 };
             }
 
-            if (const auto resolved = symbol_server::find(sig, options, log, module_name))
+            if (const auto resolved = symbol_server::find(sig, options, on_event, module_name))
             {
                 return resolved_pdb{
                     .path = resolved->path,
@@ -172,7 +148,6 @@ namespace sogen
         : win_emu_(&win_emu),
           options_(std::move(options))
     {
-        symbol_cache::initialize(win_emu.log, this->options_.symbol_cache);
     }
 
     loaded_symbols pdb_symbol_source::load(const mapped_module& mod) const
@@ -182,6 +157,8 @@ namespace sogen
         {
             return result;
         }
+
+        std::call_once(this->cache_initialized_, [this] { symbol_cache::initialize(this->on_event, this->options_.symbol_cache); });
 
         std::vector<resolved_pdb> candidates{};
         auto auto_lookup = this->options_.auto_lookup;
@@ -204,7 +181,7 @@ namespace sogen
             candidates.emplace_back(resolved_pdb{
                 .path = input.path,
                 .explicit_input = true,
-                .source = pdb_resolution_source::explicit_path,
+                .source = pdb_origin::explicit_path,
             });
         }
 
@@ -215,26 +192,45 @@ namespace sogen
             {
                 module_path.insert(1, 1, u':');
             }
-            const auto module_pe_path =
-                module_path.empty() ? std::nullopt : this->win_emu_->file_sys.translate(windows_path{module_path});
+            const auto module_pe_path = module_path.empty() ? std::nullopt : this->win_emu_->file_sys.translate(windows_path{module_path});
 
-            if (const auto resolved = resolve_from_signature(*mod.pdb, this->options_, this->win_emu_->log, mod.name, module_pe_path))
+            if (!mod.pdb->has_safe_filename())
+            {
+                this->on_event(pdb_lookup_event{
+                    .status = pdb_lookup_result::invalid_filename,
+                    .module = mod.name,
+                });
+            }
+            else if (const auto resolved = resolve_from_signature(*mod.pdb, this->options_, this->on_event, mod.name, module_pe_path))
             {
                 candidates.emplace_back(*resolved);
+                this->on_event(pdb_lookup_event{
+                    .status = pdb_lookup_result::found,
+                    .module = mod.name,
+                });
             }
             else
             {
-                this->win_emu_->log.warn("No usable PDB found for %s in symbol caches or symbol servers\n", mod.name.c_str());
+                this->on_event(pdb_lookup_event{
+                    .status = pdb_lookup_result::not_found,
+                    .module = mod.name,
+                });
             }
         }
         else if (auto_lookup)
         {
-            this->win_emu_->log.info("Skipping automatic PDB lookup for %s: no RSDS reference\n", mod.name.c_str());
+            this->on_event(pdb_lookup_event{
+                .status = pdb_lookup_result::no_reference,
+                .module = mod.name,
+            });
         }
 
         if (candidates.empty())
         {
-            this->win_emu_->log.info("No PDB candidates for %s\n", mod.name.c_str());
+            this->on_event(pdb_lookup_event{
+                .status = pdb_lookup_result::no_candidates,
+                .module = mod.name,
+            });
         }
 
         std::set<std::filesystem::path> loaded_candidates{};
@@ -253,8 +249,13 @@ namespace sogen
                 }
             });
 
-            this->win_emu_->log.info("Loading PDB symbols for %s from %s: %s\n", mod.name.c_str(), source_label(candidate.source),
-                                     candidate.path.string().c_str());
+            this->on_event(pdb_load_event{
+                .status = pdb_load_status::started,
+                .module = mod.name,
+                .path = candidate.path,
+                .origin = candidate.source,
+                .error = {},
+            });
 
             pdb_file pdb{candidate.path};
             const auto read_result = pdb.read();
@@ -265,7 +266,13 @@ namespace sogen
                     throw std::runtime_error("Failed to parse PDB " + candidate.path.string() + ": " + read_result.error);
                 }
 
-                this->win_emu_->log.warn("Failed to parse PDB %s: %s\n", candidate.path.string().c_str(), read_result.error.c_str());
+                this->on_event(pdb_load_event{
+                    .status = pdb_load_status::parse_failed,
+                    .module = mod.name,
+                    .path = candidate.path,
+                    .origin = candidate.source,
+                    .error = read_result.error,
+                });
                 continue;
             }
 
@@ -279,12 +286,24 @@ namespace sogen
                     throw std::runtime_error("PDB signature mismatch for " + candidate.path.string() + " and module " + mod.name);
                 }
 
-                this->win_emu_->log.info("Skipping PDB %s for %s: signature mismatch\n", candidate.path.string().c_str(), mod.name.c_str());
+                this->on_event(pdb_load_event{
+                    .status = pdb_load_status::mismatch,
+                    .module = mod.name,
+                    .path = candidate.path,
+                    .origin = candidate.source,
+                    .error = {},
+                });
                 continue;
             }
 
             merge_symbols(result, mod, pdb);
-            this->win_emu_->log.info("Loaded PDB symbols for %s from %s\n", mod.name.c_str(), candidate.path.string().c_str());
+            this->on_event(pdb_load_event{
+                .status = pdb_load_status::loaded,
+                .module = mod.name,
+                .path = candidate.path,
+                .origin = candidate.source,
+                .error = {},
+            });
         }
 
         return result;

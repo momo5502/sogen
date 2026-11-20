@@ -1,6 +1,7 @@
 #pragma once
 
 #include "symbol_source.hpp"
+#include "symbol_events.hpp"
 #include "../std_include.hpp"
 #include <utils/function.hpp>
 
@@ -44,7 +45,7 @@ namespace sogen
     class symbol_loader
     {
       public:
-        symbol_loader(windows_emulator& win_emu, symbol_options options);
+        symbol_loader(windows_emulator& win_emu, symbol_options options, symbol_event_callback callback = {});
         ~symbol_loader();
 
         symbol_loader(const symbol_loader&) = delete;
@@ -67,6 +68,7 @@ namespace sogen
       private:
         windows_emulator* win_emu_{};
         symbol_options options_{};
+        symbol_event_callback on_event_;
         std::unique_ptr<pdb_symbol_source> pdb_{};
         std::unique_ptr<map_symbol_source> map_{};
         utils::callback_id_type module_load_callback_{};

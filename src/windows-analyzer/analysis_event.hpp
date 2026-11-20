@@ -1,5 +1,7 @@
 #pragma once
 
+#include "symbols/symbol_events.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -305,6 +307,6 @@ namespace sogen
                      module_unload_event, import_read_event, import_write_event, object_access_event, environment_access_event,
                      function_execution_event, entry_point_execution_event, foreign_code_transition_event, section_first_execute_event,
                      rdtsc_event, rdtscp_event, cpuid_event, syscall_event, foreign_module_read_event, executable_read_event,
-                     executable_write_event, fast_fail_event>;
+                     executable_write_event, fast_fail_event, symbol_event>;
 
 } // namespace sogen

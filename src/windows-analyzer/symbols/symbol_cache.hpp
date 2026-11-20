@@ -1,5 +1,6 @@
 #pragma once
 
+#include "symbol_events.hpp"
 #include <platform/pdb_signature.hpp>
 
 #include <filesystem>
@@ -11,7 +12,6 @@
 
 namespace sogen
 {
-    class logger;
 
     class symbol_cache
     {
@@ -67,15 +67,15 @@ namespace sogen
         static std::filesystem::path store_path(const std::filesystem::path& root, const pdb_signature& sig);
 
         static std::optional<std::filesystem::path> find(const pdb_signature& sig,
-                                                         const std::optional<std::filesystem::path>& explicit_cache, const logger& log,
-                                                         std::string_view module_name);
-        static target_result prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
-                                            std::string_view module_name);
+                                                         const std::optional<std::filesystem::path>& explicit_cache,
+                                                         const symbol_event_callback& on_event, std::string_view module_name);
+        static target_result prepare_target(const std::filesystem::path& root, const pdb_signature& sig,
+                                            const symbol_event_callback& on_event, std::string_view module_name);
         static std::optional<download_slot> acquire_download_slot(const std::filesystem::path& target, std::error_code& ec);
         static publish_result publish(const download_slot& slot, const std::filesystem::path& validated_path,
                                       const pdb_signature& expected);
         static void discard(const download_slot& slot);
-        static void initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache);
+        static void initialize(const symbol_event_callback& on_event, const std::optional<std::filesystem::path>& explicit_cache);
 
         symbol_cache() = delete;
     };

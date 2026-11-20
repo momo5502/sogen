@@ -952,7 +952,6 @@ namespace sogen
             {
                 registry_state->load(win_emu->registry);
             }
-            win_emu->log.set_silent(options.silent);
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
             std::unique_ptr<emulator_process_target> managed_target{};
@@ -1043,7 +1042,8 @@ namespace sogen
                 auto symbol_options = options.symbols;
                 symbol_options.verbose_logging = options.verbose_logging;
                 symbol_options.interesting_modules = options.modules;
-                symbols.emplace(*win_emu, std::move(symbol_options));
+                symbols.emplace(*win_emu, std::move(symbol_options),
+                                [&context](const symbol_event& event) { context.emit_event(analysis_event{event}); });
                 context.symbols = &*symbols;
             }
 

@@ -121,7 +121,12 @@ namespace sogen
 
             try
             {
-                this->win_emu_->log.info("Loading MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
+                this->on_event(map_load_event{
+                    .status = map_load_status::started,
+                    .module = mod.name,
+                    .path = input.path,
+                    .error = {},
+                });
                 const auto symbols = parse_map(input.path);
                 size_t merged_symbols = 0;
                 for (const auto& [address, name] : symbols)
@@ -138,11 +143,21 @@ namespace sogen
                     throw std::runtime_error("MSVC MAP file contains no symbols that map into " + mod.name + ": " + input.path.string());
                 }
 
-                this->win_emu_->log.info("Loaded MSVC MAP symbols for %s from %s\n", mod.name.c_str(), input.path.string().c_str());
+                this->on_event(map_load_event{
+                    .status = map_load_status::loaded,
+                    .module = mod.name,
+                    .path = input.path,
+                    .error = {},
+                });
             }
             catch (const std::exception& e)
             {
-                this->win_emu_->log.warn("Failed to load MAP symbols for %s: %s\n", mod.name.c_str(), e.what());
+                this->on_event(map_load_event{
+                    .status = map_load_status::failed,
+                    .module = mod.name,
+                    .path = input.path,
+                    .error = std::string{e.what()},
+                });
             }
         }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "symbol_events.hpp"
 #include <platform/pdb_signature.hpp>
 
 #include <filesystem>
@@ -8,7 +9,6 @@
 
 namespace sogen
 {
-    class logger;
     struct pdb_symbol_options;
 
     class symbol_server
@@ -28,8 +28,8 @@ namespace sogen
             bool temporary{};
         };
 
-        static std::optional<result> find(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
-                                          std::string_view module_name);
+        static std::optional<result> find(const pdb_signature& sig, const pdb_symbol_options& options,
+                                          const symbol_event_callback& on_event, std::string_view module_name);
 
         symbol_server() = delete;
     };
