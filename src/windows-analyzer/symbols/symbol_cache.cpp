@@ -484,6 +484,11 @@ namespace sogen
 
     std::filesystem::path symbol_cache::store_relative_path(const pdb_signature& sig, const bool compressed)
     {
+        if (!sig.has_safe_filename())
+        {
+            throw std::invalid_argument("Invalid PDB filename in debug signature");
+        }
+
         const std::filesystem::path pdb_name{sig.filename()};
         auto stored_name = pdb_name;
         if (compressed)

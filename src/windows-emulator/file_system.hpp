@@ -59,12 +59,10 @@ namespace sogen
 
         bool read_file(const windows_path& path, std::vector<std::byte>* data) const;
         std::vector<std::byte> read_file(const windows_path& path) const;
+        std::optional<std::filesystem::path> translate(const windows_path& path) const;
 
       private:
         friend struct file_system_test_access;
-
-        // Returns an empty path if no mount resolves the guest path.
-        std::filesystem::path translate(const windows_path& path) const;
 
         struct mount_entry
         {

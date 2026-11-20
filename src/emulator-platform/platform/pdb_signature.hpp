@@ -22,5 +22,11 @@ namespace sogen
             const auto separator = this->path.find_last_of("/\\");
             return std::string_view{this->path}.substr(separator == std::string::npos ? 0 : separator + 1);
         }
+
+        bool has_safe_filename() const
+        {
+            const auto name = this->filename();
+            return !name.empty() && name != "." && name != ".." && name.find_first_of("/\\:") == std::string_view::npos;
+        }
     };
 }

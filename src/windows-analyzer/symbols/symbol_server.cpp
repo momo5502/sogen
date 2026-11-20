@@ -244,6 +244,13 @@ namespace sogen
     std::optional<symbol_server::result> symbol_server::find(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
                                                              const std::string_view module_name)
     {
+        if (!sig.has_safe_filename())
+        {
+            log.warn("Skipping symbol server lookup for %.*s: invalid PDB filename in debug signature\n",
+                     static_cast<int>(module_name.size()), module_name.data());
+            return std::nullopt;
+        }
+
         const auto download_root = options.symbol_cache.value_or(symbol_cache::default_root());
         const auto target = symbol_cache::prepare_target(download_root, sig, log, module_name);
         if (target.status == symbol_cache::target_status::available)

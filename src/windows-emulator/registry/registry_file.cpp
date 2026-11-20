@@ -129,15 +129,15 @@ namespace sogen
 
                 if (!lines.empty())
                 {
-                    auto previous = utils::string::trim_right(lines.back().second);
+                    const auto previous = utils::string::trim_right(std::u16string_view{lines.back().second});
                     const auto equals = find_assignment_separator(previous);
-                    const auto value = equals ? utils::string::trim_left(previous.substr(*equals + 1)) : std::u16string{};
+                    const auto value = equals ? utils::string::trim_left(previous.substr(*equals + 1)) : std::u16string_view{};
                     const auto is_hex_continuation =
-                        previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, std::u16string{u"hex"});
+                        previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, std::u16string_view{u"hex"});
                     if (is_hex_continuation)
                     {
                         lines.back().second.resize(previous.size() - 1);
-                        const auto continuation = utils::string::trim_left(line);
+                        const auto continuation = utils::string::trim_left(std::u16string_view{line});
                         lines.back().second.append(continuation.begin(), continuation.end());
                     }
                     else

@@ -26,7 +26,6 @@ namespace sogen
         enum class pdb_resolution_source
         {
             explicit_path,
-            recorded_path,
             sibling_path,
             cache,
             symbol_store,
@@ -52,8 +51,6 @@ namespace sogen
             {
             case pdb_resolution_source::explicit_path:
                 return "disk explicit PDB";
-            case pdb_resolution_source::recorded_path:
-                return "disk recorded PDB path";
             case pdb_resolution_source::sibling_path:
                 return "disk sibling PDB";
             case pdb_resolution_source::cache:
@@ -86,28 +83,9 @@ namespace sogen
                                                            const std::string_view module_name,
                                                            const std::optional<std::filesystem::path>& module_pe_path = std::nullopt)
         {
-            if (!sig.valid() || sig.path.empty())
+            if (!sig.valid() || !sig.has_safe_filename())
             {
                 return std::nullopt;
-            }
-
-            const std::filesystem::path recorded_path{sig.path};
-            if (recorded_path.is_absolute() && utils::io::file_exists(recorded_path))
-            {
-                const auto validation = pdb_file{recorded_path}.validate(sig);
-                if (validation.status == pdb_validation_status::match)
-                {
-                    return resolved_pdb{
-                        .path = recorded_path,
-                        .explicit_input = false,
-                        .source = pdb_resolution_source::recorded_path,
-                    };
-                }
-                if (pdb_validation_failed(validation.status))
-                {
-                    log.warn("Failed to validate recorded PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()),
-                             module_name.data(), recorded_path.string().c_str(), validation.error.c_str());
-                }
             }
 
             if (module_pe_path && !module_pe_path->empty())
@@ -232,8 +210,13 @@ namespace sogen
 
         if (auto_lookup && mod.pdb)
         {
+            auto module_path = mod.path.u16string();
+            if (module_path.size() > 2 && module_path[1] == u'/')
+            {
+                module_path.insert(1, 1, u':');
+            }
             const auto module_pe_path =
-                (!mod.path.empty() && utils::io::file_exists(mod.path)) ? std::optional<std::filesystem::path>{mod.path} : std::nullopt;
+                module_path.empty() ? std::nullopt : this->win_emu_->file_sys.translate(windows_path{module_path});
 
             if (const auto resolved = resolve_from_signature(*mod.pdb, this->options_, this->win_emu_->log, mod.name, module_pe_path))
             {

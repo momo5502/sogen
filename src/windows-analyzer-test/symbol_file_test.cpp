@@ -18,6 +18,17 @@ namespace sogen
 {
     namespace
     {
+        TEST(PdbSignature, AcceptsOnlyPlainPortableFilenames)
+        {
+            EXPECT_TRUE((pdb_signature{.path = R"(C:\build\symbols\ntdll.pdb)"}).has_safe_filename());
+            EXPECT_TRUE((pdb_signature{.path = "ntdll.pdb"}).has_safe_filename());
+            EXPECT_FALSE((pdb_signature{.path = R"(C:\build\..)"}).has_safe_filename());
+            EXPECT_FALSE((pdb_signature{.path = R"(C:\build\.)"}).has_safe_filename());
+            EXPECT_FALSE((pdb_signature{.path = R"(C:\build\)"}).has_safe_filename());
+            EXPECT_FALSE((pdb_signature{.path = "D:ntdll.pdb"}).has_safe_filename());
+            EXPECT_TRUE((pdb_signature{.path = "D:\\ntdll.pdb"}).has_safe_filename());
+        }
+
         struct file_bytes
         {
             std::vector<std::byte> data{};
