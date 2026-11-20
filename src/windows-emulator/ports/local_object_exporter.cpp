@@ -269,13 +269,13 @@ namespace sogen
                     (void)reader.read<std::array<uint32_t, 4>>();
                 }
 
-                std::vector<uint8_t> lookup_tower{};
+                std::span<const uint8_t> lookup_tower{};
                 if (reader.pointer() != 0)
                 {
                     (void)reader.pointer();
                     const auto tower_length = reader.read<uint32_t>();
                     const auto octets = reader.bytes(tower_length);
-                    lookup_tower.assign(octets.begin(), octets.end());
+                    lookup_tower = octets;
                 }
 
                 const auto arguments = reader.remaining();
