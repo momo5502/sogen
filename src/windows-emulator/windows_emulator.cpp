@@ -1891,10 +1891,10 @@ namespace sogen
     void windows_emulator::attach_debugger()
     {
         this->debugger_.attach();
-        this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = TRUE; });
+        this->process.peb64.field<BOOLEAN>(offsetof(PEB64, BeingDebugged)).write(TRUE);
         if (this->process.peb32)
         {
-            this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = TRUE; });
+            this->process.peb32->field<BOOLEAN>(offsetof(PEB32, BeingDebugged)).write(TRUE);
         }
     }
 
@@ -1908,10 +1908,10 @@ namespace sogen
     void windows_emulator::detach_debugger()
     {
         this->debugger_.run_on_emulation_thread(*this, [this] {
-            this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = FALSE; });
+            this->process.peb64.field<BOOLEAN>(offsetof(PEB64, BeingDebugged)).write(FALSE);
             if (this->process.peb32)
             {
-                this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = FALSE; });
+                this->process.peb32->field<BOOLEAN>(offsetof(PEB32, BeingDebugged)).write(FALSE);
             }
         });
         this->debugger_.detach();
