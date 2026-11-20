@@ -19,6 +19,83 @@ namespace sogen
             // Windows 11 26200 still answers class 0x100, one past the last class SYSTEM_INFORMATION_CLASS names.
             constexpr uint32_t last_system_information_class = 0x100;
 
+            // ExpQuerySystemInformation reads the processor group these classes answer for from their input (19041).
+            bool answers_for_one_processor_group(const uint32_t info_class)
+            {
+                switch (info_class)
+                {
+                case SystemProcessorPerformanceInformation:
+                case SystemInterruptInformation:
+                case SystemProcessorIdleInformation:
+                case SystemProcessorPowerInformation:
+                case SystemLogicalProcessorInformation:
+                case SystemProcessorIdleCycleTimeInformation:
+                case SystemProcessorPerformanceDistribution:
+                case SystemProcessorCycleTimeInformation:
+                case SystemProcessorPerformanceInformationEx:
+                case SystemProcessorCycleStatsInformation:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            // NtQuerySystemInformation passes these classes a processor group from its own stack as their input: group 0 for
+            // SystemLogicalProcessorInformation, the group of the processor the caller runs on for the others (19041). Every vCPU
+            // is in group 0.
+            std::optional<USHORT> own_processor_group(const uint32_t info_class)
+            {
+                constexpr USHORT current_processor_group = 0;
+
+                switch (info_class)
+                {
+                case SystemLogicalProcessorInformation:
+                    return USHORT{0};
+                case SystemProcessorPerformanceInformation:
+                case SystemInterruptInformation:
+                case SystemProcessorIdleInformation:
+                case SystemProcessorPowerInformation:
+                case SystemProcessorIdleCycleTimeInformation:
+                case SystemProcessorPerformanceDistribution:
+                case SystemProcessorCycleTimeInformation:
+                case SystemProcessorPerformanceInformationEx:
+                    return current_processor_group;
+                default:
+                    return std::nullopt;
+                }
+            }
+
+            // The group is the syscall's own, or the first two bytes of the caller's input, read under try. A NULL input, which
+            // NtQuerySystemInformationEx turns away before it looks at the class, a shorter one or a group past the active ones
+            // fails with STATUS_INVALID_PARAMETER (19041).
+            NTSTATUS check_processor_group(const syscall_context& c, const std::optional<USHORT> own_group, const uint64_t input_buffer,
+                                           const uint32_t input_buffer_length)
+            {
+                USHORT group = 0;
+                if (own_group)
+                {
+                    group = *own_group;
+                }
+                else
+                {
+                    if (!input_buffer || input_buffer_length < sizeof(group))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    if (const auto status = probe_range(c.win_emu, input_buffer, sizeof(group), memory_permission::read);
+                        status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    group = c.emu.read_memory<USHORT>(input_buffer);
+                }
+
+                const auto active_group_count = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveGroupCount; });
+                return group < active_group_count ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+            }
+
             NTSTATUS handle_system_memory_usage_information(const syscall_context& c, const uint32_t info_class,
                                                             const uint64_t system_information, const uint32_t system_information_length,
                                                             const emulator_object<uint32_t> return_length)
@@ -784,14 +861,24 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
-                                                   const uint32_t input_buffer_length, const uint64_t system_information,
-                                                   const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+        // ExpQuerySystemInformation: what both syscalls ask.
+        static NTSTATUS query_system_information(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
+                                                 const uint32_t input_buffer_length, const std::optional<USHORT> own_group,
+                                                 const uint64_t system_information, const uint32_t system_information_length,
+                                                 const emulator_object<uint32_t> return_length)
         {
             if (info_class > last_system_information_class)
             {
                 c.win_emu.log.error("Unsupported NtQuerySystemInformation(Ex) info class: 0x%X\n", info_class);
                 return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (answers_for_one_processor_group(info_class))
+            {
+                if (const auto status = check_processor_group(c, own_group, input_buffer, input_buffer_length); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
             }
 
             switch (info_class)
@@ -1069,25 +1156,15 @@ namespace sogen
                 return handle_cpu_set_information(c, system_information, system_information_length, return_length);
 
             case SystemLogicalProcessorInformation: {
-                if (!input_buffer || input_buffer_length != sizeof(USHORT))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
                 using info_type = EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION<EmulatorTraits<Emu64>>;
-
-                const auto processor_group = c.emu.read_memory<USHORT>(input_buffer);
 
                 return handle_query<info_type>(c.emu, system_information, system_information_length, return_length, [&](info_type& info) {
                     info.Relationship = RelationProcessorCore;
 
-                    if (processor_group == 0)
-                    {
-                        using mask_type = decltype(info.ProcessorMask);
-                        const auto active_processor_count =
-                            c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
-                        info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
-                    }
+                    using mask_type = decltype(info.ProcessorMask);
+                    const auto active_processor_count =
+                        c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                    info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
                 });
             }
 
@@ -1333,10 +1410,19 @@ namespace sogen
             }
         }
 
+        NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
+                                                   const uint32_t input_buffer_length, const uint64_t system_information,
+                                                   const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+        {
+            return query_system_information(c, info_class, input_buffer, input_buffer_length, std::nullopt, system_information,
+                                            system_information_length, return_length);
+        }
+
         NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class, const uint64_t system_information,
                                                  const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
-            return handle_NtQuerySystemInformationEx(c, info_class, 0, 0, system_information, system_information_length, return_length);
+            return query_system_information(c, info_class, 0, 0, own_processor_group(info_class), system_information,
+                                            system_information_length, return_length);
         }
 
         NTSTATUS handle_NtSetSystemInformation()

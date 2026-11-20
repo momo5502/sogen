@@ -5,6 +5,8 @@ namespace sogen::syscalls
     NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, uint32_t info_class, uint64_t input_buffer,
                                                uint32_t input_buffer_length, uint64_t system_information,
                                                uint32_t system_information_length, emulator_object<uint32_t> return_length);
+    NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, uint32_t info_class, uint64_t system_information,
+                                             uint32_t system_information_length, emulator_object<uint32_t> return_length);
 }
 
 namespace sogen::test
@@ -122,5 +124,78 @@ namespace sogen::test
         EXPECT_EQ(0u, emu.memory.read_memory<uint32_t>(storage + 0x10));
 
         EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH, query(RelationAll, 0));
+    }
+
+    // NtQuerySystemInformation passes SystemLogicalProcessorInformation group 0 and the per-processor classes the caller's
+    // group, but SystemProcessorCycleStatsInformation no input (19041).
+    TEST(ProcessorTopologyTest, PlainQueriesPassTheirOwnProcessorGroup)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.ui = std::make_unique<null_ui_backend>();
+        interfaces.audio = std::make_unique<null_audio_backend>();
+        interfaces.console = std::make_unique<null_console_backend>();
+        windows_emulator emu(create_x86_64_emulator_from_environment(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                             emulator_callbacks{}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        constexpr uint32_t processor_count = 4;
+        emu.process.kusd.access([](KUSER_SHARED_DATA64& kusd) {
+            kusd.ActiveProcessorCount = processor_count;
+            kusd.ActiveGroupCount = 1;
+        });
+        // SystemProcessorPerformanceInformation takes whole entries only (19041: Length % 48).
+        constexpr auto performance_length = static_cast<uint32_t>(processor_count * sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
+        const auto query = [&](const uint32_t info_class, const uint32_t length) {
+            return syscalls::handle_NtQuerySystemInformation(context, info_class, storage + 0x100, length, {emu.memory, storage + 0x10});
+        };
+
+        ASSERT_EQ(STATUS_SUCCESS, query(SystemLogicalProcessorInformation, 0x200));
+        using information_type = EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION<EmulatorTraits<Emu64>>;
+        EXPECT_EQ(0xFu, emu.memory.read_memory<information_type>(storage + 0x100).ProcessorMask);
+
+        EXPECT_EQ(STATUS_SUCCESS, query(SystemProcessorPerformanceInformation, performance_length));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, query(SystemProcessorCycleStatsInformation, 0x200));
+    }
+
+    // NtQuerySystemInformationEx fails a NULL input first; ExpQuerySystemInformation then reads these classes' processor
+    // group from the caller's input under try, and fails an input shorter than a group or a group past the active ones
+    // (19041).
+    TEST(ProcessorTopologyTest, ProcessorGroupInputsMustNameAnActiveGroup)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.ui = std::make_unique<null_ui_backend>();
+        interfaces.audio = std::make_unique<null_audio_backend>();
+        interfaces.console = std::make_unique<null_console_backend>();
+        windows_emulator emu(create_x86_64_emulator_from_environment(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                             emulator_callbacks{}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        constexpr uint32_t processor_count = 4;
+        emu.process.kusd.access([](KUSER_SHARED_DATA64& kusd) {
+            kusd.ActiveProcessorCount = processor_count;
+            kusd.ActiveGroupCount = 1;
+        });
+        const auto group_zero = storage;
+        const auto group_one = storage + 0x20;
+        emu.memory.write_memory(group_zero, USHORT{0});
+        emu.memory.write_memory(group_one, USHORT{1});
+        // SystemProcessorPerformanceInformation takes whole entries only (19041: Length % 48).
+        constexpr auto performance_length = static_cast<uint32_t>(processor_count * sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
+        const auto query = [&](const uint32_t info_class, const uint64_t input, const uint32_t input_length) {
+            const auto length = info_class == SystemProcessorPerformanceInformation ? performance_length : 0x200u;
+            return syscalls::handle_NtQuerySystemInformationEx(context, info_class, input, input_length, storage + 0x100, length,
+                                                               {emu.memory, storage + 0x10});
+        };
+
+        for (const uint32_t info_class : {SystemProcessorPerformanceInformation, SystemLogicalProcessorInformation})
+        {
+            EXPECT_EQ(STATUS_SUCCESS, query(info_class, group_zero, sizeof(uint32_t))) << info_class;
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, query(info_class, 0, sizeof(USHORT))) << info_class;
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, query(info_class, group_zero, sizeof(uint8_t))) << info_class;
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, query(info_class, group_one, sizeof(USHORT))) << info_class;
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, query(info_class, storage + 0x1000, sizeof(USHORT))) << info_class;
+        }
     }
 }
