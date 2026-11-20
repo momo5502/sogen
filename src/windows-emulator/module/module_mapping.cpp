@@ -541,9 +541,15 @@ namespace sogen
         section_file_range get_section_file_range(const IMAGE_SECTION_HEADER& section, const uint64_t section_size,
                                                   const uint64_t file_alignment, const uint64_t file_size)
         {
-            // The kernel fills a section with PointerToRawData 0 with zeros, whatever its SizeOfRawData.
+            // The kernel fills a section with PointerToRawData 0 with zeros, whatever its SizeOfRawData. As for other
+            // sections, raw data that goes past the end of the file fails the mapping.
             if (section.PointerToRawData == 0)
             {
+                if (std::min<uint64_t>(section_size, section.SizeOfRawData) > file_size)
+                {
+                    throw std::runtime_error("Section data extends beyond the file");
+                }
+
                 return {};
             }
 
