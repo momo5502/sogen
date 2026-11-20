@@ -671,6 +671,11 @@ namespace sogen
 
     void rpc_port::complete_deferred_call(const uint64_t token, const std::vector<uint8_t>& ndr_reply)
     {
+        if (!this->handling_request_)
+        {
+            throw std::logic_error("Deferred RPC calls can only be completed while the port handles a request");
+        }
+
         constexpr size_t rpc_call_response_header_size = 0x18;
         constexpr size_t rpc_call_id_offset = 12;
         std::vector<uint8_t> payload(rpc_call_response_header_size, 0);
@@ -828,7 +833,11 @@ namespace sogen
         this->current_call_id_ = *call_id;
         this->current_call_deferrable_ = c.recv_buffer == 0;
         this->current_call_deferred_ = false;
-        const auto status = this->handle_rpc(win_emu, *procedure_id, rpc_context, writer, reply_handles);
+        this->handling_request_ = true;
+        const auto status = [&] {
+            const auto _ = utils::finally([&] { this->handling_request_ = false; });
+            return this->handle_rpc(win_emu, *procedure_id, rpc_context, writer, reply_handles);
+        }();
         if (std::exchange(this->current_call_deferred_, false))
         {
             lpc_request_result deferred{};

@@ -418,6 +418,11 @@ namespace sogen
             buffer.write(this->disconnected);
             buffer.write(this->next_security_context_handle);
             buffer.write_vector(this->security_context_handles);
+            if (!this->completed_deferred_payloads.empty())
+            {
+                throw std::runtime_error("Completed deferred replies were not delivered before serialization");
+            }
+
             buffer.write(this->next_section_handle);
             buffer.write_map(this->sections);
             buffer.write_map(this->deferred_replies);
@@ -548,6 +553,8 @@ namespace sogen
         // Accepts the RPC call being handled without replying now; complete_deferred_call answers it later. Only a call
         // sent without waiting for its reply can be deferred.
         std::optional<uint64_t> defer_current_call();
+        // Answers a deferred call. It may only run while the port handles a request: the port container delivers the
+        // completed replies as soon as that request returns, so none are ever held across a snapshot.
         void complete_deferred_call(uint64_t token, const std::vector<uint8_t>& ndr_reply);
 
         // MSVC 19.52 reads this member with an aligned vmovaps in protected_storage_port::handle_rpc, although its type only
@@ -558,6 +565,7 @@ namespace sogen
         uint32_t current_call_id_{};
         bool current_call_deferrable_{};
         bool current_call_deferred_{};
+        bool handling_request_{};
 
         struct rpc_binding
         {

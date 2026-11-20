@@ -25,8 +25,13 @@ namespace sogen::test
 
         void bind(std::u16string_view name, const std::array<uint8_t, 16>& interface_id, size_t width)
         {
+            this->bind(create_port(name), interface_id, width);
+        }
+
+        void bind(std::unique_ptr<port> port, const std::array<uint8_t, 16>& interface_id, size_t width)
+        {
             this->pointer_size = width;
-            this->endpoint = create_port(name);
+            this->endpoint = std::move(port);
             this->emu->memory.set_memory(this->storage, 0, 72);
             this->emu->memory.write_memory(this->storage, uint32_t{1});
             this->emu->memory.write_memory(this->storage + 12, interface_id.data(), interface_id.size());
@@ -34,7 +39,8 @@ namespace sogen::test
             EXPECT_EQ(STATUS_SUCCESS, this->request(72).status);
         }
 
-        lpc_request_result call(uint32_t procedure, std::span<const uint8_t> data)
+        // A caller that does not wait passes no reply buffer, which lets the service answer later.
+        lpc_request_result call(uint32_t procedure, std::span<const uint8_t> data, const bool wait_for_reply = true)
         {
             this->emu->memory.set_memory(this->storage, 0, 64);
             this->emu->memory.write_memory(this->storage + 12, uint32_t{1});
@@ -43,7 +49,7 @@ namespace sogen::test
             {
                 this->emu->memory.write_memory(this->storage + 64, data.data(), data.size());
             }
-            return this->request(static_cast<ULONG>(64 + data.size()));
+            return this->request(static_cast<ULONG>(64 + data.size()), wait_for_reply);
         }
 
         template <typename T>
@@ -76,12 +82,12 @@ namespace sogen::test
         bool load_registry{};
 
       private:
-        lpc_request_result request(ULONG length)
+        lpc_request_result request(ULONG length, const bool wait_for_reply = true)
         {
             return this->endpoint->handle_request(*this->emu, {.send_buffer = this->storage,
                                                                .send_buffer_length = length,
-                                                               .recv_buffer = this->storage + 0x10000,
-                                                               .recv_buffer_length = 0x10000});
+                                                               .recv_buffer = wait_for_reply ? this->storage + 0x10000 : 0,
+                                                               .recv_buffer_length = wait_for_reply ? 0x10000u : 0u});
         }
     };
 }
