@@ -1581,8 +1581,7 @@ namespace sogen
             {
                 if (auto* e = c.proc.events.get(event))
                 {
-                    e->set_signaled(true);
-                    c.win_emu.wake_idle_vcpu();
+                    c.win_emu.signal_event(*e);
                 }
             }
 

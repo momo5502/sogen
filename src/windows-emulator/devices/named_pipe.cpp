@@ -170,7 +170,7 @@ namespace sogen
         write_io_status(context, status);
         if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
         {
-            event->set_signaled(true);
+            win_emu.signal_event(*event);
         }
         // Windows queues no APC and posts no completion packet for an overlapped request that fails immediately; only its
         // caller learns of the failure.

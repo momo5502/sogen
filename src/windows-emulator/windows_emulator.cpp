@@ -3004,6 +3004,23 @@ namespace sogen
         }
     }
 
+    bool windows_emulator::signal_event(event& e)
+    {
+        const auto was_signaled = e.set_signaled(true);
+        for (auto& thread : this->process.threads | std::views::values)
+        {
+            const auto waits_on_event = std::ranges::any_of(
+                thread.await_objects, [&](const object_reference& awaited) { return this->process.get_object(awaited) == &e; });
+            if (waits_on_event)
+            {
+                (void)thread.is_thread_ready(*this);
+            }
+        }
+
+        this->wake_idle_vcpu();
+        return was_signaled;
+    }
+
     void windows_emulator::wake_idle_vcpu()
     {
         if (this->idle_vcpus_.load() != 0)

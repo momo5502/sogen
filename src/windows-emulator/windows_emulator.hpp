@@ -634,6 +634,9 @@ namespace sogen
         }
 
         void wake_idle_vcpu();
+        // Completes the waits the signal satisfies right away, as the NT kernel does, so that a reset following before
+        // the waiters run cannot take the wake back. Returns whether the event was signaled before.
+        bool signal_event(event& e);
         // Wakes an idle vCPU, or the next one to go idle, to look for threads that can run. For host threads that make a
         // parked guest thread runnable, such as one ending a GPU wait.
         void credit_idle_wakeup();

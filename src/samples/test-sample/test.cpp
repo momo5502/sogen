@@ -1463,6 +1463,55 @@ namespace
         return signaled && executions == 2;
     }
 
+    // SetEvent completes the waits it satisfies before it returns, so a ResetEvent right after cannot take the wake back
+    // from a thread that was already waiting.
+    bool event_wake_survives_reset(const BOOL manual_reset)
+    {
+        struct wait_context
+        {
+            HANDLE ready{};
+            HANDLE event{};
+            DWORD result{WAIT_FAILED};
+        };
+
+        wait_context context{
+            .ready = CreateEventW(nullptr, FALSE, FALSE, nullptr),
+            .event = CreateEventW(nullptr, manual_reset, FALSE, nullptr),
+        };
+
+        const auto waiter = CreateThread(
+            nullptr, 0,
+            [](LPVOID param) -> DWORD {
+                auto& ctx = *static_cast<wait_context*>(param);
+                // Signals `ready` and starts waiting in one step, so once `ready` is set the thread is waiting.
+                ctx.result = SignalObjectAndWait(ctx.ready, ctx.event, 5000, FALSE);
+                return 0;
+            },
+            &context, 0, nullptr);
+
+        bool woke = false;
+        if (waiter && WaitForSingleObject(context.ready, INFINITE) == WAIT_OBJECT_0)
+        {
+            SetEvent(context.event);
+            ResetEvent(context.event);
+            WaitForSingleObject(waiter, INFINITE);
+            woke = context.result == WAIT_OBJECT_0;
+        }
+
+        if (waiter)
+        {
+            CloseHandle(waiter);
+        }
+        CloseHandle(context.event);
+        CloseHandle(context.ready);
+        return woke;
+    }
+
+    bool test_event_reset_after_set()
+    {
+        return event_wake_survives_reset(FALSE) && event_wake_survives_reset(TRUE);
+    }
+
     bool test_window_geometry()
     {
         WNDCLASSEXA wc{};
@@ -2659,6 +2708,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_apc_wait, "APC Wait")
+    RUN_TEST(test_event_reset_after_set, "Event Reset After Set")
     RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")
