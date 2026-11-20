@@ -2322,24 +2322,52 @@ namespace
 
     bool test_ansi_oem_translation()
     {
-        std::array<char, 256> source{};
-        std::array<char, 256> converted{};
-        for (size_t i = 0; i < source.size(); ++i)
-        {
-            source[i] = static_cast<char>(i);
-        }
-        if (!CharToOemBuffA(source.data(), converted.data(), static_cast<DWORD>(source.size())))
+        CPINFO ansi{};
+        CPINFO oem{};
+        if (!GetCPInfo(CP_ACP, &ansi) || !GetCPInfo(CP_OEMCP, &oem))
         {
             return false;
         }
-        for (size_t i = 0; i < source.size(); ++i)
+        const auto same_page = GetACP() == GetOEMCP();
+        const auto single_byte = ansi.MaxCharSize == 1 && oem.MaxCharSize == 1;
+        std::array<char, 256> source{};
+        std::array<char, 256> converted{};
+        DWORD count = static_cast<DWORD>(source.size());
+        if (same_page || single_byte)
         {
-            wchar_t wide{};
-            char expected{};
-            if (!MultiByteToWideChar(CP_ACP, 0, &source[i], 1, &wide, 1) ||
-                !WideCharToMultiByte(CP_OEMCP, 0, &wide, 1, &expected, 1, nullptr, nullptr) || converted[i] != expected)
+            for (size_t i = 0; i < source.size(); ++i)
             {
-                return false;
+                source[i] = static_cast<char>(i);
+            }
+        }
+        else
+        {
+            constexpr char text[] = "shell-arguments";
+            count = static_cast<DWORD>(sizeof(text));
+            std::copy_n(text, count, source.begin());
+        }
+        if (!CharToOemBuffA(source.data(), converted.data(), count))
+        {
+            return false;
+        }
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (same_page || !single_byte)
+            {
+                if (converted[i] != source[i])
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                wchar_t wide{};
+                char expected{};
+                if (!MultiByteToWideChar(CP_ACP, 0, &source[i], 1, &wide, 1) ||
+                    !WideCharToMultiByte(CP_OEMCP, 0, &wide, 1, &expected, 1, nullptr, nullptr) || converted[i] != expected)
+                {
+                    return false;
+                }
             }
         }
         auto inplace = std::to_array("shell-arguments");

@@ -5,6 +5,7 @@
 
 #include "memory_manager.hpp"
 #include "memory_utils.hpp"
+#include "code_page.hpp"
 #include "address_utils.hpp"
 #include "x86_register.hpp"
 #include "segment_utils.hpp"
@@ -433,7 +434,8 @@ namespace sogen
         return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string}, index);
     }
 
-    inline std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj, const size_t index = 0)
+    inline std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj, const code_page& ansi_code_page,
+                                            const size_t index = 0)
     {
         if (!str_obj)
         {
@@ -447,7 +449,7 @@ namespace sogen
         }
 
         const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
-        return cp1252_to_u16(ansi_string);
+        return ansi_code_page.decode(ansi_string);
     }
 
     inline uint64_t get_function_argument_x64_fastcall(x86_64_cpu& emu, const size_t index)

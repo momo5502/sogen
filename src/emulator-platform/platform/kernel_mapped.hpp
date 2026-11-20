@@ -607,8 +607,8 @@ namespace sogen
         EMULATOR_CAST(std::uint64_t, PSILO_USER_SHARED_DATA) SharedData; // HotpatchInformation
         std::uint64_t ReadOnlyStaticServerData;
 
-        EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PCPTABLEINFO) AnsiCodePageData;      // PCPTABLEINFO
-        EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PCPTABLEINFO) OemCodePageData;       // PCPTABLEINFO
+        EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PVOID) AnsiCodePageData;
+        EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PVOID) OemCodePageData;
         EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PNLSTABLEINFO) UnicodeCaseTableData; // PNLSTABLEINFO
 
         ULONG NumberOfProcessors;
@@ -768,8 +768,8 @@ namespace sogen
         EMULATOR_CAST(std::uint32_t, struct _SILO_USER_SHARED_DATA*) SharedData; // HotpatchInformation
         EMULATOR_CAST(std::uint32_t, PVOID32*) ReadOnlyStaticServerData;
 
-        EMULATOR_CAST(std::uint32_t, PVOID32) AnsiCodePageData;     // PCPTABLEINFO
-        EMULATOR_CAST(std::uint32_t, PVOID32) OemCodePageData;      // PCPTABLEINFO
+        EMULATOR_CAST(std::uint32_t, PVOID32) AnsiCodePageData;
+        EMULATOR_CAST(std::uint32_t, PVOID32) OemCodePageData;
         EMULATOR_CAST(std::uint32_t, PVOID32) UnicodeCaseTableData; // PNLSTABLEINFO
 
         ULONG NumberOfProcessors;
