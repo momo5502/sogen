@@ -38,7 +38,11 @@ namespace sogen::test
                     std::vector<uint8_t> reply{completion_marker, 0, 0, 0};
                     if (procedure == complete_large_procedure)
                     {
-                        reply.resize(large_reply_size, completion_marker);
+                        reply.resize(large_reply_size);
+                        for (size_t i = 0; i < reply.size(); ++i)
+                        {
+                            reply[i] = static_cast<uint8_t>(i * 7);
+                        }
                     }
                     for (const auto token : std::exchange(this->pending, {}))
                     {
@@ -124,7 +128,8 @@ namespace sogen::test
     // header with the large-payload flag and the NDR size at 0x18.
     TEST_F(DeferredRpcTest, ALargeDeferredReplyIsSentInAView)
     {
-        ASSERT_TRUE(this->defer().has_value());
+        const auto token = this->defer();
+        ASSERT_TRUE(token.has_value());
         EXPECT_EQ(STATUS_SUCCESS, this->send_message(complete_large_procedure, {}).status);
 
         const auto replies = this->endpoint->take_completed_replies();
@@ -132,7 +137,12 @@ namespace sogen::test
         ASSERT_EQ(0x20u, replies[0].payload.size());
         EXPECT_EQ(4u, read<uint32_t>(replies[0].payload, 0x08));
         EXPECT_EQ(large_reply_size, read<uint32_t>(replies[0].payload, 0x18));
-        EXPECT_EQ(large_reply_size, replies[0].view_payload.size());
+        EXPECT_EQ(static_cast<uint32_t>(*token), read<uint32_t>(replies[0].payload, 12));
+        ASSERT_EQ(large_reply_size, replies[0].view_payload.size());
+        for (const size_t index : {size_t{0}, size_t{1}, large_reply_size - 1})
+        {
+            EXPECT_EQ(static_cast<uint8_t>(index * 7), replies[0].view_payload[index]) << index;
+        }
         EXPECT_NE(0, replies[0].message.native.u2.s2.Type & lpc_continuation_required);
     }
 

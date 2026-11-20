@@ -39,11 +39,14 @@ namespace sogen
                 return {};
             }
 
-            std::vector<uint8_t> view_payload(response.begin() + rpc_call_immediate_response_header_size, response.end());
-            response.resize(rpc_call_large_response_header_size);
-            utils::aligned_binary_writer header_writer(response);
+            std::vector<uint8_t> header(response.begin(), response.begin() + rpc_call_immediate_response_header_size);
+            header.resize(rpc_call_large_response_header_size);
+            utils::aligned_binary_writer header_writer(header);
             header_writer.write_at<uint32_t>(0x08, rpc_call_large_payload_flag);
             header_writer.write_at<uint32_t>(0x18, static_cast<uint32_t>(ndr_size));
+
+            auto view_payload = std::exchange(response, std::move(header));
+            view_payload.erase(view_payload.begin(), view_payload.begin() + rpc_call_immediate_response_header_size);
             return view_payload;
         }
 
