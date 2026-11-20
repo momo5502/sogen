@@ -48,6 +48,18 @@ namespace sogen::test
                 this->complete_deferred_call(token, {});
             }
 
+            void serialize_object(utils::buffer_serializer& buffer) const override
+            {
+                rpc_port::serialize_object(buffer);
+                buffer.write_vector(this->pending);
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                rpc_port::deserialize_object(buffer);
+                buffer.read_vector(this->pending);
+            }
+
             std::vector<uint64_t> pending{};
         };
 
@@ -67,15 +79,15 @@ namespace sogen::test
 
             std::optional<uint64_t> defer()
             {
-                const auto result = this->call(defer_procedure, {}, false);
+                const auto result = this->send_message(defer_procedure, {}, false);
                 EXPECT_EQ(STATUS_SUCCESS, result.status);
-                EXPECT_FALSE(result.payload.has_value());
+                EXPECT_TRUE(result.payload.empty());
                 return result.deferred_token;
             }
 
             void complete()
             {
-                EXPECT_EQ(STATUS_SUCCESS, this->call(complete_procedure, {}).status);
+                EXPECT_EQ(STATUS_SUCCESS, this->send_message(complete_procedure, {}).status);
             }
         };
     }
@@ -95,15 +107,14 @@ namespace sogen::test
         const auto replies = this->endpoint->take_completed_replies();
         ASSERT_EQ(1u, replies.size());
         EXPECT_EQ(token, replies[0].deferred_token);
-        ASSERT_TRUE(replies[0].payload.has_value());
-        ASSERT_GT(replies[0].payload->size(), rpc_response_header_size);
-        EXPECT_EQ(completion_marker, (*replies[0].payload)[rpc_response_header_size]);
+        ASSERT_GT(replies[0].payload.size(), rpc_response_header_size);
+        EXPECT_EQ(completion_marker, replies[0].payload[rpc_response_header_size]);
         EXPECT_TRUE(this->endpoint->take_completed_replies().empty());
     }
 
     TEST_F(DeferredRpcTest, ACallerWaitingForItsReplyIsNotDeferred)
     {
-        const auto result = this->call(defer_procedure, {});
+        const auto result = this->send_message(defer_procedure, {});
         EXPECT_FALSE(result.deferred_token.has_value());
         EXPECT_TRUE(this->service().pending.empty());
     }
@@ -134,7 +145,6 @@ namespace sogen::test
         auto restored = std::make_unique<deferring_port>();
         utils::buffer_deserializer deserializer{serializer};
         restored->deserialize(deserializer);
-        restored->pending = {*token};
         this->endpoint = std::move(restored);
 
         this->complete();

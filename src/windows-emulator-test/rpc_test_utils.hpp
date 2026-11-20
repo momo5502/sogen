@@ -52,6 +52,36 @@ namespace sogen::test
             return this->request(static_cast<ULONG>(64 + data.size()), wait_for_reply);
         }
 
+        // Sends the call as an ALPC request message, the way NtAlpcSendWaitReceivePort hands it to the port.
+        lpc_message_result send_message(const uint32_t procedure, const std::span<const uint8_t> data, const bool wait_for_reply = true)
+        {
+            constexpr uint64_t send_offset = 0x8000;
+            constexpr uint64_t receive_offset = 0xC000;
+            constexpr size_t receive_length = 0x4000;
+            constexpr size_t rpc_request_header_size = 64;
+
+            std::vector<uint8_t> body(rpc_request_header_size + data.size());
+            body[12] = 1;
+            std::memcpy(body.data() + 20, &procedure, sizeof(procedure));
+            std::ranges::copy(data, body.begin() + rpc_request_header_size);
+
+            PORT_MESSAGE64 header{};
+            header.u1.s1.DataLength = static_cast<CSHORT>(body.size());
+            header.u1.s1.TotalLength = static_cast<CSHORT>(sizeof(header) + body.size());
+            header.u2.s2.Type = LPC_REQUEST;
+            this->emu->memory.write_memory(this->storage + send_offset, &header, sizeof(header));
+            this->emu->memory.write_memory(this->storage + send_offset + sizeof(header), body.data(), body.size());
+
+            lpc_message_context context{this->emu->memory};
+            context.send_message.set_address(this->storage + send_offset);
+            if (wait_for_reply)
+            {
+                context.receive_message.set_address(this->storage + receive_offset);
+                context.receive_buffer_length = receive_length;
+            }
+            return this->endpoint->handle_message(*this->emu, context);
+        }
+
         template <typename T>
         static T read(std::span<const uint8_t> data, size_t offset)
         {
