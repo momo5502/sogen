@@ -44,16 +44,16 @@ namespace sogen::test
                 return context;
             }
 
-            lpc_request_result request_change(const context_handle& context)
+            lpc_message_result request_change(const context_handle& context)
             {
-                return this->call(request_change_notification, context, false);
+                return this->send_message(request_change_notification, context, false);
             }
 
-            lpc_request_result deregister(const context_handle& context)
+            lpc_message_result deregister(const context_handle& context)
             {
                 auto request = registration_descriptor();
                 request.insert(request.end(), context.begin(), context.end());
-                return this->call(deregister_change_notification, request);
+                return this->send_message(deregister_change_notification, request);
             }
 
             std::vector<lpc_message_result> completed_replies() const
@@ -83,8 +83,8 @@ namespace sogen::test
         const auto replies = this->completed_replies();
         ASSERT_EQ(1u, replies.size());
         EXPECT_EQ(pending.deferred_token, replies[0].deferred_token);
-        ASSERT_TRUE(replies[0].payload.has_value());
-        EXPECT_EQ(error_cancelled, read<uint32_t>(*replies[0].payload, replies[0].payload->size() - sizeof(uint32_t)));
+        ASSERT_GE(replies[0].payload.size(), sizeof(uint32_t));
+        EXPECT_EQ(error_cancelled, read<uint32_t>(replies[0].payload, replies[0].payload.size() - sizeof(uint32_t)));
     }
 
     TEST_F(NsiServiceTest, CancellationUsesTheEncodingOfTheRequestItAnswersAfterARestore)
@@ -103,12 +103,12 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, this->deregister(context).status);
         const auto replies = this->completed_replies();
         ASSERT_EQ(1u, replies.size());
-        ASSERT_TRUE(replies[0].payload.has_value());
+        ASSERT_GE(replies[0].payload.size(), sizeof(uint32_t));
         // Classic NDR: two null pointers, a key size, a two-byte enum padded to four, a parameter size, an offset, the
         // notification enum and the status.
         constexpr size_t classic_ndr_cancellation_size = 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
-        EXPECT_EQ(rpc_response_header_size + classic_ndr_cancellation_size, replies[0].payload->size());
-        EXPECT_EQ(error_cancelled, read<uint32_t>(*replies[0].payload, replies[0].payload->size() - sizeof(uint32_t)));
+        EXPECT_EQ(rpc_response_header_size + classic_ndr_cancellation_size, replies[0].payload.size());
+        EXPECT_EQ(error_cancelled, read<uint32_t>(replies[0].payload, replies[0].payload.size() - sizeof(uint32_t)));
     }
 
     TEST_F(NsiServiceTest, ContextHandleOnlyCountsAtItsParameterPosition)
@@ -119,11 +119,11 @@ namespace sogen::test
         // The registration's handle inside the descriptor, followed by bytes that are no context handle.
         std::vector<uint8_t> request(context.begin(), context.end());
         request.resize(request.size() + context_handle_size + 4, 0x22);
-        EXPECT_NE(STATUS_SUCCESS, this->call(deregister_change_notification, request).status);
+        EXPECT_NE(STATUS_SUCCESS, this->send_message(deregister_change_notification, request).status);
 
         std::vector<uint8_t> shifted(4, 0);
         shifted.insert(shifted.end(), context.begin(), context.end());
-        EXPECT_NE(STATUS_SUCCESS, this->call(request_change_notification, shifted, false).status);
+        EXPECT_NE(STATUS_SUCCESS, this->send_message(request_change_notification, shifted, false).status);
 
         EXPECT_EQ(STATUS_SUCCESS, this->deregister(context).status);
     }
