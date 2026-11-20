@@ -530,6 +530,7 @@ namespace
         const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
         const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
         const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+        const auto device_wait_idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(get_instance_proc(instance, "vkDeviceWaitIdle"));
 
         struct recorder
         {
@@ -676,7 +677,6 @@ namespace
         }
 
         bool ok = started && failed_calls == 0;
-        bool pending = false;
         VkFence fence = VK_NULL_HANDLE;
         if (ok)
         {
@@ -689,8 +689,9 @@ namespace
             ok = create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS && queue_submit(queue, 1, &submit, fence) == VK_SUCCESS;
             if (ok && wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) != VK_SUCCESS)
             {
+                // Returns once the work completed or the device is lost; either way nothing is pending afterwards.
+                device_wait_idle(device);
                 ok = false;
-                pending = true;
             }
         }
 
@@ -721,23 +722,19 @@ namespace
             ok = false;
         }
 
-        // Work the GPU may still run keeps its command buffers, fence and buffer alive.
-        if (!pending)
+        if (fence)
         {
-            if (fence)
-            {
-                destroy_fence(device, fence, nullptr);
-            }
-            for (const auto& r : recorders)
-            {
-                if (r.pool)
-                {
-                    destroy_command_pool(device, r.pool, nullptr);
-                }
-            }
-            free_memory(device, memory, nullptr);
-            destroy_buffer(device, buffer, nullptr);
+            destroy_fence(device, fence, nullptr);
         }
+        for (const auto& r : recorders)
+        {
+            if (r.pool)
+            {
+                destroy_command_pool(device, r.pool, nullptr);
+            }
+        }
+        free_memory(device, memory, nullptr);
+        destroy_buffer(device, buffer, nullptr);
 
         ok = ok && wrong_chunks == 0;
         std::printf(
