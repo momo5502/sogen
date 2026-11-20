@@ -1,6 +1,6 @@
 #pragma once
 
-#include "symbols/symbol_events.hpp"
+#include <windows-symbols/symbol_events.hpp>
 
 #include <cstddef>
 #include <cstdint>

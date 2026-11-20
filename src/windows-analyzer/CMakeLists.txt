@@ -4,29 +4,16 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
   *.rc
 )
 
-set(SYMBOL_FILE_SOURCES
-  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/pdb_file.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/cab_file.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/symbols/symbol_download.cpp"
-)
-list(REMOVE_ITEM SRC_FILES ${SYMBOL_FILE_SOURCES})
 list(SORT SRC_FILES)
 
-add_library(symbol-files STATIC ${SYMBOL_FILE_SOURCES})
-target_include_directories(symbol-files PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(symbol-files PRIVATE emulator-common raw_pdb cab-decoder)
-if(NOT EMSCRIPTEN)
-  target_link_libraries(symbol-files PRIVATE CURL::libcurl_static)
-endif()
-
 add_library(windows-analyzer STATIC ${SRC_FILES})
+target_compile_definitions(windows-analyzer PRIVATE SOGEN_ENABLE_SYMBOLS=$<BOOL:${SOGEN_ENABLE_SYMBOLS}>)
 
-sogen_assign_source_group(${SRC_FILES} ${SYMBOL_FILE_SOURCES})
+sogen_assign_source_group(${SRC_FILES})
 
 if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-analyzer PRIVATE std_include.hpp)
 endif()
-
 target_link_libraries(windows-analyzer PRIVATE
   debugger
   disassembler
@@ -37,6 +24,10 @@ target_link_libraries(windows-analyzer PRIVATE
   backend-selection
   cli11
 )
+
+if(SOGEN_ENABLE_SYMBOLS)
+  target_link_libraries(windows-analyzer PRIVATE windows-symbols)
+endif()
 
 if(WIN)
   # CLI11's ensure_utf8() resolves the UTF-8 command line through CommandLineToArgvW (shell32).
@@ -56,5 +47,3 @@ if(SOGEN_ENABLE_REFLECTION)
     reflect
   )
 endif()
-
-target_link_libraries(windows-analyzer PRIVATE symbol-files)

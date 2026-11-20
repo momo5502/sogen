@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include <symbols/pdb_file.hpp>
-#include <symbols/cab_file.hpp>
+#include <windows-symbols/pdb_file.hpp>
+#include <windows-symbols/cab_file.hpp>
 #include <utils/io.hpp>
 
 #include <algorithm>

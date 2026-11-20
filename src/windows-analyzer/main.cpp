@@ -17,7 +17,7 @@
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
-#include "symbols/symbol_loader.hpp"
+#include <windows-symbols/symbol_loader.hpp>
 #include "tenet_tracer.hpp"
 #include <subprocess_process_manager.hpp>
 
@@ -1036,6 +1036,7 @@ namespace sogen
             register_analysis_callbacks(context);
             watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
 
+#if SOGEN_ENABLE_SYMBOLS
             std::optional<symbol_loader> symbols{};
             if (options.symbols.enabled())
             {
@@ -1046,6 +1047,7 @@ namespace sogen
                                 [&context](const symbol_event& event) { context.emit_event(analysis_event{event}); });
                 context.symbols = &*symbols;
             }
+#endif
 
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
@@ -1317,6 +1319,7 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
 
+#if SOGEN_ENABLE_SYMBOLS
             std::string symbol_use_value{"callers"};
             app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
                 ->expected(0, 1)
@@ -1335,6 +1338,7 @@ namespace sogen
 
             std::string symbol_cache{};
             app.add_option("--symbol-cache", symbol_cache, "Set Sogen's download cache for PDB symbol files");
+#endif
 
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
 #ifndef OS_EMSCRIPTEN
@@ -1406,6 +1410,7 @@ namespace sogen
                     options.backend = get_backend_names().at(backend_name);
                 }
 
+#if SOGEN_ENABLE_SYMBOLS
                 if (symbol_use_value == "trace")
                 {
                     options.symbols.use_mode = symbol_use_mode::trace;
@@ -1460,6 +1465,7 @@ namespace sogen
                 {
                     options.symbols.pdb.symbol_cache = std::filesystem::path(symbol_cache);
                 }
+#endif
 
                 for (auto& module_name : tracked_modules)
                 {

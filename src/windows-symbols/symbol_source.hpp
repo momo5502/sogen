@@ -1,6 +1,11 @@
 #pragma once
 
-#include "../std_include.hpp"
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace sogen
 {

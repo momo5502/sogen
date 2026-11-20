@@ -1,5 +1,6 @@
 #include "symbol_source.hpp"
 
+#include <platform/platform.hpp>
 #include <module/mapped_module.hpp>
 
 namespace sogen

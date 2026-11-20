@@ -3,7 +3,7 @@
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "disassembler.hpp"
-#include "symbols/symbol_loader.hpp"
+#include <windows-symbols/symbol_loader.hpp>
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
@@ -144,6 +144,7 @@ namespace sogen
                 return context;
             }
 
+#if SOGEN_ENABLE_SYMBOLS
             const auto should_load_caller_symbols = [](const analysis_context& analysis) {
                 if (analysis.settings->concise_logging && !analysis.has_reached_main)
                 {
@@ -175,6 +176,9 @@ namespace sogen
                 --symbol;
                 context.function = symbol->second;
             }
+#else
+            static_cast<void>(allow_caller_symbol_load);
+#endif
 
             return context;
         }

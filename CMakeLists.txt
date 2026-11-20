@@ -8,6 +8,7 @@ option(SOGEN_ENABLE_FUZZING "Build the host-side handler fuzzers (libFuzzer); in
 option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" OFF)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
+option(SOGEN_ENABLE_SYMBOLS "Enable PDB and MAP symbol support" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
 option(SOGEN_ENABLE_SCCACHE "Cache compilations with sccache when it is installed" ON)
 option(SOGEN_ENABLE_SDL3 "Enable SDL3 host UI and audio backends" ON)

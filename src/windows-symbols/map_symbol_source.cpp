@@ -3,6 +3,7 @@
 #include <windows_emulator.hpp>
 #include <utils/string.hpp>
 
+#include <charconv>
 #include <fstream>
 #include <sstream>
 

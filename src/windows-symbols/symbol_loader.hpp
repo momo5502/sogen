@@ -2,8 +2,10 @@
 
 #include "symbol_source.hpp"
 #include "symbol_events.hpp"
-#include "../std_include.hpp"
 #include <utils/function.hpp>
+#include <functional>
+#include <memory>
+#include <set>
 
 namespace sogen
 {
