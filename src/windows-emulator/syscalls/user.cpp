@@ -4912,18 +4912,10 @@ namespace sogen
             return advance_window_show(c, s);
         }
 
-        struct prepared_message_text
+        std::optional<window_message_text> prepare_message_text(const syscall_context& c, window& win, const UINT msg,
+                                                                const uint64_t w_param, const uint64_t l_param, const BOOL ansi)
         {
-            uint64_t scratch_text{};
-            uint64_t scratch_capacity{};
-            bool target_unicode{};
-        };
-
-        prepared_message_text prepare_message_text(const syscall_context& c, window& win, const UINT msg, const uint64_t w_param,
-                                                   const uint64_t l_param, const BOOL ansi)
-        {
-            prepared_message_text result{};
-            result.target_unicode = win.unicode_proc;
+            window_message_text result{.target_unicode = win.unicode_proc};
             const bool caller_unicode = ansi == FALSE;
 
             if (msg == WM_SETTEXT)
@@ -4992,17 +4984,35 @@ namespace sogen
         }
 
         std::optional<uint64_t> copy_message_text_result(const syscall_context& c, const UINT msg, const uint64_t w_param,
-                                                         const uint64_t l_param, const BOOL ansi, const uint64_t scratch_text)
+                                                         const uint64_t l_param, const BOOL ansi, const window_message_text& conversion,
+                                                         const uint64_t result_length)
         {
-            if (msg != WM_GETTEXT || scratch_text == 0)
+            if (msg != WM_GETTEXT || conversion.scratch_text == 0)
             {
                 return std::nullopt;
             }
-            const auto capacity = static_cast<size_t>(std::min<uint64_t>(w_param, std::numeric_limits<size_t>::max()));
-            auto text = ansi ? read_string<char16_t>(c.win_emu.memory, scratch_text, capacity)
-                             : c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, scratch_text, capacity));
+            const auto capacity = static_cast<size_t>(std::min(result_length, conversion.scratch_capacity - 1));
+            auto text = conversion.target_unicode
+                            ? read_string<char16_t>(c.win_emu.memory, conversion.scratch_text, capacity)
+                            : c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, conversion.scratch_text, capacity));
             text.erase(std::min(text.find(u'\0'), text.size()));
             return copy_text_to_buffer(c, text, w_param, l_param, ansi != FALSE);
+        }
+
+        uint64_t convert_message_result(const syscall_context& c, const UINT msg, const uint64_t w_param, const uint64_t l_param,
+                                        const BOOL ansi, const window_message_text& conversion, const uint64_t result)
+        {
+            if (msg == WM_GETTEXTLENGTH && ansi && conversion.target_unicode)
+            {
+                const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
+                if (result > std::numeric_limits<uint64_t>::max() / maximum_size)
+                {
+                    set_guest_last_error(c, 534);
+                    return 0;
+                }
+                return result * maximum_size;
+            }
+            return copy_message_text_result(c, msg, w_param, l_param, ansi, conversion, result).value_or(result);
         }
 
         void complete_sent_window_message(const syscall_context& c, sent_window_message& message, const uint64_t result)
@@ -5027,22 +5037,28 @@ namespace sogen
                     complete_sent_window_message(c, message, 0);
                     continue;
                 }
-                message.scratch_text =
-                    prepare_message_text(c, *win, message.message, message.w_param, message.l_param, message.ansi).scratch_text;
+                const auto prepared = prepare_message_text(c, *win, message.message, message.w_param, message.l_param, message.ansi);
+                if (!prepared)
+                {
+                    complete_sent_window_message(c, message, 0);
+                    continue;
+                }
+                message.text = *prepared;
                 thread.active_sent_messages.push_back(message);
                 thread.publish_client_thread_info();
-                const auto param = message.scratch_text != 0 ? message.scratch_text : message.l_param;
+                const auto w_param = message.text.target_w_param(message.w_param);
+                const auto l_param = message.text.target_l_param(message.l_param);
                 if (completion_callback == callback_id::NtUserMessageCall)
                 {
                     message_call_state state{};
                     state.dispatching_nested_send = true;
-                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, message.w_param, param);
+                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, w_param, l_param);
                 }
                 else
                 {
                     message_retrieval_state state{};
                     state.callback = message_retrieval_callback::sent_message;
-                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, message.w_param, param);
+                    dispatch_window_message(c, completion_callback, std::move(state), *win, message.message, w_param, l_param);
                 }
                 return true;
             }
@@ -5061,13 +5077,13 @@ namespace sogen
             c.thread().publish_client_thread_info();
             if (!message.replied)
             {
-                const auto converted =
-                    copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
-                complete_sent_window_message(c, message, converted.value_or(c.get_callback_result<uint64_t>()));
+                const auto result = convert_message_result(c, message.message, message.w_param, message.l_param, message.ansi, message.text,
+                                                           c.get_callback_result<uint64_t>());
+                complete_sent_window_message(c, message, result);
             }
-            if (message.scratch_text != 0)
+            if (message.text.scratch_text != 0)
             {
-                c.win_emu.memory.release_memory(message.scratch_text, 0);
+                c.win_emu.memory.release_memory(message.text.scratch_text, 0);
             }
         }
 
@@ -5163,22 +5179,17 @@ namespace sogen
             }
 
             const auto prepared = prepare_message_text(c, *win, msg, w_param, l_param, ansi);
-            uint64_t dispatch_w_param = w_param;
-            uint64_t dispatch_l_param = prepared.scratch_text != 0 ? prepared.scratch_text : l_param;
-            if (prepared.scratch_text != 0 && msg == WM_GETTEXT)
+            if (!prepared)
             {
-                // The scratch buffer holds the text in the target's encoding and can be larger than the
-                // caller's character count, so the target must receive its own capacity in w_param.
-                dispatch_w_param = prepared.scratch_capacity;
+                return 0;
             }
 
             message_call_state state{};
             state.window = hwnd;
             state.message = msg;
-            state.scratch_text = prepared.scratch_text;
-            state.scratch_capacity = prepared.scratch_capacity;
-            state.target_unicode = prepared.target_unicode;
-            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, dispatch_w_param, dispatch_l_param);
+            state.text = *prepared;
+            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, prepared->target_w_param(w_param),
+                                    prepared->target_l_param(l_param));
             return {};
         }
 
@@ -5208,37 +5219,12 @@ namespace sogen
                 return TRUE;
             }
 
-            const auto callback_result = c.get_callback_result<uint64_t>();
-            std::optional<uint64_t> converted_text_length{};
-            if (state.scratch_text != 0)
+            const auto result =
+                convert_message_result(c, state.message, w_param, l_param, ansi, state.text, c.get_callback_result<uint64_t>());
+            if (state.text.scratch_text != 0)
             {
-                if (state.message == WM_GETTEXT)
-                {
-                    const auto available = state.scratch_capacity == 0 ? 0 : state.scratch_capacity - 1;
-                    const auto capacity = static_cast<size_t>(
-                        std::min({callback_result, available, static_cast<uint64_t>(std::numeric_limits<size_t>::max())}));
-                    auto text = state.target_unicode
-                                    ? read_string<char16_t>(c.win_emu.memory, state.scratch_text, capacity)
-                                    : c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, state.scratch_text, capacity));
-                    text.erase(std::min(text.find(u'\0'), text.size()));
-                    converted_text_length = copy_text_to_buffer(c, text, w_param, l_param, ansi != FALSE);
-                }
-
-                c.win_emu.memory.release_memory(state.scratch_text, 0);
-                state.scratch_text = 0;
-            }
-            if (state.message == WM_GETTEXTLENGTH && ansi && state.target_unicode)
-            {
-                const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
-                if (callback_result > std::numeric_limits<uint64_t>::max() / maximum_size)
-                {
-                    set_guest_last_error(c, 534);
-                    converted_text_length = 0;
-                }
-                else
-                {
-                    converted_text_length = callback_result * maximum_size;
-                }
+                c.win_emu.memory.release_memory(state.text.scratch_text, 0);
+                state.text.scratch_text = 0;
             }
             if (state.message == WM_PAINT)
             {
@@ -5266,7 +5252,7 @@ namespace sogen
                         args.pwnd = win->guest.value();
                         args.msg = msg;
                         args.wParam = callback_info.data;
-                        args.lParam = converted_text_length.value_or(callback_result);
+                        args.lParam = result;
                         args.xParam = callback_info.callback;
                         args.xpfnProc = c.proc.dispatch_client_message;
 
@@ -5279,7 +5265,7 @@ namespace sogen
                 return TRUE;
             }
 
-            return converted_text_length.value_or(c.get_callback_result<uint64_t>());
+            return result;
         }
 
         bool read_combo_box_info(const syscall_context& c, const emulator_pointer combo_box_info, const size_t required_size,
@@ -5638,7 +5624,9 @@ namespace sogen
                 return FALSE;
             }
 
-            copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.scratch_text);
+            // ReplyMessage supplies an explicit LRESULT, not necessarily a character count.
+            copy_message_text_result(c, message.message, message.w_param, message.l_param, message.ansi, message.text,
+                                     std::numeric_limits<uint64_t>::max());
             complete_sent_window_message(c, message, result);
             return TRUE;
         }

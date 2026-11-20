@@ -14,6 +14,10 @@ namespace sogen::syscalls
                                       uint64_t result_info, DWORD type, BOOL ansi);
     uint64_t completion_NtUserMessageCall(const syscall_context& c, hwnd window, UINT message, uint64_t w_param, uint64_t l_param,
                                           uint64_t result_info, DWORD type, BOOL ansi);
+    BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max,
+                                  UINT remove_message);
+    BOOL completion_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max,
+                                      UINT remove_message);
     BOOL handle_NtUserDefSetText(const syscall_context& c, hwnd window, emulator_object<LARGE_STRING> text);
     NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data, emulator_pointer context_data,
                                        emulator_object<uint64_t> section_pointer, emulator_object<ULONG> section_size);
@@ -116,6 +120,31 @@ namespace sogen::test
             {
                 return syscalls::handle_NtUserMessageCall(this->context(), this->window_handle, message, capacity, buffer, result_info,
                                                           type, ansi);
+            }
+
+            emulator_thread& dispatch_cross_thread_message(const UINT message, const uint64_t capacity, const uint64_t buffer,
+                                                           const BOOL ansi)
+            {
+                auto& vcpu = this->emu->vcpu(0);
+                auto& sender = vcpu.thread();
+                auto& proc = this->emu->process;
+                const auto receiver = proc.threads.store(emulator_thread{this->emu->memory, proc, 0, 0, 0, 0, 12, false});
+                auto* target = proc.threads.get(receiver);
+                this->guest_window().thread_id = target->id;
+                this->emu->synchronize([&] { (void)this->call_message(message, capacity, buffer, ansi); });
+                vcpu.active_thread = target;
+                (void)syscalls::handle_NtUserPeekMessage(this->context(), {this->emu->memory, 0}, 0, 0, 0, PM_NOREMOVE);
+                return sender;
+            }
+
+            void complete_cross_thread_message(const uint64_t result)
+            {
+                auto frame = this->finish_callback();
+                auto c = this->context();
+                c.is_callback_completion = true;
+                c.current_completion_state = frame.state.get();
+                c.previous_callback_result.value = result;
+                (void)syscalls::completion_NtUserPeekMessage(c, {this->emu->memory, 0}, 0, 0, 0, PM_NOREMOVE);
             }
 
             text_callback_args callback_arguments()
@@ -236,6 +265,40 @@ namespace sogen::test
         EXPECT_EQ(this->complete_message(frame, WM_GETTEXT, 3, output, FALSE, 4), 2);
         EXPECT_EQ(read_string<char16_t>(this->emu->memory, output), u"\x4E2D\x6587");
         EXPECT_EQ(this->emu->memory.read_memory<char16_t>(output + 6), u'#');
+    }
+
+    TEST_F(UserTextTest, CrossThreadWideCallerReceivesFullDbcsText)
+    {
+        this->use_custom_procedure(false);
+        const auto output = this->allocate_buffer();
+        this->emu->memory.write_memory(output, std::array<char16_t, 5>{u'#', u'#', u'#', u'#', u'#'});
+        auto& sender = this->dispatch_cross_thread_message(WM_GETTEXT, 5, output, FALSE);
+        ASSERT_FALSE(this->context().thread().callback_stack.empty());
+        const auto args = this->callback_arguments();
+        ASSERT_GT(args.w_param, 0u);
+        ASSERT_NE(args.l_param, output);
+
+        constexpr std::string_view title = "\xD6\xD0\xCE\xC4\xD6\xD0";
+        const auto written = std::min<uint64_t>(title.size(), (args.w_param - 1) / 2 * 2);
+        this->emu->memory.write_memory(args.l_param, title.data(), static_cast<size_t>(written));
+        this->emu->memory.write_memory(args.l_param + written, '\0');
+        this->complete_cross_thread_message(written);
+
+        ASSERT_TRUE(sender.current_sent_message_wait());
+        EXPECT_EQ(sender.current_sent_message_wait()->result, 3u);
+        EXPECT_EQ(read_string<char16_t>(this->emu->memory, output), u"\x4E2D\x6587\x4E2D");
+        EXPECT_EQ(this->emu->memory.read_memory<char16_t>(output + 4 * sizeof(char16_t)), u'#');
+    }
+
+    TEST_F(UserTextTest, CrossThreadAnsiCallerReceivesDbcsLengthEstimate)
+    {
+        this->use_custom_procedure(true);
+        auto& sender = this->dispatch_cross_thread_message(WM_GETTEXTLENGTH, 0, 0, TRUE);
+        ASSERT_FALSE(this->context().thread().callback_stack.empty());
+        this->complete_cross_thread_message(3);
+
+        ASSERT_TRUE(sender.current_sent_message_wait());
+        EXPECT_EQ(sender.current_sent_message_wait()->result, 6u);
     }
 
     TEST_F(UserTextTest, AnsiCallerReceivesCompleteCharactersAndByteCount)

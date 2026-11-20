@@ -2089,9 +2089,9 @@ namespace sogen
         for (auto& sent : thread.active_sent_messages)
         {
             this->reply_to_sent_message(sent, 0);
-            if (sent.scratch_text != 0)
+            if (sent.text.scratch_text != 0)
             {
-                thread.memory_ptr->release_memory(sent.scratch_text, 0);
+                thread.memory_ptr->release_memory(sent.text.scratch_text, 0);
             }
         }
         thread.pending_sent_messages.clear();
