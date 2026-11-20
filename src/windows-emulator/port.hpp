@@ -163,6 +163,8 @@ namespace sogen
         uint64_t send_view_base{};
         uint64_t send_view_size{};
         uint64_t send_message_context{};
+        // The sender does not wait and a completion port will deliver a later reply.
+        bool reply_can_be_deferred{};
 
         lpc_message_context(memory_interface& emu)
             : send_message(emu),
@@ -184,6 +186,7 @@ namespace sogen
             buffer.write(send_view_base);
             buffer.write(send_view_size);
             buffer.write(send_message_context);
+            buffer.write(reply_can_be_deferred);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -195,6 +198,7 @@ namespace sogen
             buffer.read(send_view_base);
             buffer.read(send_view_size);
             buffer.read(send_message_context);
+            buffer.read(reply_can_be_deferred);
         }
     };
 
@@ -207,6 +211,7 @@ namespace sogen
         uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
         uint64_t send_view_base{};
         uint64_t send_view_size{};
+        bool reply_can_be_deferred{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -217,6 +222,7 @@ namespace sogen
             buffer.write(send_handle);
             buffer.write(send_view_base);
             buffer.write(send_view_size);
+            buffer.write(reply_can_be_deferred);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -228,6 +234,7 @@ namespace sogen
             buffer.read(send_handle);
             buffer.read(send_view_base);
             buffer.read(send_view_size);
+            buffer.read(reply_can_be_deferred);
         }
     };
 

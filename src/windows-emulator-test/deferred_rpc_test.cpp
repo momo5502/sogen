@@ -119,6 +119,18 @@ namespace sogen::test
         EXPECT_TRUE(this->service().pending.empty());
     }
 
+    // Without a completion port a later reply could not be delivered, so the service never accepts the call as pending, and
+    // the same call succeeds once the port is associated.
+    TEST_F(DeferredRpcTest, ASendWithoutACompletionPortIsNotDeferredAndCanBeRetried)
+    {
+        const auto rejected = this->send_message(defer_procedure, {}, false, false);
+        EXPECT_FALSE(rejected.deferred_token.has_value());
+        EXPECT_TRUE(this->service().pending.empty());
+
+        ASSERT_TRUE(this->defer().has_value());
+        EXPECT_EQ(1u, this->service().pending.size());
+    }
+
     TEST_F(DeferredRpcTest, AForgottenRequestIsNotAnswered)
     {
         const auto token = this->defer();

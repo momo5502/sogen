@@ -52,8 +52,10 @@ namespace sogen::test
             return this->request(static_cast<ULONG>(64 + data.size()), wait_for_reply);
         }
 
-        // Sends the call as an ALPC request message, the way NtAlpcSendWaitReceivePort hands it to the port.
-        lpc_message_result send_message(const uint32_t procedure, const std::span<const uint8_t> data, const bool wait_for_reply = true)
+        // Sends the call as an ALPC request message, the way NtAlpcSendWaitReceivePort hands it to the port. A sender that
+        // does not wait can have its reply deferred only when a completion port is there to deliver it.
+        lpc_message_result send_message(const uint32_t procedure, const std::span<const uint8_t> data, const bool wait_for_reply = true,
+                                        const bool has_completion_port = true)
         {
             constexpr uint64_t send_offset = 0x8000;
             constexpr uint64_t receive_offset = 0xC000;
@@ -61,7 +63,8 @@ namespace sogen::test
             constexpr size_t rpc_request_header_size = 64;
 
             std::vector<uint8_t> body(rpc_request_header_size + data.size());
-            body[12] = 1;
+            const auto call_id = ++this->last_call_id;
+            std::memcpy(body.data() + 12, &call_id, sizeof(call_id));
             std::memcpy(body.data() + 20, &procedure, sizeof(procedure));
             std::ranges::copy(data, body.begin() + rpc_request_header_size);
 
@@ -79,6 +82,7 @@ namespace sogen::test
                 context.receive_message.set_address(this->storage + receive_offset);
                 context.receive_buffer_length = receive_length;
             }
+            context.reply_can_be_deferred = !wait_for_reply && has_completion_port;
             return this->endpoint->handle_message(*this->emu, context);
         }
 
@@ -108,6 +112,7 @@ namespace sogen::test
         std::unique_ptr<port> endpoint{};
         uint64_t storage{};
         size_t pointer_size{};
+        uint32_t last_call_id{};
         // A fixture whose service reads the registry sets this in its constructor to load the root's hives.
         bool load_registry{};
 

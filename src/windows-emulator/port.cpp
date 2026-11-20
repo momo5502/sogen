@@ -485,7 +485,10 @@ namespace sogen
             return result;
         }
 
-        auto result = this->port_->handle_message(win_emu, c);
+        // The service only defers a reply that the completion port can deliver later.
+        auto message = c;
+        message.reply_can_be_deferred = !c.receive_message && static_cast<bool>(this->completion_port_);
+        auto result = this->port_->handle_message(win_emu, message);
         const auto deliver_completed = [&] { this->deliver_completed_replies(win_emu); };
 
         if (result.deferred_token)
@@ -591,6 +594,7 @@ namespace sogen
         context.send_handle = c.send_handle;
         context.send_view_base = c.send_view_base;
         context.send_view_size = c.send_view_size;
+        context.reply_can_be_deferred = c.reply_can_be_deferred;
 
         auto request_result = this->handle_request(win_emu, context);
         if (request_result.deferred_token)
@@ -831,7 +835,7 @@ namespace sogen
 
         std::vector<alpc_reply_handle> reply_handles;
         this->current_call_id_ = *call_id;
-        this->current_call_deferrable_ = c.recv_buffer == 0;
+        this->current_call_deferrable_ = c.reply_can_be_deferred;
         this->current_call_deferred_ = false;
         this->handling_request_ = true;
         const auto status = [&] {
