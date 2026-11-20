@@ -1766,9 +1766,8 @@ namespace sogen
                 acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
                 acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-                // Return the IA32_TSC_AUX value in RCX (low 32 bits)
-                auto tsc_aux = 0; // Need to replace this with proper CPUID later
-                acting.reg(x86_register::rcx, tsc_aux);
+                // Windows keeps the processor number in IA32_TSC_AUX.
+                acting.reg(x86_register::rcx, static_cast<uint64_t>(vcpu.cpu.index()));
 
                 return instruction_hook_continuation::skip_instruction;
             });
