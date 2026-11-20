@@ -400,7 +400,15 @@ namespace sogen
         std::map<uint64_t, alpc_port_section> sections{};
         // The reply headers of requests accepted without a reply, by deferral token.
         std::map<uint64_t, lpc_port_message> deferred_replies{};
-        std::vector<std::pair<uint64_t, std::vector<uint8_t>>> completed_deferred_payloads{};
+
+        struct completed_deferred_reply
+        {
+            uint64_t token{};
+            std::vector<uint8_t> payload{};
+            std::vector<uint8_t> view_payload{};
+        };
+
+        std::vector<completed_deferred_reply> completed_deferred_payloads{};
 
         port() = default;
         ~port() override = default;

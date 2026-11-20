@@ -10,6 +10,8 @@ namespace sogen::test
         constexpr std::array<uint8_t, 16> test_interface{0x5e, 0x6e, 0x5e, 0x6e, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
         constexpr uint32_t defer_procedure = 1;
         constexpr uint32_t complete_procedure = 2;
+        constexpr uint32_t complete_large_procedure = 3;
+        constexpr size_t large_reply_size = 0x8000;
         constexpr uint8_t completion_marker = 0xAB;
         constexpr size_t rpc_response_header_size = 0x18;
 
@@ -31,11 +33,16 @@ namespace sogen::test
                     return STATUS_SUCCESS;
                 }
 
-                if (procedure == complete_procedure)
+                if (procedure == complete_procedure || procedure == complete_large_procedure)
                 {
+                    std::vector<uint8_t> reply{completion_marker, 0, 0, 0};
+                    if (procedure == complete_large_procedure)
+                    {
+                        reply.resize(large_reply_size, completion_marker);
+                    }
                     for (const auto token : std::exchange(this->pending, {}))
                     {
-                        this->complete_deferred_call(token, {completion_marker, 0, 0, 0});
+                        this->complete_deferred_call(token, reply);
                     }
                     writer.write<uint32_t>(0);
                     return STATUS_SUCCESS;
@@ -111,6 +118,22 @@ namespace sogen::test
         ASSERT_GT(replies[0].payload.size(), rpc_response_header_size);
         EXPECT_EQ(completion_marker, replies[0].payload[rpc_response_header_size]);
         EXPECT_TRUE(this->endpoint->take_completed_replies().empty());
+    }
+
+    // A reply too big for an inline message travels in a view, as an immediate one does: the message keeps the larger RPC
+    // header with the large-payload flag and the NDR size at 0x18.
+    TEST_F(DeferredRpcTest, ALargeDeferredReplyIsSentInAView)
+    {
+        ASSERT_TRUE(this->defer().has_value());
+        EXPECT_EQ(STATUS_SUCCESS, this->send_message(complete_large_procedure, {}).status);
+
+        const auto replies = this->endpoint->take_completed_replies();
+        ASSERT_EQ(1u, replies.size());
+        ASSERT_EQ(0x20u, replies[0].payload.size());
+        EXPECT_EQ(4u, read<uint32_t>(replies[0].payload, 0x08));
+        EXPECT_EQ(large_reply_size, read<uint32_t>(replies[0].payload, 0x18));
+        EXPECT_EQ(large_reply_size, replies[0].view_payload.size());
+        EXPECT_NE(0, replies[0].message.native.u2.s2.Type & lpc_continuation_required);
     }
 
     TEST_F(DeferredRpcTest, ACallerWaitingForItsReplyIsNotDeferred)
