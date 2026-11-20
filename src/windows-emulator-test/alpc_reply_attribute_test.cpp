@@ -34,7 +34,7 @@ namespace sogen::test
             }
 
             // An RPC bind, which the endpoint mapper answers with a small reply that carries no view.
-            NTSTATUS send_bind(const ULONG allocated, const ULONG valid)
+            NTSTATUS send_bind(const ULONG allocated, const ULONG valid, const std::optional<uint64_t> receive_attributes = std::nullopt)
             {
                 std::array<uint8_t, 72> bind{};
                 bind[0] = 1;
@@ -54,7 +54,9 @@ namespace sogen::test
                 return syscalls::handle_NtAlpcSendWaitReceivePort(
                     this->context(), this->port_handle, 0, {this->emu->memory, this->storage + send_offset}, {this->emu->memory},
                     {this->emu->memory, this->storage + receive_offset}, {this->emu->memory, this->storage + length_offset},
-                    this->attributes(), {this->emu->memory});
+                    receive_attributes ? emulator_object<ALPC_MESSAGE_ATTRIBUTES>{this->emu->memory, *receive_attributes}
+                                       : this->attributes(),
+                    {this->emu->memory});
             }
 
             emulator_object<ALPC_MESSAGE_ATTRIBUTES> attributes() const
@@ -82,5 +84,12 @@ namespace sogen::test
         const auto attributes = this->attributes().read();
         EXPECT_EQ(allocated, attributes.AllocatedAttributes);
         EXPECT_EQ(0u, attributes.ValidAttributes & request_bits);
+    }
+
+    TEST_F(AlpcReplyAttributeTest, UnmappedReceiveAttributesFailTheCall)
+    {
+        const auto unmapped = this->emu->memory.find_free_allocation_base(0x1000);
+        ASSERT_NE(0u, unmapped);
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->send_bind(ALPC_MESSAGE_VIEW_ATTRIBUTE, ALPC_MESSAGE_VIEW_ATTRIBUTE, unmapped));
     }
 }

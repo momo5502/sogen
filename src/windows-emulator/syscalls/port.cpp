@@ -571,16 +571,21 @@ namespace sogen
         // its own bit. Callers usually receive the reply into the attributes they sent the request with, so keeping the
         // request's bits would report a view or handles the reply does not carry (rpcrt4 then reads a reply without a view
         // as a malformed small response).
-        void reset_reply_attributes(const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
+        NTSTATUS reset_reply_attributes(const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
         {
             if (!attributes)
             {
-                return;
+                return STATUS_SUCCESS;
             }
 
-            auto header = attributes.read();
-            header.ValidAttributes = 0;
-            attributes.write(header);
+            auto header = attributes.try_read();
+            if (!header)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            header->ValidAttributes = 0;
+            return attributes.try_write(*header) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
         }
 
         // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver via
@@ -752,6 +757,14 @@ namespace sogen
                 return context_attribute_status;
             }
 
+            // AlpcpReceiveMessage checks the receive attributes before it takes a message.
+            if (receive_message && receive_message_attributes &&
+                probe_range(c.win_emu, receive_message_attributes.value(), sizeof(ALPC_MESSAGE_ATTRIBUTES), memory_permission::write) !=
+                    STATUS_SUCCESS)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
             auto result = port->handle_message(c.win_emu, context);
 
             if (receive_message && NT_SUCCESS(result.status))
@@ -766,7 +779,10 @@ namespace sogen
 
                 // The send attributes were read before the request was handled, so the receive buffer, which may be the
                 // same one, can be rebuilt now.
-                reset_reply_attributes(receive_message_attributes);
+                if (const auto status = reset_reply_attributes(receive_message_attributes); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
 
                 if (!result.view_payload.empty())
                 {
