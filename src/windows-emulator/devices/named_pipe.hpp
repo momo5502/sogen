@@ -60,6 +60,8 @@ namespace sogen
         void complete_waits(windows_emulator& win_emu, const windows_path& pipe_path, NTSTATUS status);
         void complete_waits_if_last_server_end(windows_emulator& win_emu) const;
         void create_endpoints();
+        bool is_directory() const;
+        bool is_disconnected() const;
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
@@ -130,10 +132,8 @@ namespace sogen
         NTSTATUS start_listen(windows_emulator& win_emu, io_device_context context);
         NTSTATUS start_wait(windows_emulator& win_emu, io_device_context context);
         NTSTATUS prepare_wait(windows_emulator& win_emu, const io_device_context& context, awaited_pipe& awaited) const;
-        bool is_directory() const;
         bool is_synchronous() const;
         NTSTATUS disconnect(windows_emulator& win_emu);
-        bool is_disconnected() const;
         void complete_pending_operations(windows_emulator& win_emu, NTSTATUS status);
         NTSTATUS enqueue_operation(windows_emulator& win_emu, io_device_context context,
                                    std::unique_ptr<utils::host_pipe_operation> operation, operation_kind kind, awaited_pipe awaited = {},
