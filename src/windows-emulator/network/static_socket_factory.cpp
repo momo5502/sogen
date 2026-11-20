@@ -389,9 +389,14 @@ namespace sogen
                             continue;
                         }
 
-                        // POLLIN and POLLOUT are separate bits on POSIX; on Windows they are these normal-data masks.
+#ifdef _WIN32
+                        constexpr auto read_mask = static_cast<int16_t>(POLLIN);
+                        constexpr auto write_mask = static_cast<int16_t>(POLLOUT);
+#else
+                        // POLLIN and POLLOUT are bits of their own on POSIX; Winsock defines them as the normal-data masks.
                         constexpr auto read_mask = static_cast<int16_t>(POLLIN | POLLRDNORM | POLLRDBAND);
                         constexpr auto write_mask = static_cast<int16_t>(POLLOUT | POLLWRNORM);
+#endif
 
                         int16_t revents = 0;
                         bool readable = false;
