@@ -983,9 +983,10 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (!is_writable_range(c.win_emu, resource_id.value(), sizeof(ULONG)))
+            if (const auto status = probe_range(c.win_emu, resource_id.value(), sizeof(ULONG), memory_permission::write);
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
             }
 
             auto* port = c.proc.ports.get(port_handle);
