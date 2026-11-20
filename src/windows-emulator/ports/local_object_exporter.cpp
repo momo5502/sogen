@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "local_object_exporter.hpp"
+#include "nsi_service.hpp"
 #include "../windows_emulator.hpp"
 #include <binary_writer.hpp>
 
@@ -249,18 +250,103 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                (void)reader.pointer();
-                (void)reader.pointer();
-                (void)reader.read<std::array<uint8_t, 20>>();
-                const auto maximum_towers = reader.read<uint32_t>();
+                // The map requests carry the lookup tower and, depending on the procedure, further parameters before the entry
+                // handle; max_towers is always the last argument.
+                const auto arguments = reader.remaining();
+                if (arguments.size() < sizeof(uint32_t))
+                {
+                    throw std::out_of_range("Truncated endpoint mapper request");
+                }
+                uint32_t maximum_towers{};
+                std::memcpy(&maximum_towers, arguments.data() + arguments.size() - sizeof(maximum_towers), sizeof(maximum_towers));
 
+                const auto tower = maximum_towers != 0 ? hosted_service_tower(arguments) : std::nullopt;
                 writer.write(std::array<uint8_t, 20>{});
-                writer.write<uint32_t>(0);
+                writer.write<uint32_t>(tower ? 1 : 0);
                 writer.write_pointer_sized(maximum_towers);
                 writer.write_pointer_sized(0);
-                writer.write_pointer_sized(0);
-                writer.write<uint32_t>(endpoint_not_registered);
+                writer.write_pointer_sized(tower ? 1 : 0);
+                if (tower)
+                {
+                    writer.write_ndr_pointer(true);
+                    writer.write_pointer_sized(tower->size());
+                    writer.write<uint32_t>(static_cast<uint32_t>(tower->size()));
+                    writer.write(tower->data(), tower->size(), 1);
+                    writer.align_to(sizeof(uint32_t));
+                }
+                writer.write<uint32_t>(tower ? 0 : endpoint_not_registered);
                 return STATUS_SUCCESS;
+            }
+
+            // Answers the lookup tower of an interface an emulated service hosts: the same floors, with the endpoint floor
+            // naming that service's LRPC endpoint.
+            static std::optional<std::vector<uint8_t>> hosted_service_tower(const std::span<const uint8_t> arguments)
+            {
+                constexpr uint8_t uuid_protocol = 0x0d;
+                constexpr uint16_t floor_count = 4;
+                std::vector<uint8_t> pattern{0x13, 0x00, uuid_protocol};
+                pattern.insert(pattern.end(), nsi_service_interface.begin(), nsi_service_interface.end());
+                const auto match = std::ranges::search(arguments, pattern);
+                if (match.empty() || match.begin() - arguments.begin() < 2)
+                {
+                    return std::nullopt;
+                }
+
+                auto offset = static_cast<size_t>(match.begin() - arguments.begin()) - 2;
+                const auto read_u16 = [&](const size_t at) -> std::optional<uint16_t> {
+                    if (at + sizeof(uint16_t) > arguments.size())
+                    {
+                        return std::nullopt;
+                    }
+                    uint16_t value{};
+                    std::memcpy(&value, arguments.data() + at, sizeof(value));
+                    return value;
+                };
+                if (read_u16(offset) != floor_count)
+                {
+                    return std::nullopt;
+                }
+
+                std::vector<uint8_t> tower(arguments.begin() + static_cast<ptrdiff_t>(offset),
+                                           arguments.begin() + static_cast<ptrdiff_t>(offset + sizeof(uint16_t)));
+                offset += sizeof(uint16_t);
+                for (uint16_t floor = 0; floor < floor_count; ++floor)
+                {
+                    const auto lhs = read_u16(offset);
+                    if (!lhs || offset + 2 + *lhs > arguments.size())
+                    {
+                        return std::nullopt;
+                    }
+                    const auto rhs_at = offset + 2 + *lhs;
+                    const auto rhs = read_u16(rhs_at);
+                    if (!rhs || rhs_at + 2 + *rhs > arguments.size())
+                    {
+                        return std::nullopt;
+                    }
+
+                    tower.insert(tower.end(), arguments.begin() + static_cast<ptrdiff_t>(offset),
+                                 arguments.begin() + static_cast<ptrdiff_t>(rhs_at));
+                    if (floor + 1 == floor_count)
+                    {
+                        std::string endpoint{};
+                        for (const auto character : nsi_service_endpoint)
+                        {
+                            endpoint.push_back(static_cast<char>(character));
+                        }
+                        endpoint.push_back('\0');
+                        const auto size = static_cast<uint16_t>(endpoint.size());
+                        tower.insert(tower.end(), reinterpret_cast<const uint8_t*>(&size),
+                                     reinterpret_cast<const uint8_t*>(&size) + sizeof(size));
+                        tower.insert(tower.end(), endpoint.begin(), endpoint.end());
+                    }
+                    else
+                    {
+                        tower.insert(tower.end(), arguments.begin() + static_cast<ptrdiff_t>(rhs_at),
+                                     arguments.begin() + static_cast<ptrdiff_t>(rhs_at + 2 + *rhs));
+                    }
+                    offset = rhs_at + 2 + *rhs;
+                }
+                return tower;
             }
 
             uint64_t read_connection(connect_reader& reader) const

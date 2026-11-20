@@ -10,6 +10,7 @@
 #include "ports/dns_resolver.hpp"
 #include "ports/event_log.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/nsi_service.hpp"
 #include "ports/local_object_exporter.hpp"
 #include "ports/protected_storage.hpp"
 #include "ports/service_control.hpp"
@@ -346,6 +347,11 @@ namespace sogen
         if (port == u"\\RPC Control\\eventlog")
         {
             return create_event_log_port();
+        }
+
+        if (port == u"\\RPC Control\\" + std::u16string(nsi_service_endpoint))
+        {
+            return create_nsi_service_port();
         }
 
         if (port == u"\\RPC Control\\epmapper")
