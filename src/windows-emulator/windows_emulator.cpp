@@ -915,6 +915,7 @@ namespace sogen
           intercept_kusd_(settings.intercept_kusd),
           keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
+          steam_app_tickets_(settings.steam_app_tickets),
           elevated_(settings.elevated),
           max_display_mode_(settings.max_display_mode),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))

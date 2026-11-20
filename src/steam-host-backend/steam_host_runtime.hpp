@@ -202,6 +202,10 @@ namespace sogen::steam_host
         }
     }
 
+    // Whether the host granted encrypted app tickets and SteamAppId names a game rather than the Spacewar fallback.
+    // Defined in the backend TU; must be called with the backend lock held (as the thunks are).
+    bool app_tickets_granted();
+
     uint64_t register_returned_interface(const char* version, void* iface);
 
     // When a typed getter returns null (a modern host steamclient no longer vends a very old interface
