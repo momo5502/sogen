@@ -50,9 +50,9 @@ namespace sogen::test
             }
 
             template <typename Slot>
-            uint64_t make_expansion_slots()
+            uint64_t make_expansion_slots(emulator_allocator& slot_allocator)
             {
-                const auto slots = this->allocator->reserve(TLS_EXPANSION_SLOTS * sizeof(Slot), alignof(Slot));
+                const auto slots = slot_allocator.reserve(TLS_EXPANSION_SLOTS * sizeof(Slot), alignof(Slot));
                 std::vector<Slot> values(TLS_EXPANSION_SLOTS, static_cast<Slot>(untouched_slot));
                 this->emu->memory.write_memory(slots, values.data(), values.size() * sizeof(Slot));
                 return slots;
@@ -79,7 +79,7 @@ namespace sogen::test
 
         TEST_F(TlsZeroCellTest, ExpansionCellsClearTheirOwnSlot)
         {
-            const auto slots = this->make_expansion_slots<uint64_t>();
+            const auto slots = this->make_expansion_slots<uint64_t>(*this->allocator);
             this->write_pointer(this->thread->teb64->value() + offsetof(TEB64, TlsExpansionSlots), slots);
 
             ASSERT_EQ(STATUS_SUCCESS, this->zero_cell(TLS_MINIMUM_AVAILABLE));
@@ -94,8 +94,16 @@ namespace sogen::test
         TEST_F(TlsZeroCellTest, Wow64ExpansionCellsClearTheirOwnSlot)
         {
             constexpr auto untouched_slot32 = static_cast<uint32_t>(untouched_slot);
-            const auto slots = this->make_expansion_slots<uint32_t>();
-            const auto teb32 = this->allocator->reserve<TEB32>();
+            // A WoW64 TEB holds 32-bit pointers, so the slot array and the TEB itself live below 4 GiB.
+            constexpr size_t low_size = 0x10000;
+            const auto low = this->emu->memory.allocate_memory(low_size, memory_permission::read_write, false, 0x10000,
+                                                               memory_region_kind::private_allocation, 0xFFFFFFFF);
+            ASSERT_NE(low, 0u);
+            ASSERT_LE(low + low_size, 0x100000000ull);
+            emulator_allocator low_allocator{this->emu->memory, low, low_size};
+
+            const auto slots = this->make_expansion_slots<uint32_t>(low_allocator);
+            const auto teb32 = low_allocator.reserve<TEB32>();
             this->write_pointer(teb32.value() + offsetof(TEB32, TlsExpansionSlots), static_cast<uint32_t>(slots));
             this->thread->teb32 = teb32;
             this->emu->process.is_wow64_process = true;
