@@ -1,5 +1,5 @@
 set(RAWPDB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory(raw_pdb EXCLUDE_FROM_ALL)
+add_subdirectory(raw_pdb EXCLUDE_FROM_ALL SYSTEM)
 
 add_library(cab-decoder STATIC
   libmspack/libmspack/mspack/system.c
