@@ -144,10 +144,17 @@ method). See `BLOCKED_INTERFACES` / `BLOCKED_METHODS` in `generate.py`. The bloc
   is Steam Cloud, an isolated per-app virtual filesystem the guest cannot escape to reach arbitrary host
   files; blocking it only broke legitimate cloud saves.
 - **Credential minting / account mutation** — `ISteamUser` auth tickets
-  (`GetAuthSessionTicket`/`GetAuthTicketForWebApi`/`RequestStoreAuthURL`/`*EncryptedAppTicket`/
-  `AdvertiseGame`), `ISteamGameServer::GetAuthSessionTicket`, `ISteamFriends` overlay-web /
+  (`GetAuthSessionTicket`/`GetAuthTicketForWebApi`/`RequestStoreAuthURL`/`AdvertiseGame`),
+  `ISteamGameServer::GetAuthSessionTicket`, `ISteamFriends` overlay-web /
   protocol-registration / persona-rename / social-send methods, and `ISteamRemoteStorage`
   `FileShare`/`Publish*` (post a file publicly under the host account).
+
+Encrypted app tickets (`ISteamUser::RequestEncryptedAppTicket`/`GetEncryptedAppTicket`) are denied the same
+way unless the host passes `--steam-app-tickets`, which requires `--network live`. They authenticate the host
+account to the game's publisher, which DRM such as Denuvo needs to activate. The grant is host configuration,
+enforced in the host backend (`APP_TICKET_METHODS` in `generate.py`); the guest cannot enable it. The host
+session must also run under the game's explicit `SteamAppId`, so a ticket is never issued for the Spacewar
+fallback.
 
 Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: with
 `--network live` the guest already has host network access through the emulated AFD socket device, so

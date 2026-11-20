@@ -97,6 +97,7 @@ namespace sogen
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
             network::network_mode network{network::network_mode::offline};
+            bool steam_app_tickets{false};
             std::optional<bool> instruction_precision{};
             bool native_timing{false};
             bool keep_guest_time{false};
@@ -163,6 +164,10 @@ namespace sogen
             }
             arguments.emplace_back("--network");
             arguments.emplace_back(network::to_string(options.network));
+            if (options.steam_app_tickets)
+            {
+                arguments.emplace_back("--steam-app-tickets");
+            }
             if (options.spoof_gpu_features)
             {
                 arguments.emplace_back("--spoof-gpu-features");
@@ -733,6 +738,7 @@ namespace sogen
                 .root_mode = options.root_mode,
                 .mounts = options.mounts,
                 .network = options.network,
+                .steam_app_tickets = options.steam_app_tickets,
                 .spoof_gpu_features = options.spoof_gpu_features,
                 .elevated = options.elevated,
             };
@@ -1272,6 +1278,9 @@ namespace sogen
             app.add_flag("--keep-guest-time", options.keep_guest_time,
                          "Keep the guest's time across snapshots: its clocks stand still while the process is saved or loaded "
                          "and continue from the save, as a game that times out without its server needs");
+            app.add_flag("--steam-app-tickets", options.steam_app_tickets,
+                         "Let the guest obtain encrypted app tickets from Steam. They authenticate your Steam account to the game's "
+                         "publisher, as DRM such as Denuvo needs. Requires --network live");
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
@@ -1365,6 +1374,10 @@ namespace sogen
                 }
 
                 options.network = network::parse_network_mode(network_name);
+                if (options.steam_app_tickets && options.network != network::network_mode::live)
+                {
+                    throw std::runtime_error("--steam-app-tickets requires --network live");
+                }
 
                 if (!backend_name.empty())
                 {
