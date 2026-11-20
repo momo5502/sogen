@@ -1487,30 +1487,14 @@ jobs:
           }
           EOF
 
-      # Some Gradle plugin markers (org.gradle.kotlin.kotlin-dsl) are published only on the Plugin Portal, which
-      # intermittently answers 404. Gradle does not retry a 404, so a build that failed to resolve a dependency runs
-      # again, refreshing what Gradle remembered as missing while keeping what earlier attempts downloaded. Other failures
-      # are not retried.
+      # Some plugin markers (org.gradle.kotlin.kotlin-dsl) are only on the Plugin Portal, which intermittently answers 404.
+      # A retry refreshes dependencies, since Gradle otherwise reuses the cached miss.
       - name: Build APK
         working-directory: app
-        shell: bash
         run: |
           for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
-            fi
-            set +e
-            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} 2>&1 | tee build.log
-            status=${PIPESTATUS[0]}
-            set -e
-            if [ "$status" -eq 0 ]; then
-              exit 0
-            fi
-            if ! grep -qE "was not found in any of the following sources|Could not resolve|Could not GET|Read timed out" build.log; then
-              exit "$status"
-            fi
-            echo "::warning::APK build attempt ${attempt} could not resolve a dependency"
-            [ "$attempt" -lt 3 ] && sleep 30
+            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} && exit 0
+            export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
           done
           exit 1
 
