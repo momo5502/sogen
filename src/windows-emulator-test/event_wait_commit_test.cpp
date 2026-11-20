@@ -67,6 +67,20 @@ namespace sogen::test
                 ASSERT_FALSE(thread.is_thread_ready(*this->emu));
             }
 
+            // Waits for all of the test event and a manual-reset event that is already signaled.
+            emulator_thread& register_wait_all()
+            {
+                const auto signaled_handle = this->allocator->reserve<handle>();
+                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateEvent(this->context(), signaled_handle, 0, {this->emu->memory},
+                                                                         NotificationEvent, TRUE));
+                auto& thread = this->waiting_thread();
+                thread.await_objects = {*this->emu->process.events.reference_of(this->event),
+                                        *this->emu->process.events.reference_of(signaled_handle.read())};
+                thread.await_any = false;
+                EXPECT_FALSE(thread.is_thread_ready(*this->emu));
+                return thread;
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             std::optional<emulator_allocator> allocator{};
             handle signaler{};
@@ -99,20 +113,23 @@ namespace sogen::test
         // a manual-reset event that is signaled, and the reset still finds the event signaled.
         TEST_P(EventWaitCommitTest, ResetAfterSetTakesTheSignalBackFromAWaitAllWaiter)
         {
-            const auto signaled_handle = this->allocator->reserve<handle>();
-            ASSERT_EQ(STATUS_SUCCESS,
-                      syscalls::handle_NtCreateEvent(this->context(), signaled_handle, 0, {this->emu->memory}, NotificationEvent, TRUE));
-            auto& thread = this->waiting_thread();
-            thread.await_objects = {*this->emu->process.events.reference_of(this->event),
-                                    *this->emu->process.events.reference_of(signaled_handle.read())};
-            thread.await_any = false;
-            ASSERT_FALSE(thread.is_thread_ready(*this->emu));
+            auto& thread = this->register_wait_all();
 
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetEvent(this->context(), this->event.bits, {this->emu->memory}));
             const auto previous_state = this->allocator->reserve<LONG>();
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtResetEvent(this->context(), this->event, previous_state));
 
             EXPECT_EQ(1, previous_state.read());
+            EXPECT_FALSE(thread.is_thread_ready(*this->emu));
+            EXPECT_FALSE(thread.pending_status.has_value());
+        }
+
+        TEST_P(EventWaitCommitTest, PulseDoesNotSatisfyAWaitAllWaiter)
+        {
+            auto& thread = this->register_wait_all();
+
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtPulseEvent(this->context(), this->event.bits, {this->emu->memory}));
+
             EXPECT_FALSE(thread.is_thread_ready(*this->emu));
             EXPECT_FALSE(thread.pending_status.has_value());
         }
