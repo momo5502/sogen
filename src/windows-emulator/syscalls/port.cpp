@@ -758,11 +758,14 @@ namespace sogen
             }
 
             // AlpcpReceiveMessage checks the receive attributes before it takes a message.
-            if (receive_message && receive_message_attributes &&
-                probe_range(c.win_emu, receive_message_attributes.value(), sizeof(ALPC_MESSAGE_ATTRIBUTES), memory_permission::write) !=
-                    STATUS_SUCCESS)
+            if (receive_message && receive_message_attributes)
             {
-                return STATUS_ACCESS_VIOLATION;
+                if (const auto status = probe_range(c.win_emu, receive_message_attributes.value(), sizeof(ALPC_MESSAGE_ATTRIBUTES),
+                                                    memory_permission::write);
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
             }
 
             auto result = port->handle_message(c.win_emu, context);
