@@ -1481,9 +1481,28 @@ jobs:
           }
           EOF
 
+      # Some Gradle plugin markers (org.gradle.kotlin.kotlin-dsl) are published only on the Plugin Portal, which
+      # intermittently answers 404. Gradle does not retry a 404, so a build that failed to resolve a dependency runs
+      # again; what earlier attempts downloaded stays cached. Other failures are not retried.
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            set +e
+            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} 2>&1 | tee build.log
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if ! grep -qE "was not found in any of the following sources|Could not resolve|Could not GET|Read timed out" build.log; then
+              exit "$status"
+            fi
+            echo "::warning::APK build attempt ${attempt} could not resolve a dependency"
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          exit 1
 
       # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
       # creates unit test tasks for the debug build type.
