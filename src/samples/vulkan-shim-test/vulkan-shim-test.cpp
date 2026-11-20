@@ -341,6 +341,33 @@ namespace
         return ok;
     }
 
+    // Runs `work` on one thread per worker and waits for every thread it started, so the workers' state may be released
+    // afterwards even when a thread could not be created.
+    template <typename Workers>
+    bool run_on_threads(Workers& workers, const LPTHREAD_START_ROUTINE work)
+    {
+        std::vector<HANDLE> threads{};
+        bool started_all = true;
+        for (auto& worker : workers)
+        {
+            const auto thread = CreateThread(nullptr, 0, work, &worker, 0, nullptr);
+            if (!thread)
+            {
+                started_all = false;
+                break;
+            }
+            threads.push_back(thread);
+        }
+
+        for (const auto thread : threads)
+        {
+            WaitForSingleObject(thread, INFINITE);
+            CloseHandle(thread);
+        }
+
+        return started_all;
+    }
+
     // vkFlushMappedMemoryRanges and vkInvalidateMappedMemoryRanges need no external synchronization on the memory object,
     // so two threads may sync disjoint, atom-aligned ranges of one mapping at once. Each thread writes its own range,
     // flushes it, invalidates it and checks that it still holds its own data: syncing a range must not move the bytes of
@@ -417,6 +444,7 @@ namespace
             VkDeviceSize size{};
             uint8_t tag{};
             uint32_t mismatches{};
+            uint32_t failed_calls{};
         };
 
         constexpr uint32_t iterations = 200;
@@ -432,8 +460,11 @@ namespace
             {
                 const auto value = static_cast<uint8_t>(worker.tag + i);
                 std::memset(worker.bytes + worker.offset, value, static_cast<size_t>(worker.size));
-                worker.flush(worker.device, 1, &range);
-                worker.invalidate(worker.device, 1, &range);
+                if (worker.flush(worker.device, 1, &range) != VK_SUCCESS || worker.invalidate(worker.device, 1, &range) != VK_SUCCESS)
+                {
+                    ++worker.failed_calls;
+                    continue;
+                }
                 for (VkDeviceSize b = 0; b < worker.size; ++b)
                 {
                     if (worker.bytes[worker.offset + b] != value)
@@ -459,25 +490,238 @@ namespace
                                       .tag = static_cast<uint8_t>(0x40 * (i + 1))};
         }
 
-        std::array<HANDLE, 2> threads{};
-        for (size_t i = 0; i < workers.size(); ++i)
-        {
-            threads[i] = CreateThread(nullptr, 0, run, &workers[i], 0, nullptr);
-        }
-        WaitForMultipleObjects(static_cast<DWORD>(threads.size()), threads.data(), TRUE, INFINITE);
-        for (const auto thread : threads)
-        {
-            CloseHandle(thread);
-        }
+        const auto started = run_on_threads(workers, run);
 
         unmap_memory(device, memory);
         free_memory(device, memory, nullptr);
 
         const auto mismatches = workers[0].mismatches + workers[1].mismatches;
-        std::printf("[shim-test] concurrent mapped ranges: memory type %u flags 0x%x atom %llu, %u/%u iterations lost data -> %s\n",
+        const auto failed_calls = workers[0].failed_calls + workers[1].failed_calls;
+        const auto ok = started && mismatches == 0 && failed_calls == 0;
+        std::printf("[shim-test] concurrent mapped ranges: memory type %u flags 0x%x atom %llu, %u/%u iterations lost data, %u failed "
+                    "syncs -> %s\n",
                     memory_type, memory_flags, static_cast<unsigned long long>(properties.limits.nonCoherentAtomSize), mismatches,
-                    iterations * 2, mismatches == 0 ? "PASS" : "FAIL");
-        return mismatches == 0;
+                    iterations * 2, failed_calls, ok ? "PASS" : "FAIL");
+        return ok;
+    }
+
+    // Command buffers from different pools may be recorded on different threads at the same time. Each thread keeps many
+    // command buffers in recording at once, each filling its own chunk of the thread's region with a value of its own; the
+    // GPU then runs every thread's last recordings, and each chunk must hold the value its command buffer recorded last.
+    bool test_parallel_command_recording(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                                         VkDevice device, VkQueue queue, uint32_t queue_family)
+    {
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
+        const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
+        const auto get_buffer_reqs =
+            reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
+        const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
+        const auto bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
+        const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
+        const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
+        const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+
+        struct recorder
+        {
+            PFN_vkBeginCommandBuffer begin{};
+            PFN_vkEndCommandBuffer end{};
+            PFN_vkCmdFillBuffer fill{};
+            VkCommandPool pool{};
+            std::array<VkCommandBuffer, 32> command_buffers{};
+            VkBuffer buffer{};
+            VkDeviceSize offset{};
+            uint32_t tag{};
+            uint32_t last_round{};
+            uint32_t failed_calls{};
+        };
+
+        constexpr size_t thread_count = 4;
+        constexpr uint32_t rounds = 40;
+        constexpr size_t buffers_per_thread = std::tuple_size_v<decltype(recorder::command_buffers)>;
+        constexpr VkDeviceSize chunk_size = 64;
+        constexpr VkDeviceSize region_size = chunk_size * buffers_per_thread;
+
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = region_size * thread_count;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (create_buffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] parallel recording: vkCreateBuffer failed\n");
+            return false;
+        }
+
+        VkMemoryRequirements reqs{};
+        get_buffer_reqs(device, buffer, &reqs);
+        VkPhysicalDeviceMemoryProperties memory_properties{};
+        get_memory_properties(physical_device, &memory_properties);
+        const auto type_index = find_memory_type(memory_properties, reqs.memoryTypeBits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.allocationSize = reqs.size;
+        allocate_info.memoryTypeIndex = type_index;
+
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (type_index == UINT32_MAX || allocate_memory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS ||
+            bind_buffer_memory(device, buffer, memory, 0) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] parallel recording: buffer memory setup failed\n");
+            if (memory)
+            {
+                free_memory(device, memory, nullptr);
+            }
+            destroy_buffer(device, buffer, nullptr);
+            return false;
+        }
+
+        std::array<recorder, thread_count> recorders{};
+        bool setup_ok = true;
+        for (size_t i = 0; i < recorders.size(); ++i)
+        {
+            auto& r = recorders[i];
+            r.begin = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+            r.end = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+            r.fill = reinterpret_cast<PFN_vkCmdFillBuffer>(get_instance_proc(instance, "vkCmdFillBuffer"));
+            r.buffer = buffer;
+            r.offset = region_size * i;
+            r.tag = static_cast<uint32_t>(i + 1) << 24;
+
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            pool_info.queueFamilyIndex = queue_family;
+
+            VkCommandBufferAllocateInfo command_buffer_info{};
+            command_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            command_buffer_info.commandBufferCount = static_cast<uint32_t>(buffers_per_thread);
+
+            if (create_command_pool(device, &pool_info, nullptr, &r.pool) != VK_SUCCESS)
+            {
+                setup_ok = false;
+                break;
+            }
+            command_buffer_info.commandPool = r.pool;
+            if (allocate_command_buffers(device, &command_buffer_info, r.command_buffers.data()) != VK_SUCCESS)
+            {
+                setup_ok = false;
+                break;
+            }
+        }
+
+        const auto record = [](LPVOID param) -> DWORD {
+            auto& r = *static_cast<recorder*>(param);
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+            for (uint32_t round = 0; round < rounds; ++round)
+            {
+                for (size_t b = 0; b < r.command_buffers.size(); ++b)
+                {
+                    if (r.begin(r.command_buffers[b], &begin_info) != VK_SUCCESS)
+                    {
+                        ++r.failed_calls;
+                    }
+                    r.fill(r.command_buffers[b], r.buffer, r.offset + chunk_size * b, chunk_size,
+                           r.tag | (round << 8) | static_cast<uint32_t>(b));
+                }
+                for (const auto command_buffer : r.command_buffers)
+                {
+                    if (r.end(command_buffer) != VK_SUCCESS)
+                    {
+                        ++r.failed_calls;
+                    }
+                }
+                r.last_round = round;
+            }
+            return 0;
+        };
+
+        const auto started = setup_ok && run_on_threads(recorders, record);
+
+        uint32_t failed_calls = 0;
+        std::vector<VkCommandBuffer> command_buffers{};
+        for (const auto& r : recorders)
+        {
+            failed_calls += r.failed_calls;
+            command_buffers.insert(command_buffers.end(), r.command_buffers.begin(), r.command_buffers.end());
+        }
+
+        bool ok = started && failed_calls == 0;
+        VkFence fence = VK_NULL_HANDLE;
+        if (ok)
+        {
+            VkFenceCreateInfo fence_info{};
+            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = static_cast<uint32_t>(command_buffers.size());
+            submit.pCommandBuffers = command_buffers.data();
+            ok = create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS && queue_submit(queue, 1, &submit, fence) == VK_SUCCESS &&
+                 wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) == VK_SUCCESS;
+        }
+
+        uint32_t wrong_chunks = 0;
+        void* mapped = nullptr;
+        if (ok && map_memory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS && mapped)
+        {
+            for (const auto& r : recorders)
+            {
+                for (size_t b = 0; b < r.command_buffers.size(); ++b)
+                {
+                    const auto expected = r.tag | (r.last_round << 8) | static_cast<uint32_t>(b);
+                    const auto* words = static_cast<const uint32_t*>(mapped) + (r.offset + chunk_size * b) / sizeof(uint32_t);
+                    for (VkDeviceSize w = 0; w < chunk_size / sizeof(uint32_t); ++w)
+                    {
+                        if (words[w] != expected)
+                        {
+                            ++wrong_chunks;
+                            break;
+                        }
+                    }
+                }
+            }
+            unmap_memory(device, memory);
+        }
+        else
+        {
+            ok = false;
+        }
+
+        if (fence)
+        {
+            destroy_fence(device, fence, nullptr);
+        }
+        for (const auto& r : recorders)
+        {
+            if (r.pool)
+            {
+                destroy_command_pool(device, r.pool, nullptr);
+            }
+        }
+        free_memory(device, memory, nullptr);
+        destroy_buffer(device, buffer, nullptr);
+
+        ok = ok && wrong_chunks == 0;
+        std::printf(
+            "[shim-test] parallel recording: %zu threads x %zu command buffers x %u rounds, %u failed calls, %u/%zu chunks wrong -> %s\n",
+            thread_count, buffers_per_thread, rounds, failed_calls, wrong_chunks, thread_count * buffers_per_thread, ok ? "PASS" : "FAIL");
+        return ok;
     }
 
     bool test_pipeline_cache(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
@@ -1513,6 +1757,7 @@ int main(int argc, char** argv)
     bool shader_identifier_test_ok = true;
     bool pipeline_cache_test_ok = true;
     bool concurrent_mapped_ranges_test_ok = true;
+    bool parallel_command_recording_test_ok = true;
     bool bc_formats_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
@@ -1799,6 +2044,8 @@ int main(int argc, char** argv)
                 }
                 pipeline_cache_test_ok = test_pipeline_cache(get_instance_proc, instance, device);
                 concurrent_mapped_ranges_test_ok = test_concurrent_mapped_ranges(get_instance_proc, instance, devices[0], device);
+                parallel_command_recording_test_ok =
+                    test_parallel_command_recording(get_instance_proc, instance, devices[0], device, queue, graphics_family);
 
                 destroy_device(device, nullptr);
             }
@@ -1812,7 +2059,7 @@ int main(int argc, char** argv)
 
     const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
                         transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok && bc_formats_test_ok &&
-                        concurrent_mapped_ranges_test_ok;
+                        concurrent_mapped_ranges_test_ok && parallel_command_recording_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }
