@@ -536,6 +536,7 @@ namespace
             PFN_vkBeginCommandBuffer begin{};
             PFN_vkEndCommandBuffer end{};
             PFN_vkCmdFillBuffer fill{};
+            PFN_vkCmdPipelineBarrier barrier{};
             VkCommandPool pool{};
             std::array<VkCommandBuffer, 32> command_buffers{};
             VkBuffer buffer{};
@@ -597,6 +598,7 @@ namespace
             r.begin = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
             r.end = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
             r.fill = reinterpret_cast<PFN_vkCmdFillBuffer>(get_instance_proc(instance, "vkCmdFillBuffer"));
+            r.barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get_instance_proc(instance, "vkCmdPipelineBarrier"));
             r.buffer = buffer;
             r.offset = region_size * i;
             r.tag = static_cast<uint32_t>(i + 1) << 24;
@@ -629,20 +631,31 @@ namespace
             VkCommandBufferBeginInfo begin_info{};
             begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
+            // The host reads the fills back after the fence: transfer writes must be made available to host reads.
+            VkMemoryBarrier to_host{};
+            to_host.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            to_host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+
             for (uint32_t round = 0; round < rounds; ++round)
             {
+                std::array<bool, std::tuple_size_v<decltype(recorder::command_buffers)>> recording{};
                 for (size_t b = 0; b < r.command_buffers.size(); ++b)
                 {
                     if (r.begin(r.command_buffers[b], &begin_info) != VK_SUCCESS)
                     {
                         ++r.failed_calls;
+                        continue;
                     }
+                    recording[b] = true;
                     r.fill(r.command_buffers[b], r.buffer, r.offset + chunk_size * b, chunk_size,
                            r.tag | (round << 8) | static_cast<uint32_t>(b));
+                    r.barrier(r.command_buffers[b], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &to_host, 0, nullptr,
+                              0, nullptr);
                 }
-                for (const auto command_buffer : r.command_buffers)
+                for (size_t b = 0; b < r.command_buffers.size(); ++b)
                 {
-                    if (r.end(command_buffer) != VK_SUCCESS)
+                    if (recording[b] && r.end(r.command_buffers[b]) != VK_SUCCESS)
                     {
                         ++r.failed_calls;
                     }
@@ -663,6 +676,7 @@ namespace
         }
 
         bool ok = started && failed_calls == 0;
+        bool pending = false;
         VkFence fence = VK_NULL_HANDLE;
         if (ok)
         {
@@ -672,8 +686,12 @@ namespace
             submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = static_cast<uint32_t>(command_buffers.size());
             submit.pCommandBuffers = command_buffers.data();
-            ok = create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS && queue_submit(queue, 1, &submit, fence) == VK_SUCCESS &&
-                 wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) == VK_SUCCESS;
+            ok = create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS && queue_submit(queue, 1, &submit, fence) == VK_SUCCESS;
+            if (ok && wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) != VK_SUCCESS)
+            {
+                ok = false;
+                pending = true;
+            }
         }
 
         uint32_t wrong_chunks = 0;
@@ -703,19 +721,23 @@ namespace
             ok = false;
         }
 
-        if (fence)
+        // Work the GPU may still run keeps its command buffers, fence and buffer alive.
+        if (!pending)
         {
-            destroy_fence(device, fence, nullptr);
-        }
-        for (const auto& r : recorders)
-        {
-            if (r.pool)
+            if (fence)
             {
-                destroy_command_pool(device, r.pool, nullptr);
+                destroy_fence(device, fence, nullptr);
             }
+            for (const auto& r : recorders)
+            {
+                if (r.pool)
+                {
+                    destroy_command_pool(device, r.pool, nullptr);
+                }
+            }
+            free_memory(device, memory, nullptr);
+            destroy_buffer(device, buffer, nullptr);
         }
-        free_memory(device, memory, nullptr);
-        destroy_buffer(device, buffer, nullptr);
 
         ok = ok && wrong_chunks == 0;
         std::printf(
