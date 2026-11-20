@@ -27,10 +27,8 @@ namespace sogen::test
             // The registration descriptor as winnsi marshals it: a ULONG, a unique pointer to the NPI_MODULEID and a ULONG (NDR64
             // keeps the 24-byte memory layout, classic NDR packs 12 bytes), then the module id: Length, Type and the union
             // with its discriminant, here a GUID.
-            std::vector<uint8_t> registration_descriptor(const uint32_t discriminant = 1) const
+            void write_registration_descriptor(utils::aligned_binary_writer& writer, const uint32_t discriminant) const
             {
-                std::vector<uint8_t> data{};
-                utils::aligned_binary_writer writer(data, this->pointer_size);
                 writer.write<uint32_t>(7);
                 writer.write_ndr_pointer(true);
                 writer.write<uint32_t>(1);
@@ -41,14 +39,22 @@ namespace sogen::test
                 const std::array<uint8_t, 16> guid{0xeb, 0x00, 0x4a, 0xf2, 0x51, 0x86, 0xd1, 0x11,
                                                    0x99, 0x89, 0x00, 0xa0, 0xc9, 0x0c, 0x0c, 0xd2};
                 writer.write(guid.data(), guid.size(), 4);
+            }
+
+            std::vector<uint8_t> registration_descriptor(const uint32_t discriminant = 1) const
+            {
+                std::vector<uint8_t> data{};
+                utils::aligned_binary_writer writer(data, this->pointer_size);
+                this->write_registration_descriptor(writer, discriminant);
                 return data;
             }
 
             // The descriptor, then the 8-byte structure the call passes by value.
             std::vector<uint8_t> registration_request(const uint32_t discriminant = 1) const
             {
-                auto data = this->registration_descriptor(discriminant);
+                std::vector<uint8_t> data{};
                 utils::aligned_binary_writer writer(data, this->pointer_size);
+                this->write_registration_descriptor(writer, discriminant);
                 writer.align_to(4);
                 writer.write<uint32_t>(0);
                 writer.write<uint32_t>(0);
