@@ -305,6 +305,9 @@ namespace sogen
         NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, handle port_handle, ULONG flags,
                                                     emulator_object<ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>> security_attribute);
         NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, handle port_handle, ULONG flags, handle context_handle);
+        NTSTATUS handle_NtAlpcCreateResourceReserve(const syscall_context& c, handle port_handle, ULONG flags, uint64_t message_size,
+                                                    emulator_object<handle> resource_id);
+        NTSTATUS handle_NtAlpcDeleteResourceReserve(const syscall_context& c, handle port_handle, ULONG flags, handle resource_id);
         NTSTATUS handle_NtAlpcCreatePortSection(const syscall_context& c, handle port_handle, ULONG flags, handle section_handle,
                                                 uint64_t section_size, emulator_object<handle> alpc_section_handle,
                                                 emulator_object<uint64_t> actual_section_size);
@@ -2220,6 +2223,8 @@ namespace sogen
         add_handler(NtCreateDebugObject);
         add_handler(NtReleaseWorkerFactoryWorker);
         add_handler(NtAlpcCreateSecurityContext);
+        add_handler(NtAlpcCreateResourceReserve);
+        add_handler(NtAlpcDeleteResourceReserve);
         add_handler(NtAlpcCreatePortSection);
         add_handler(NtAlpcDeletePortSection);
         add_handler(NtAlpcCreateSectionView);

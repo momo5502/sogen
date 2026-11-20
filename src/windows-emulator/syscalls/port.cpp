@@ -965,6 +965,61 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // A reserve guarantees the kernel can deliver the reply to an asynchronous request. Replies here are queued without a
+        // memory budget, so a reserve only has to be a valid identifier on its port.
+        NTSTATUS handle_NtAlpcCreateResourceReserve(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                    const uint64_t message_size, const emulator_object<handle> resource_id)
+        {
+            if (flags != 0 || message_size == 0 || !resource_id)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto* port = c.proc.ports.get(port_handle);
+            if (!port)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto* internal_port = port->get_internal_port();
+            if (internal_port->disconnected)
+            {
+                return STATUS_PORT_DISCONNECTED;
+            }
+
+            const auto reserve = internal_port->next_resource_reserve;
+            internal_port->next_resource_reserve += 4;
+            internal_port->resource_reserves.push_back(reserve);
+            handle value{};
+            value.bits = reserve;
+            resource_id.write(value);
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtAlpcDeleteResourceReserve(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                    const handle resource_id)
+        {
+            if (flags != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto* port = c.proc.ports.get(port_handle);
+            if (!port)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto& reserves = port->get_internal_port()->resource_reserves;
+            const auto reserve = std::ranges::find(reserves, resource_id.bits);
+            if (reserve == reserves.end())
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            reserves.erase(reserve);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, const handle port_handle, const ULONG flags,
                                                     const handle context_handle)
         {
