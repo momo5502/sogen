@@ -63,7 +63,7 @@ namespace sogen
         struct real_backend : steam_backend
         {
             explicit real_backend(const bool app_tickets)
-                : grants_(app_tickets ? sogen_steam_grant_app_tickets : 0u)
+                : grants_(app_tickets ? static_cast<uint32_t>(sogen_steam_grant_app_tickets) : 0u)
             {
             }
 
