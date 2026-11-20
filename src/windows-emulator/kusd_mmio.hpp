@@ -80,7 +80,10 @@ namespace sogen
         // QueryPerformanceCounter for a guest TSC value, as ntdll computes it from the reference TSC page.
         uint64_t query_performance_counter(uint64_t tsc) const;
 
-        void refresh();
+        // Rewrites the page's time fields as KiUpdateTime does at every clock interrupt: once clock_interval (100 ns units)
+        // has passed since the last rewrite or the clock went back, and right away without an interval. Its callers hold the
+        // kernel lock or run while no vCPU does.
+        void refresh(ULONG clock_interval = 0);
 
       private:
         memory_manager* memory_{};
@@ -88,6 +91,7 @@ namespace sogen
 
         bool registered_{};
         bool intercept_{};
+        utils::clock::steady_time_point last_refresh_{};
 
         std::function<std::optional<native_tsc>()> read_tsc_{};
 

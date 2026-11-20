@@ -912,7 +912,6 @@ namespace sogen
           instruction_precision_(settings.use_instruction_precision && this->emu_->get_guest_cpu(0).supports_instruction_counting() &&
                                  this->emu_->supports_global_memory_execution_hooks()),
           intercept_rdtsc_(settings.intercept_rdtsc.value_or(this->emu_->supports_timestamp_counter_interception())),
-          intercept_kusd_(settings.intercept_kusd),
           keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
           elevated_(settings.elevated),
@@ -1172,6 +1171,10 @@ namespace sogen
             this->wake_idle_vcpu();
         }
 
+        // KiUpdateTime rewrites the KUSD's time at every clock interrupt. The vCPUs do it here, before a thread runs, and at
+        // their system calls, once a clock interval has passed: another thread can't write guest memory while a CPU runs
+        // on a backend such as Unicorn.
+        this->process.kusd.refresh(this->process.current_timer_resolution());
         return true;
     }
 
@@ -2060,10 +2063,9 @@ namespace sogen
         });
 
         const bool preempt_vcpus = !this->uses_instruction_precision() && this->emu().get_guest_cpu(0).is_stop_thread_safe();
-        const bool refresh_kusd = !this->intercept_kusd_;
-        if (preempt_vcpus || refresh_kusd)
+        if (preempt_vcpus)
         {
-            interrupt_thread = std::thread([&, preempt_vcpus, refresh_kusd] {
+            interrupt_thread = std::thread([&] {
                 while (!this->should_stop)
                 {
                     std::unique_lock lock{interrupt_mutex};
@@ -2078,29 +2080,20 @@ namespace sogen
 
                     this->page_protection_check_due_ = true;
 
-                    if (refresh_kusd)
+                    // Under the kernel lock so this switch_thread/stop() pair can't straddle a vCPU's
+                    // own scheduling step: perform_thread_switch consumes switch_thread (exchange to
+                    // false) under the lock, and a preemption whose switch request lands before that
+                    // consume while its stop() only lands inside the next quantum surfaces there as a
+                    // stop with no pending switch - the exact shape of a fatal wind-down, tearing the
+                    // whole run off at a random parked rip. Serialized against the scheduler, the pair
+                    // lands either fully before the consume (plain early switch) or fully inside the
+                    // running quantum (ordinary preemption), never split across it.
+                    const std::scoped_lock kernel_lock(this->kernel_lock_);
+                    for (uint32_t i = 0; i < this->vcpu_count_; ++i)
                     {
-                        const std::scoped_lock kernel_lock(this->kernel_lock_);
-                        this->process.kusd.refresh();
-                    }
-
-                    if (preempt_vcpus)
-                    {
-                        // Under the kernel lock so this switch_thread/stop() pair can't straddle a vCPU's
-                        // own scheduling step: perform_thread_switch consumes switch_thread (exchange to
-                        // false) under the lock, and a preemption whose switch request lands before that
-                        // consume while its stop() only lands inside the next quantum surfaces there as a
-                        // stop with no pending switch - the exact shape of a fatal wind-down, tearing the
-                        // whole run off at a random parked rip. Serialized against the scheduler, the pair
-                        // lands either fully before the consume (plain early switch) or fully inside the
-                        // running quantum (ordinary preemption), never split across it.
-                        const std::scoped_lock kernel_lock(this->kernel_lock_);
-                        for (uint32_t i = 0; i < this->vcpu_count_; ++i)
-                        {
-                            auto& v = this->vcpu(i);
-                            v.switch_thread = true;
-                            v.cpu.stop();
-                        }
+                        auto& v = this->vcpu(i);
+                        v.switch_thread = true;
+                        v.cpu.stop();
                     }
                 }
             });

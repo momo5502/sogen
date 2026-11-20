@@ -73,23 +73,16 @@ namespace sogen
             }
         }
 
-        // In 100 ns units: the coarsest and finest timer resolutions, and the resolution without this process' request.
+        // In 100 ns units: the coarsest and finest timer resolutions.
         constexpr ULONG coarsest_timer_resolution = 0x0002625a;
         constexpr ULONG finest_timer_resolution = 0x00001388;
-        constexpr ULONG default_timer_resolution = 0x00002710;
-
-        // A request can only make the timer finer, never coarser than it already is.
-        ULONG current_timer_resolution(const process_context& process)
-        {
-            return std::min(process.timer_resolution_request.value_or(default_timer_resolution), default_timer_resolution);
-        }
 
         NTSTATUS handle_NtQueryTimerResolution(const syscall_context& c, const emulator_object<ULONG> maximum_time,
                                                const emulator_object<ULONG> minimum_time, const emulator_object<ULONG> current_time)
         {
             maximum_time.write_if_valid(coarsest_timer_resolution);
             minimum_time.write_if_valid(finest_timer_resolution);
-            current_time.write_if_valid(current_timer_resolution(c.proc));
+            current_time.write_if_valid(c.proc.current_timer_resolution());
             return STATUS_SUCCESS;
         }
 
@@ -110,7 +103,7 @@ namespace sogen
                 status = STATUS_TIMER_RESOLUTION_NOT_SET;
             }
 
-            current_resolution.write_if_valid(current_timer_resolution(c.proc));
+            current_resolution.write_if_valid(c.proc.current_timer_resolution());
             return status;
         }
 
