@@ -71,14 +71,16 @@ namespace sogen::test
         };
     }
 
-    TEST_F(AlpcReplyAttributeTest, ReplyWithoutAViewClearsTheRequestsViewAttribute)
+    // Callers receive the reply into the attributes they sent the request with. A reply exposes only what it carries: this
+    // one has no view, handles or token, so none of the request's bits stay valid, and the allocation is kept.
+    TEST_F(AlpcReplyAttributeTest, ReplyReportsOnlyTheAttributesItCarries)
     {
-        // Callers receive the reply into the attributes they sent the request with.
-        constexpr ULONG allocated = ALPC_MESSAGE_VIEW_ATTRIBUTE | ALPC_MESSAGE_CONTEXT_ATTRIBUTE | ALPC_MESSAGE_TOKEN_ATTRIBUTE;
-        ASSERT_EQ(STATUS_SUCCESS, this->send_bind(allocated, ALPC_MESSAGE_VIEW_ATTRIBUTE | ALPC_MESSAGE_TOKEN_ATTRIBUTE));
+        constexpr ULONG request_bits = ALPC_MESSAGE_VIEW_ATTRIBUTE | ALPC_MESSAGE_HANDLE_ATTRIBUTE | ALPC_MESSAGE_TOKEN_ATTRIBUTE;
+        constexpr ULONG allocated = request_bits | ALPC_MESSAGE_CONTEXT_ATTRIBUTE;
+        ASSERT_EQ(STATUS_SUCCESS, this->send_bind(allocated, request_bits));
 
-        const auto valid = this->attributes().read().ValidAttributes;
-        EXPECT_EQ(0u, valid & ALPC_MESSAGE_VIEW_ATTRIBUTE);
-        EXPECT_NE(0u, valid & ALPC_MESSAGE_TOKEN_ATTRIBUTE);
+        const auto attributes = this->attributes().read();
+        EXPECT_EQ(allocated, attributes.AllocatedAttributes);
+        EXPECT_EQ(0u, attributes.ValidAttributes & request_bits);
     }
 }

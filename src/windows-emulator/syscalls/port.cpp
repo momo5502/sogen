@@ -567,9 +567,11 @@ namespace sogen
             return true;
         }
 
-        // Callers usually receive the reply into the attributes they sent the request with. A reply without a view must
-        // not keep reporting the request's view, or rpcrt4 reads it as a malformed small response.
-        void clear_reply_view_attribute(const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
+        // AlpcpExposeAttributes starts every receive with no valid attributes, and each attribute the message exposes sets
+        // its own bit. Callers usually receive the reply into the attributes they sent the request with, so keeping the
+        // request's bits would report a view or handles the reply does not carry (rpcrt4 then reads a reply without a view
+        // as a malformed small response).
+        void reset_reply_attributes(const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
         {
             if (!attributes)
             {
@@ -577,11 +579,8 @@ namespace sogen
             }
 
             auto header = attributes.read();
-            if ((header.ValidAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE) != 0)
-            {
-                header.ValidAttributes &= ~ALPC_MESSAGE_VIEW_ATTRIBUTE;
-                attributes.write(header);
-            }
+            header.ValidAttributes = 0;
+            attributes.write(header);
         }
 
         // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver via
@@ -765,6 +764,10 @@ namespace sogen
                     throw std::runtime_error("Unexpected success result returned by port handler");
                 }
 
+                // The send attributes were read before the request was handled, so the receive buffer, which may be the
+                // same one, can be rebuilt now.
+                reset_reply_attributes(receive_message_attributes);
+
                 if (!result.view_payload.empty())
                 {
                     const auto allocation_start = c.proc.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
@@ -792,10 +795,6 @@ namespace sogen
                     }
 
                     c.proc.pending_alpc_reply_views[port_key].push_back({view_base, view_size});
-                }
-                else
-                {
-                    clear_reply_view_attribute(receive_message_attributes);
                 }
 
                 result.message.write(receive_message);
