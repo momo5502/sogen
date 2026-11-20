@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -338,6 +339,145 @@ namespace
             free_memory(device, memory, nullptr);
         }
         return ok;
+    }
+
+    // vkFlushMappedMemoryRanges and vkInvalidateMappedMemoryRanges need no external synchronization on the memory object,
+    // so two threads may sync disjoint, atom-aligned ranges of one mapping at once. Each thread writes its own range,
+    // flushes it, invalidates it and checks that it still holds its own data: syncing a range must not move the bytes of
+    // the other one.
+    bool test_concurrent_mapped_ranges(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                                       VkDevice device)
+    {
+        const auto get_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceProperties"));
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
+        const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
+        const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
+        const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
+        const auto flush_ranges = reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(get_instance_proc(instance, "vkFlushMappedMemoryRanges"));
+        const auto invalidate_ranges =
+            reinterpret_cast<PFN_vkInvalidateMappedMemoryRanges>(get_instance_proc(instance, "vkInvalidateMappedMemoryRanges"));
+
+        VkPhysicalDeviceProperties properties{};
+        get_properties(physical_device, &properties);
+        VkPhysicalDeviceMemoryProperties memory_properties{};
+        get_memory_properties(physical_device, &memory_properties);
+
+        uint32_t memory_type = UINT32_MAX;
+        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
+        {
+            const auto flags = memory_properties.memoryTypes[i].propertyFlags;
+            if ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 &&
+                (memory_type == UINT32_MAX || (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0))
+            {
+                memory_type = i;
+            }
+        }
+
+        if (memory_type == UINT32_MAX)
+        {
+            std::printf("[shim-test] concurrent mapped ranges: no host-visible memory type\n");
+            return false;
+        }
+
+        const auto memory_flags = memory_properties.memoryTypes[memory_type].propertyFlags;
+        const auto atom = (std::max)(properties.limits.nonCoherentAtomSize, VkDeviceSize{256});
+        const auto range_size = atom * 16;
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.allocationSize = range_size * 2;
+        allocate_info.memoryTypeIndex = memory_type;
+
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (allocate_memory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] concurrent mapped ranges: vkAllocateMemory failed\n");
+            return false;
+        }
+
+        void* mapped = nullptr;
+        if (map_memory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS || !mapped)
+        {
+            free_memory(device, memory, nullptr);
+            std::printf("[shim-test] concurrent mapped ranges: vkMapMemory failed\n");
+            return false;
+        }
+
+        struct range_worker
+        {
+            VkDevice device{};
+            VkDeviceMemory memory{};
+            PFN_vkFlushMappedMemoryRanges flush{};
+            PFN_vkInvalidateMappedMemoryRanges invalidate{};
+            uint8_t* bytes{};
+            VkDeviceSize offset{};
+            VkDeviceSize size{};
+            uint8_t tag{};
+            uint32_t mismatches{};
+        };
+
+        constexpr uint32_t iterations = 200;
+        const auto run = [](LPVOID param) -> DWORD {
+            auto& worker = *static_cast<range_worker*>(param);
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = worker.memory;
+            range.offset = worker.offset;
+            range.size = worker.size;
+
+            for (uint32_t i = 0; i < iterations; ++i)
+            {
+                const auto value = static_cast<uint8_t>(worker.tag + i);
+                std::memset(worker.bytes + worker.offset, value, static_cast<size_t>(worker.size));
+                worker.flush(worker.device, 1, &range);
+                worker.invalidate(worker.device, 1, &range);
+                for (VkDeviceSize b = 0; b < worker.size; ++b)
+                {
+                    if (worker.bytes[worker.offset + b] != value)
+                    {
+                        ++worker.mismatches;
+                        break;
+                    }
+                }
+            }
+            return 0;
+        };
+
+        std::array<range_worker, 2> workers{};
+        for (size_t i = 0; i < workers.size(); ++i)
+        {
+            workers[i] = range_worker{.device = device,
+                                      .memory = memory,
+                                      .flush = flush_ranges,
+                                      .invalidate = invalidate_ranges,
+                                      .bytes = static_cast<uint8_t*>(mapped),
+                                      .offset = range_size * i,
+                                      .size = range_size,
+                                      .tag = static_cast<uint8_t>(0x40 * (i + 1))};
+        }
+
+        std::array<HANDLE, 2> threads{};
+        for (size_t i = 0; i < workers.size(); ++i)
+        {
+            threads[i] = CreateThread(nullptr, 0, run, &workers[i], 0, nullptr);
+        }
+        WaitForMultipleObjects(static_cast<DWORD>(threads.size()), threads.data(), TRUE, INFINITE);
+        for (const auto thread : threads)
+        {
+            CloseHandle(thread);
+        }
+
+        unmap_memory(device, memory);
+        free_memory(device, memory, nullptr);
+
+        const auto mismatches = workers[0].mismatches + workers[1].mismatches;
+        std::printf("[shim-test] concurrent mapped ranges: memory type %u flags 0x%x atom %llu, %u/%u iterations lost data -> %s\n",
+                    memory_type, memory_flags, static_cast<unsigned long long>(properties.limits.nonCoherentAtomSize), mismatches,
+                    iterations * 2, mismatches == 0 ? "PASS" : "FAIL");
+        return mismatches == 0;
     }
 
     bool test_pipeline_cache(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
@@ -1372,6 +1512,7 @@ int main(int argc, char** argv)
     bool transform_feedback_capabilities_ok = true;
     bool shader_identifier_test_ok = true;
     bool pipeline_cache_test_ok = true;
+    bool concurrent_mapped_ranges_test_ok = true;
     bool bc_formats_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
@@ -1657,6 +1798,7 @@ int main(int argc, char** argv)
                     shader_identifier_test_ok = test_shader_module_identifier(get_instance_proc, instance, device);
                 }
                 pipeline_cache_test_ok = test_pipeline_cache(get_instance_proc, instance, device);
+                concurrent_mapped_ranges_test_ok = test_concurrent_mapped_ranges(get_instance_proc, instance, devices[0], device);
 
                 destroy_device(device, nullptr);
             }
@@ -1669,7 +1811,8 @@ int main(int argc, char** argv)
     }
 
     const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
-                        transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok && bc_formats_test_ok;
+                        transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok && bc_formats_test_ok &&
+                        concurrent_mapped_ranges_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }
