@@ -689,8 +689,15 @@ namespace
             ok = create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS && queue_submit(queue, 1, &submit, fence) == VK_SUCCESS;
             if (ok && wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) != VK_SUCCESS)
             {
-                // Returns once the work completed or the device is lost; either way nothing is pending afterwards.
-                device_wait_idle(device);
+                // Only completion or device loss leave nothing pending; on any other failure the work may still be running,
+                // so the probe ends without destroying what it uses.
+                const auto idle = device_wait_idle(device);
+                if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST)
+                {
+                    std::printf("[shim-test] parallel recording: vkDeviceWaitIdle -> %d with work pending -> FAIL\n", idle);
+                    std::fflush(stdout);
+                    ExitProcess(1);
+                }
                 ok = false;
             }
         }
