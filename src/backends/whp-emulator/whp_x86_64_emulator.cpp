@@ -915,6 +915,14 @@ namespace sogen::whp
             return hits;
         }
 
+        // An execution hook's step that a stop deferred: the instruction the hook ran for, and the hooked page its fetch
+        // faulted on, the next page for an instruction that runs into the hooked page.
+        struct deferred_execution_hook
+        {
+            uint64_t instruction{};
+            uint64_t page_base{};
+        };
+
         struct pending_mmio_step
         {
             uint64_t page_base{};
@@ -1372,7 +1380,7 @@ namespace sogen::whp
             std::optional<pending_execution_step> pending_execution_step_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             std::optional<uint64_t> deferred_patched_breakpoint_{};
-            std::optional<uint64_t> deferred_execution_page_{};
+            std::optional<deferred_execution_hook> deferred_execution_hook_{};
         };
 
         class whp_x86_64_emulator : public x86_64_emulator
@@ -3769,15 +3777,23 @@ namespace sogen::whp
                         }
                     }
 
-                    if (!armed_single_step && vcpu.deferred_execution_page_)
+                    // The step an execution hook deferred (handle_execution_hook) is armed only for a run that starts at the
+                    // instruction the hook ran for. A run that starts at another instruction drops it, as a deferred patched
+                    // breakpoint is dropped, and the hook runs again when a thread gets there. Armed for such a run, the step
+                    // stood on a page its instruction never fetched from, and that thread's next execution hook threw "Nested WHP
+                    // execution single-step state is not supported".
+                    if (!armed_single_step && vcpu.deferred_execution_hook_)
                     {
-                        if (!this->arm_execution_single_step(vcpu, *vcpu.deferred_execution_page_, count == 1))
+                        const auto deferred = *std::exchange(vcpu.deferred_execution_hook_, std::nullopt);
+                        if (vcpu.read_instruction_pointer() == deferred.instruction)
                         {
-                            throw std::runtime_error("Nested WHP execution single-step state is not supported");
-                        }
+                            if (!this->arm_execution_single_step(vcpu, deferred.page_base, count == 1))
+                            {
+                                throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                            }
 
-                        vcpu.deferred_execution_page_.reset();
-                        armed_single_step = true;
+                            armed_single_step = true;
+                        }
                     }
 
                     if (!armed_single_step && count == 1 && !this->arm_execution_single_step(vcpu, std::nullopt, true))
@@ -4107,6 +4123,8 @@ namespace sogen::whp
                     }
                 }
 
+                // The instruction the hooks run for, which starts on the page before the hooked one when it runs into it.
+                const auto instruction = vcpu.read_instruction_pointer();
                 for (const auto& callback : callbacks)
                 {
                     callback(vcpu, address);
@@ -4114,7 +4132,7 @@ namespace sogen::whp
 
                 if (vcpu.stop_requested_)
                 {
-                    vcpu.deferred_execution_page_ = page_base;
+                    vcpu.deferred_execution_hook_ = deferred_execution_hook{.instruction = instruction, .page_base = page_base};
                     return true;
                 }
 
