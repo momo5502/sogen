@@ -25,8 +25,13 @@ namespace sogen::test
 
         void bind(std::u16string_view name, const std::array<uint8_t, 16>& interface_id, size_t width)
         {
+            this->bind(create_port(name), interface_id, width);
+        }
+
+        void bind(std::unique_ptr<port> port, const std::array<uint8_t, 16>& interface_id, size_t width)
+        {
             this->pointer_size = width;
-            this->endpoint = create_port(name);
+            this->endpoint = std::move(port);
             this->emu->memory.set_memory(this->storage, 0, 72);
             this->emu->memory.write_memory(this->storage, uint32_t{1});
             this->emu->memory.write_memory(this->storage + 12, interface_id.data(), interface_id.size());
@@ -34,7 +39,8 @@ namespace sogen::test
             EXPECT_EQ(STATUS_SUCCESS, this->request(72).status);
         }
 
-        lpc_request_result call(uint32_t procedure, std::span<const uint8_t> data)
+        // A caller that does not wait passes no reply buffer, which lets the service answer later.
+        lpc_request_result call(uint32_t procedure, std::span<const uint8_t> data, const bool wait_for_reply = true)
         {
             this->emu->memory.set_memory(this->storage, 0, 64);
             this->emu->memory.write_memory(this->storage + 12, uint32_t{1});
@@ -43,7 +49,40 @@ namespace sogen::test
             {
                 this->emu->memory.write_memory(this->storage + 64, data.data(), data.size());
             }
-            return this->request(static_cast<ULONG>(64 + data.size()));
+            return this->request(static_cast<ULONG>(64 + data.size()), wait_for_reply);
+        }
+
+        // Sends the call as an ALPC request message, the way NtAlpcSendWaitReceivePort hands it to the port. A sender that
+        // does not wait can have its reply deferred only when a completion port is there to deliver it.
+        lpc_message_result send_message(const uint32_t procedure, const std::span<const uint8_t> data, const bool wait_for_reply = true,
+                                        const bool has_completion_port = true)
+        {
+            constexpr uint64_t send_offset = 0x8000;
+            constexpr uint64_t receive_offset = 0xC000;
+            constexpr size_t receive_length = 0x4000;
+            constexpr size_t rpc_request_header_size = 64;
+
+            std::vector<uint8_t> body(rpc_request_header_size + data.size());
+            const auto call_id = ++this->last_call_id;
+            std::memcpy(body.data() + 12, &call_id, sizeof(call_id));
+            std::memcpy(body.data() + 20, &procedure, sizeof(procedure));
+            std::ranges::copy(data, body.begin() + rpc_request_header_size);
+
+            PORT_MESSAGE64 header{};
+            header.u1.s1.DataLength = static_cast<CSHORT>(body.size());
+            header.u1.s1.TotalLength = static_cast<CSHORT>(sizeof(header) + body.size());
+            header.u2.s2.Type = LPC_REQUEST;
+            this->emu->memory.write_memory(this->storage + send_offset, &header, sizeof(header));
+            this->emu->memory.write_memory(this->storage + send_offset + sizeof(header), body.data(), body.size());
+
+            lpc_message_context context{this->emu->memory};
+            context.send_message.set_address(this->storage + send_offset);
+            if (wait_for_reply)
+            {
+                context.receive_message.set_address(this->storage + receive_offset);
+                context.receive_buffer_length = receive_length;
+            }
+            return this->endpoint->handle_message(*this->emu, context, !wait_for_reply && has_completion_port);
         }
 
         template <typename T>
@@ -72,16 +111,17 @@ namespace sogen::test
         std::unique_ptr<port> endpoint{};
         uint64_t storage{};
         size_t pointer_size{};
+        uint32_t last_call_id{};
         // A fixture whose service reads the registry sets this in its constructor to load the root's hives.
         bool load_registry{};
 
       private:
-        lpc_request_result request(ULONG length)
+        lpc_request_result request(ULONG length, const bool wait_for_reply = true)
         {
             return this->endpoint->handle_request(*this->emu, {.send_buffer = this->storage,
                                                                .send_buffer_length = length,
-                                                               .recv_buffer = this->storage + 0x10000,
-                                                               .recv_buffer_length = 0x10000});
+                                                               .recv_buffer = wait_for_reply ? this->storage + 0x10000 : 0,
+                                                               .recv_buffer_length = wait_for_reply ? 0x10000u : 0u});
         }
     };
 }
