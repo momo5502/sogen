@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include "rpc_test_utils.hpp"
+#include <ports/nsi_service.hpp>
 
 namespace sogen::test
 {
@@ -131,6 +132,91 @@ namespace sogen::test
             }
             EXPECT_EQ(STATUS_NOT_SUPPORTED, this->call(2, {}).status);
         }
+    }
+
+    namespace
+    {
+        // A four-floor ncalrpc tower: the interface (UUID and major version, minor version), the NDR transfer syntax, LRPC
+        // and the endpoint name.
+        std::vector<uint8_t> lookup_tower(const std::array<uint8_t, 16>& interface_id)
+        {
+            std::vector<uint8_t> tower{};
+            const auto add = [&](const std::vector<uint8_t>& bytes) { tower.insert(tower.end(), bytes.begin(), bytes.end()); };
+            const auto floor = [&](std::vector<uint8_t> lhs, std::vector<uint8_t> rhs) {
+                add({static_cast<uint8_t>(lhs.size()), 0});
+                add(lhs);
+                add({static_cast<uint8_t>(rhs.size()), 0});
+                add(rhs);
+            };
+            add({4, 0});
+            std::vector<uint8_t> interface_lhs{0x0d};
+            interface_lhs.insert(interface_lhs.end(), interface_id.begin(), interface_id.end());
+            interface_lhs.insert(interface_lhs.end(), {1, 0});
+            floor(interface_lhs, {0, 0});
+            std::vector<uint8_t> syntax_lhs(19, 0x5a);
+            syntax_lhs[0] = 0x0d;
+            floor(syntax_lhs, {0, 0});
+            floor({0x0c}, {0, 0});
+            floor({0x10}, {'x', 0});
+            return tower;
+        }
+
+        std::vector<uint8_t> map_request(const size_t width, const std::optional<std::array<uint8_t, 16>>& object,
+                                         const std::vector<uint8_t>& tower)
+        {
+            std::vector<uint8_t> request;
+            utils::aligned_binary_writer writer(request, width);
+            writer.write_ndr_pointer(object.has_value());
+            if (object)
+            {
+                writer.write(object->data(), object->size(), 4);
+            }
+            writer.write_ndr_pointer(true);
+            writer.write_pointer_sized(tower.size());
+            writer.write<uint32_t>(static_cast<uint32_t>(tower.size()));
+            writer.write(tower.data(), tower.size(), 1);
+            writer.align_to(4);
+            writer.write(std::array<uint8_t, 20>{});
+            writer.write<uint32_t>(4);
+            return request;
+        }
+
+        bool contains(const std::vector<uint8_t>& data, const std::string_view text)
+        {
+            return !std::ranges::search(data, text).empty();
+        }
+    }
+
+    TEST_F(LocalObjectExporterTest, EndpointMapperAnswersTheNsiServiceTowerWithItsEndpoint)
+    {
+        for (const size_t width : {size_t{4}, size_t{8}})
+        {
+            this->bind(u"\\RPC Control\\epmapper", endpoint_mapper_interface, width);
+            const auto result = this->call(3, map_request(width, std::nullopt, lookup_tower(nsi_service_interface)));
+            ASSERT_EQ(STATUS_SUCCESS, result.status);
+            ASSERT_TRUE(result.payload.has_value());
+            EXPECT_EQ(1u, read<uint32_t>(*result.payload, 44));
+            EXPECT_TRUE(contains(*result.payload, "SogenNsiService"));
+            EXPECT_EQ(0u, read<uint32_t>(*result.payload, result.payload->size() - 4));
+        }
+    }
+
+    TEST_F(LocalObjectExporterTest, EndpointMapperOnlyReadsTheInterfaceFromTheTowerFloor)
+    {
+        constexpr std::array<uint8_t, 16> other_interface{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+        this->bind(u"\\RPC Control\\epmapper", endpoint_mapper_interface, 8);
+
+        // The NSI interface id as the object UUID, with a tower for another interface.
+        auto result = this->call(3, map_request(8, nsi_service_interface, lookup_tower(other_interface)));
+        ASSERT_TRUE(result.payload.has_value());
+        EXPECT_EQ(0x16c9a0d6u, read<uint32_t>(*result.payload, result.payload->size() - 4));
+
+        // A tower with trailing bytes past its last floor.
+        auto tower = lookup_tower(nsi_service_interface);
+        tower.push_back(0);
+        result = this->call(3, map_request(8, std::nullopt, tower));
+        ASSERT_TRUE(result.payload.has_value());
+        EXPECT_EQ(0x16c9a0d6u, read<uint32_t>(*result.payload, result.payload->size() - 4));
     }
 
     TEST_F(LocalObjectExporterTest, RegistrationSurvivesSerializationAndCanBeReleased)

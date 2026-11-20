@@ -14,8 +14,10 @@ namespace sogen
         constexpr uint32_t deregister_change_notification = 6;
         constexpr uint32_t request_change_notification = 7;
         constexpr uint32_t error_cancelled = 1223;
-        constexpr std::array<uint8_t, 8> registration_prefix{'S', 'o', 'g', 'e', 'n', 'N', 'S', 'I'};
+
+        // An NDR context handle: its attributes, then the 16-byte id the server handed out.
         constexpr size_t context_handle_size = 20;
+        constexpr std::array<uint8_t, 8> registration_prefix{'S', 'o', 'g', 'e', 'n', 'N', 'S', 'I'};
 
         std::array<uint8_t, context_handle_size> make_context_handle(const uint64_t registration)
         {
@@ -25,20 +27,32 @@ namespace sogen
             return handle;
         }
 
-        // The registration's context handle sits at a parameter-dependent offset; its marker identifies it.
-        std::optional<uint64_t> find_registration(const std::span<const uint8_t> request)
+        std::optional<uint64_t> read_registration(const std::span<const uint8_t> request, const size_t offset)
         {
-            for (size_t offset = 0; offset + context_handle_size <= request.size(); offset += 4)
+            if (offset > request.size() || request.size() - offset < context_handle_size)
             {
-                if (std::memcmp(request.data() + offset + 4, registration_prefix.data(), registration_prefix.size()) == 0)
-                {
-                    uint64_t registration{};
-                    std::memcpy(&registration, request.data() + offset + 4 + registration_prefix.size(), sizeof(registration));
-                    return registration;
-                }
+                return std::nullopt;
             }
-            return std::nullopt;
+
+            const auto handle = request.subspan(offset, context_handle_size);
+            uint32_t attributes{};
+            std::memcpy(&attributes, handle.data(), sizeof(attributes));
+            if (attributes != 0 || std::memcmp(handle.data() + 4, registration_prefix.data(), registration_prefix.size()) != 0)
+            {
+                return std::nullopt;
+            }
+
+            uint64_t registration{};
+            std::memcpy(&registration, handle.data() + 4 + registration_prefix.size(), sizeof(registration));
+            return registration;
         }
+
+        // A change request held until its registration closes, with the encoding its reply must use.
+        struct pending_change_request
+        {
+            uint64_t token{};
+            uint64_t pointer_size{};
+        };
 
         class nsi_service_port final : public rpc_port
         {
@@ -50,7 +64,6 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
-                this->pointer_size_ = writer.pointer_size();
 
                 std::vector<uint8_t> request(c.send_buffer_length);
                 if (!win_emu.memory.try_read_memory(c.send_buffer, request.data(), request.size()))
@@ -61,11 +74,11 @@ namespace sogen
                 switch (procedure)
                 {
                 case register_change_notification:
-                    return this->register_notification(writer);
+                    return this->register_notification(request, writer);
                 case deregister_change_notification:
                     return this->deregister_notification(request, writer);
                 case request_change_notification:
-                    return this->request_notification(request);
+                    return this->request_notification(request, writer.pointer_size());
                 default:
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -75,52 +88,67 @@ namespace sogen
             {
                 rpc_port::serialize_object(buffer);
                 buffer.write(this->next_registration_);
-                buffer.write_map(this->registrations_);
+                buffer.write_vector(std::vector<uint64_t>(this->registrations_.begin(), this->registrations_.end()));
+                buffer.write_map(this->pending_requests_);
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
             {
                 rpc_port::deserialize_object(buffer);
                 buffer.read(this->next_registration_);
-                buffer.read_map(this->registrations_);
+                std::vector<uint64_t> registrations{};
+                buffer.read_vector(registrations);
+                this->registrations_ = {registrations.begin(), registrations.end()};
+                buffer.read_map(this->pending_requests_);
             }
 
           private:
-            NTSTATUS register_notification(utils::aligned_binary_writer& writer)
+            // The request carries what to watch; a call without it is malformed.
+            NTSTATUS register_notification(const std::span<const uint8_t> request, utils::aligned_binary_writer& writer)
             {
+                if (request.empty())
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 const auto registration = this->next_registration_++;
-                this->registrations_.emplace(registration, uint64_t{0});
+                this->registrations_.insert(registration);
                 writer.write(make_context_handle(registration));
                 writer.write<uint32_t>(0);
                 return STATUS_SUCCESS;
             }
 
+            // The registration descriptor comes first and the [in, out] context handle last.
             NTSTATUS deregister_notification(const std::span<const uint8_t> request, utils::aligned_binary_writer& writer)
             {
-                const auto registration = find_registration(request);
-                const auto entry = registration ? this->registrations_.find(*registration) : this->registrations_.end();
-                if (entry == this->registrations_.end())
+                if (request.size() <= context_handle_size)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (entry->second != 0)
+                const auto registration = read_registration(request, request.size() - context_handle_size);
+                if (!registration || !this->registrations_.erase(*registration))
                 {
-                    this->complete_cancelled_request(entry->second);
+                    return STATUS_INVALID_PARAMETER;
                 }
-                this->registrations_.erase(entry);
+
+                if (const auto pending = this->pending_requests_.find(*registration); pending != this->pending_requests_.end())
+                {
+                    this->complete_cancelled_request(pending->second);
+                    this->pending_requests_.erase(pending);
+                }
 
                 writer.write(std::array<uint8_t, context_handle_size>{});
                 writer.write<uint32_t>(0);
                 return STATUS_SUCCESS;
             }
 
-            // The emulated network never changes, so a change request stays pending until its registration closes.
-            NTSTATUS request_notification(const std::span<const uint8_t> request)
+            // The context handle is the first parameter. The emulated network never changes, so a change request stays
+            // pending until its registration closes.
+            NTSTATUS request_notification(const std::span<const uint8_t> request, const size_t pointer_size)
             {
-                const auto registration = find_registration(request);
-                const auto entry = registration ? this->registrations_.find(*registration) : this->registrations_.end();
-                if (entry == this->registrations_.end() || entry->second != 0)
+                const auto registration = read_registration(request, 0);
+                if (!registration || !this->registrations_.contains(*registration) || this->pending_requests_.contains(*registration))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -130,15 +158,15 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
-                entry->second = *token;
+                this->pending_requests_.emplace(*registration, pending_change_request{.token = *token, .pointer_size = pointer_size});
                 return STATUS_SUCCESS;
             }
 
-            void complete_cancelled_request(const uint64_t token)
+            void complete_cancelled_request(const pending_change_request& pending)
             {
                 std::vector<uint8_t> reply{};
-                utils::aligned_binary_writer writer(reply, this->pointer_size_);
-                const bool ndr64 = this->pointer_size_ == utils::aligned_binary_writer::pointer_size_64;
+                utils::aligned_binary_writer writer(reply, static_cast<size_t>(pending.pointer_size));
+                const bool ndr64 = pending.pointer_size == utils::aligned_binary_writer::pointer_size_64;
                 // NDR64 widens enum16 to four bytes; classic NDR sends two.
                 const auto write_enum = [&](const uint32_t value) {
                     if (ndr64)
@@ -161,13 +189,13 @@ namespace sogen
                 write_enum(0); // notification type
                 writer.align_to(4);
                 writer.write<uint32_t>(error_cancelled);
-                this->complete_deferred_call(token, reply);
+                this->complete_deferred_call(pending.token, reply);
             }
 
-            size_t pointer_size_{utils::aligned_binary_writer::pointer_size_64};
             uint64_t next_registration_{1};
-            // Registration id to the token of its pending change request (0 while none is pending).
-            std::map<uint64_t, uint64_t> registrations_{};
+            std::set<uint64_t> registrations_{};
+            // Registration id to its pending change request.
+            std::map<uint64_t, pending_change_request> pending_requests_{};
         };
     }
 

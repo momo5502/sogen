@@ -59,6 +59,17 @@ namespace sogen
                 return this->data_.subspan(this->offset_);
             }
 
+            std::span<const uint8_t> bytes(const size_t count)
+            {
+                if (count > this->data_.size() - this->offset_)
+                {
+                    throw std::out_of_range("Truncated local object exporter request");
+                }
+                const auto result = this->data_.subspan(this->offset_, count);
+                this->offset_ += count;
+                return result;
+            }
+
             std::u16string string()
             {
                 if (this->pointer() == 0)
@@ -250,8 +261,23 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                // The map requests carry the lookup tower and, depending on the procedure, further parameters before the entry
-                // handle; max_towers is always the last argument.
+                // Every map procedure starts with the [unique] object UUID and the [unique] lookup tower (a conformant twr_t:
+                // its conformance, its length and its octets). Some add parameters before the entry handle; max_towers is
+                // always the last argument.
+                if (reader.pointer() != 0)
+                {
+                    (void)reader.read<std::array<uint32_t, 4>>();
+                }
+
+                std::vector<uint8_t> lookup_tower{};
+                if (reader.pointer() != 0)
+                {
+                    (void)reader.pointer();
+                    const auto tower_length = reader.read<uint32_t>();
+                    const auto octets = reader.bytes(tower_length);
+                    lookup_tower.assign(octets.begin(), octets.end());
+                }
+
                 const auto arguments = reader.remaining();
                 if (arguments.size() < sizeof(uint32_t))
                 {
@@ -260,7 +286,7 @@ namespace sogen
                 uint32_t maximum_towers{};
                 std::memcpy(&maximum_towers, arguments.data() + arguments.size() - sizeof(maximum_towers), sizeof(maximum_towers));
 
-                const auto tower = maximum_towers != 0 ? hosted_service_tower(arguments) : std::nullopt;
+                const auto tower = maximum_towers != 0 ? hosted_service_tower(lookup_tower) : std::nullopt;
                 writer.write(std::array<uint8_t, 20>{});
                 writer.write<uint32_t>(tower ? 1 : 0);
                 writer.write_pointer_sized(maximum_towers);
@@ -279,53 +305,56 @@ namespace sogen
             }
 
             // Answers the lookup tower of an interface an emulated service hosts: the same floors, with the endpoint floor
-            // naming that service's LRPC endpoint.
-            static std::optional<std::vector<uint8_t>> hosted_service_tower(const std::span<const uint8_t> arguments)
+            // naming that service's LRPC endpoint. A tower is a floor count, then floors of a length-prefixed protocol id and
+            // a length-prefixed address; the first floor names the interface (protocol 0x0d, its UUID and major version).
+            static std::optional<std::vector<uint8_t>> hosted_service_tower(const std::span<const uint8_t> lookup)
             {
-                constexpr uint8_t uuid_protocol = 0x0d;
                 constexpr uint16_t floor_count = 4;
-                std::vector<uint8_t> pattern{0x13, 0x00, uuid_protocol};
-                pattern.insert(pattern.end(), nsi_service_interface.begin(), nsi_service_interface.end());
-                const auto match = std::ranges::search(arguments, pattern);
-                if (match.empty() || match.begin() - arguments.begin() < 2)
-                {
-                    return std::nullopt;
-                }
+                constexpr uint8_t uuid_protocol = 0x0d;
+                constexpr size_t interface_lhs_size = 1 + 16 + sizeof(uint16_t);
+                constexpr size_t interface_rhs_size = sizeof(uint16_t);
 
-                auto offset = static_cast<size_t>(match.begin() - arguments.begin()) - 2;
+                size_t offset = 0;
                 const auto read_u16 = [&](const size_t at) -> std::optional<uint16_t> {
-                    if (at + sizeof(uint16_t) > arguments.size())
+                    if (at > lookup.size() || lookup.size() - at < sizeof(uint16_t))
                     {
                         return std::nullopt;
                     }
                     uint16_t value{};
-                    std::memcpy(&value, arguments.data() + at, sizeof(value));
+                    std::memcpy(&value, lookup.data() + at, sizeof(value));
                     return value;
                 };
-                if (read_u16(offset) != floor_count)
+
+                if (read_u16(0) != floor_count)
                 {
                     return std::nullopt;
                 }
-
-                std::vector<uint8_t> tower(arguments.begin() + static_cast<ptrdiff_t>(offset),
-                                           arguments.begin() + static_cast<ptrdiff_t>(offset + sizeof(uint16_t)));
                 offset += sizeof(uint16_t);
+
+                std::vector<uint8_t> tower(lookup.begin(), lookup.begin() + sizeof(uint16_t));
                 for (uint16_t floor = 0; floor < floor_count; ++floor)
                 {
                     const auto lhs = read_u16(offset);
-                    if (!lhs || offset + 2 + *lhs > arguments.size())
+                    if (!lhs || lookup.size() - offset - sizeof(uint16_t) < *lhs)
                     {
                         return std::nullopt;
                     }
-                    const auto rhs_at = offset + 2 + *lhs;
+                    const auto lhs_data = lookup.subspan(offset + sizeof(uint16_t), *lhs);
+                    const auto rhs_at = offset + sizeof(uint16_t) + *lhs;
                     const auto rhs = read_u16(rhs_at);
-                    if (!rhs || rhs_at + 2 + *rhs > arguments.size())
+                    if (!rhs || lookup.size() - rhs_at - sizeof(uint16_t) < *rhs)
                     {
                         return std::nullopt;
                     }
 
-                    tower.insert(tower.end(), arguments.begin() + static_cast<ptrdiff_t>(offset),
-                                 arguments.begin() + static_cast<ptrdiff_t>(rhs_at));
+                    if (floor == 0 && (*lhs != interface_lhs_size || *rhs != interface_rhs_size || lhs_data[0] != uuid_protocol ||
+                                       !std::ranges::equal(lhs_data.subspan(1, nsi_service_interface.size()), nsi_service_interface)))
+                    {
+                        return std::nullopt;
+                    }
+
+                    tower.insert(tower.end(), lookup.begin() + static_cast<ptrdiff_t>(offset),
+                                 lookup.begin() + static_cast<ptrdiff_t>(rhs_at));
                     if (floor + 1 == floor_count)
                     {
                         std::string endpoint{};
@@ -341,10 +370,15 @@ namespace sogen
                     }
                     else
                     {
-                        tower.insert(tower.end(), arguments.begin() + static_cast<ptrdiff_t>(rhs_at),
-                                     arguments.begin() + static_cast<ptrdiff_t>(rhs_at + 2 + *rhs));
+                        tower.insert(tower.end(), lookup.begin() + static_cast<ptrdiff_t>(rhs_at),
+                                     lookup.begin() + static_cast<ptrdiff_t>(rhs_at + sizeof(uint16_t) + *rhs));
                     }
-                    offset = rhs_at + 2 + *rhs;
+                    offset = rhs_at + sizeof(uint16_t) + *rhs;
+                }
+
+                if (offset != lookup.size())
+                {
+                    return std::nullopt;
                 }
                 return tower;
             }
