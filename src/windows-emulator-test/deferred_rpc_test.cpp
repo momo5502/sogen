@@ -243,8 +243,12 @@ namespace sogen::test
             bool dequeue()
             {
                 io_completion_message message{};
-                return io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message) &&
-                       message.key_context == completion_key;
+                if (!io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message))
+                {
+                    return false;
+                }
+                EXPECT_EQ(completion_key, message.key_context);
+                return true;
             }
 
             handle port_handle{};
@@ -268,7 +272,8 @@ namespace sogen::test
 
         ASSERT_EQ(STATUS_SUCCESS, this->call(complete_procedure, 0x33, true).status);
 
-        std::set<uint64_t> contexts{};
+        // Each reply carries the message context and the RPC call id of the call it answers.
+        std::set<std::pair<uint64_t, uint32_t>> answered{};
         for (int i = 0; i < 2; ++i)
         {
             ASSERT_TRUE(this->dequeue());
@@ -276,9 +281,9 @@ namespace sogen::test
             ASSERT_EQ(STATUS_SUCCESS, reply.status);
             ASSERT_GT(reply.payload.size(), rpc_response_header_size);
             EXPECT_EQ(completion_marker, reply.payload[rpc_response_header_size]);
-            contexts.insert(reply.message_context);
+            answered.emplace(reply.message_context, read<uint32_t>(reply.payload, 12));
         }
-        EXPECT_EQ((std::set<uint64_t>{0x11, 0x22}), contexts);
+        EXPECT_EQ((std::set<std::pair<uint64_t, uint32_t>>{{0x11, 2}, {0x22, 3}}), answered);
         EXPECT_FALSE(this->dequeue());
         EXPECT_FALSE(this->container().has_pending_reply());
     }
