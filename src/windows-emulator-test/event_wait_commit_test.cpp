@@ -8,6 +8,7 @@ namespace sogen::syscalls
     NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtPulseEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
+    NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, handle h, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
     NTSTATUS handle_NtResetEvent(const syscall_context& c, handle event_handle, emulator_object<LONG> previous_state);
 }
 
@@ -59,12 +60,16 @@ namespace sogen::test
                 return *this->emu->process.threads.get(this->waiter);
             }
 
+            // The waiter blocks in NtWaitForSingleObject, as WaitForSingleObject does.
             void register_wait()
             {
-                auto& thread = this->waiting_thread();
-                thread.await_objects = {*this->emu->process.events.reference_of(this->event)};
-                thread.await_any = true;
-                ASSERT_FALSE(thread.is_thread_ready(*this->emu));
+                auto& vcpu = this->emu->vcpu(0);
+                vcpu.active_thread = this->emu->process.threads.get(this->waiter);
+                const auto status = this->emu->synchronize(
+                    [&] { return syscalls::handle_NtWaitForSingleObject(this->context(), this->event, FALSE, {this->emu->memory}); });
+                vcpu.active_thread = this->emu->process.threads.get(this->signaler);
+                ASSERT_EQ(STATUS_SUCCESS, status);
+                ASSERT_FALSE(this->waiting_thread().is_thread_ready(*this->emu));
             }
 
             // Waits for all of the test event and a manual-reset event that is already signaled.

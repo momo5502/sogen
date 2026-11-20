@@ -3009,8 +3009,8 @@ namespace sogen
         const auto was_signaled = e.set_signaled(true);
         for (auto& thread : this->process.threads | std::views::values)
         {
-            // KeSetEvent ends wait-any waits right away. A wait-all waiter is only woken to check all its objects again when
-            // it runs, and the signal stays for that check.
+            // KeSetEvent ends wait-any waits (single-object waits included) right away. A wait-all waiter is only woken to
+            // check all its objects again when it runs, and the signal stays for that check.
             if (!thread.await_any)
             {
                 continue;
