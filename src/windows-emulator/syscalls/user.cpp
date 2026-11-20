@@ -361,10 +361,7 @@ namespace sogen
         {
             if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
-                    teb.Win32ClientInfo.arr[8] = active_handle;
-                    teb.Win32ClientInfo.arr[9] = active_window_ptr;
-                });
+                set_cached_window(*c.vcpu.active_thread->teb64, active_handle, active_window_ptr);
             }
         }
 
@@ -1365,8 +1362,7 @@ namespace sogen
                 return thread->win32k_thread_info;
             }
 
-            uint64_t thread_info{};
-            thread->teb64->access([&](const TEB64& teb) { thread_info = teb.Win32ThreadInfo; });
+            const auto thread_info = thread->teb64->field<std::uint64_t>(offsetof(TEB64, Win32ThreadInfo)).read();
 
             if (thread_info != 0)
             {
@@ -1392,19 +1388,17 @@ namespace sogen
             const auto low = static_cast<ULONG>(thread_info & 0xFFFFFFFFull);
             const auto high = static_cast<ULONG>((thread_info >> 32) & 0xFFFFFFFFull);
 
-            thread->teb64->access([&](TEB64& teb64) {
-                teb64.Win32ThreadInfo = thread_info;
-                teb64.User32Reserved.arr[13] = low;
-                teb64.User32Reserved.arr[14] = high;
-            });
+            const auto& teb64 = *thread->teb64;
+            teb64.field<std::uint64_t>(offsetof(TEB64, Win32ThreadInfo)).write(thread_info);
+            teb64.field<ULONG>(offsetof(TEB64, User32Reserved) + 13 * sizeof(ULONG)).write(low);
+            teb64.field<ULONG>(offsetof(TEB64, User32Reserved) + 14 * sizeof(ULONG)).write(high);
 
             if (c.proc.is_wow64_process && thread->teb32)
             {
-                thread->teb32->access([&](TEB32& teb32) {
-                    teb32.Win32ThreadInfo = low;
-                    teb32.User32Reserved[13] = low;
-                    teb32.User32Reserved[14] = high;
-                });
+                const auto& teb32 = *thread->teb32;
+                teb32.field<std::uint32_t>(offsetof(TEB32, Win32ThreadInfo)).write(low);
+                teb32.field<ULONG>(offsetof(TEB32, User32Reserved) + 13 * sizeof(ULONG)).write(low);
+                teb32.field<ULONG>(offsetof(TEB32, User32Reserved) + 14 * sizeof(ULONG)).write(high);
             }
         }
 
@@ -1417,7 +1411,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.proc.peb32->access([&](const PEB32& peb) { user_shared_info_ptr = peb.UserSharedInfoPtr; });
+            user_shared_info_ptr = c.proc.peb32->field<std::uint32_t>(offsetof(PEB32, UserSharedInfoPtr)).read();
 
             if (user_shared_info_ptr != 0)
             {
@@ -1435,7 +1429,7 @@ namespace sogen
                 return narrow_status;
             }
 
-            c.proc.peb32->access([&](PEB32& peb) { peb.UserSharedInfoPtr = user_shared_info_ptr32; });
+            c.proc.peb32->field<std::uint32_t>(offsetof(PEB32, UserSharedInfoPtr)).write(user_shared_info_ptr32);
             return STATUS_SUCCESS;
         }
 

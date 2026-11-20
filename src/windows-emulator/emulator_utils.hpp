@@ -193,6 +193,15 @@ namespace sogen
             return emulator_object<T>(*this->memory_, this->address_ + offset);
         }
 
+        // One field of the object at `offset`. Guest threads on other vCPUs update fields of shared structures such as
+        // the PEB and TEB while a syscall runs, so a runtime access must read and write only the field it means; access()
+        // would write the whole object back.
+        template <typename F>
+        emulator_object<F> field(const size_t offset) const
+        {
+            return emulator_object<F>(*this->memory_, this->address_ + offset);
+        }
+
         memory_interface* get_memory_interface() const
         {
             return this->memory_;

@@ -1196,13 +1196,13 @@ namespace sogen
                     {
                         pointer_size = sizeof(EmulatorTraits<Emu32>::PVOID);
                         tls_vector_address = cur_thread.teb32->value() + offsetof(TEB32, ThreadLocalStoragePointer);
-                        cur_thread.teb32->access([&tls_vector](const TEB32& teb32) { tls_vector = teb32.ThreadLocalStoragePointer; });
+                        tls_vector = cur_thread.teb32->field<std::uint32_t>(offsetof(TEB32, ThreadLocalStoragePointer)).read();
                     }
                     else
                     {
                         pointer_size = sizeof(EmulatorTraits<Emu64>::PVOID);
                         tls_vector_address = cur_thread.teb64->value() + offsetof(TEB64, ThreadLocalStoragePointer);
-                        cur_thread.teb64->access([&tls_vector](const TEB64& teb64) { tls_vector = teb64.ThreadLocalStoragePointer; });
+                        tls_vector = cur_thread.teb64->field<std::uint64_t>(offsetof(TEB64, ThreadLocalStoragePointer)).read();
                     }
 
                     if (!tls_vector)
@@ -1233,16 +1233,15 @@ namespace sogen
 
                         if (use_teb32)
                         {
-                            cur_thread.teb32->access([&new_tls_vector](TEB32& teb32) {
-                                teb32.ThreadLocalStoragePointer = static_cast<uint32_t>(new_tls_vector);
-                            });
+                            cur_thread.teb32->field<std::uint32_t>(offsetof(TEB32, ThreadLocalStoragePointer))
+                                .write(static_cast<uint32_t>(new_tls_vector));
                         }
                         else
                         {
-                            cur_thread.teb64->access([&new_tls_vector](TEB64& teb64) { teb64.ThreadLocalStoragePointer = new_tls_vector; });
+                            cur_thread.teb64->field<std::uint64_t>(offsetof(TEB64, ThreadLocalStoragePointer)).write(new_tls_vector);
                         }
 
-                        cur_thread.teb64->access([&entry](TEB64& teb64) { entry.ThreadId = teb64.ClientId.UniqueThread; });
+                        entry.ThreadId = cur_thread.teb64->field<CLIENT_ID64>(offsetof(TEB64, ClientId)).read().UniqueThread;
                         entry.OldTlsData = previous_tls_vector;
                     }
                     else if (tls_info.OperationType == ProcessTlsReplaceIndex)
