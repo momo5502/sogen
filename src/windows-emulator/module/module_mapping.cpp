@@ -541,6 +541,12 @@ namespace sogen
         section_file_range get_section_file_range(const IMAGE_SECTION_HEADER& section, const uint64_t section_size,
                                                   const uint64_t file_alignment, const uint64_t file_size)
         {
+            // The kernel fills a section with PointerToRawData 0 with zeros, whatever its SizeOfRawData.
+            if (section.PointerToRawData == 0)
+            {
+                return {};
+            }
+
             constexpr uint64_t sector_size = 0x200;
             const uint64_t raw_start = section.PointerToRawData;
             const uint64_t raw_end = raw_start + section.SizeOfRawData;
