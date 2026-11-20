@@ -965,14 +965,27 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // NtAlpcCreateResourceReserve hands out the reserve's handle with this bit set, and NtAlpcDeleteResourceReserve rejects
+        // an identifier without it (ntoskrnl.exe 10.0.19041).
+        constexpr ULONG resource_reserve_id_bit = 0x80000000;
+
         // A reserve guarantees the kernel can deliver the reply to an asynchronous request. Replies here are queued without a
         // memory budget, so a reserve only has to be a valid identifier on its port.
         NTSTATUS handle_NtAlpcCreateResourceReserve(const syscall_context& c, const handle port_handle, const ULONG flags,
-                                                    const uint64_t message_size, const emulator_object<handle> resource_id)
+                                                    const uint64_t message_size, const emulator_object<ULONG> resource_id)
         {
-            if (flags != 0 || message_size == 0 || !resource_id)
+            // AlpcpCreateReserve: a reserve holds at least a PORT_MESSAGE header and at most the largest ALPC message.
+            constexpr uint64_t minimum_message_size = 0x28;
+            constexpr uint64_t maximum_message_size = 0xFFD7;
+
+            if (flags != 0)
             {
                 return STATUS_INVALID_PARAMETER;
+            }
+
+            if (!is_writable_range(c.win_emu, resource_id.value(), sizeof(ULONG)))
+            {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             auto* port = c.proc.ports.get(port_handle);
@@ -987,19 +1000,27 @@ namespace sogen
                 return STATUS_PORT_DISCONNECTED;
             }
 
+            if (message_size < minimum_message_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (message_size > maximum_message_size)
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
             const auto reserve = internal_port->next_resource_reserve;
             internal_port->next_resource_reserve += 4;
             internal_port->resource_reserves.push_back(reserve);
-            handle value{};
-            value.bits = reserve;
-            resource_id.write(value);
+            resource_id.write(static_cast<ULONG>(reserve) | resource_reserve_id_bit);
             return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAlpcDeleteResourceReserve(const syscall_context& c, const handle port_handle, const ULONG flags,
-                                                    const handle resource_id)
+                                                    const ULONG resource_id)
         {
-            if (flags != 0)
+            if (flags != 0 || (resource_id & resource_reserve_id_bit) == 0)
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -1011,7 +1032,7 @@ namespace sogen
             }
 
             auto& reserves = port->get_internal_port()->resource_reserves;
-            const auto reserve = std::ranges::find(reserves, resource_id.bits);
+            const auto reserve = std::ranges::find(reserves, static_cast<uint64_t>(resource_id & ~resource_reserve_id_bit));
             if (reserve == reserves.end())
             {
                 return STATUS_INVALID_HANDLE;
