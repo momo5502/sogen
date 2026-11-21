@@ -7,7 +7,50 @@ namespace sogen
 
     namespace cpu_context
     {
-        void restore(x86_64_cpu& emu, const CONTEXT64& context)
+        namespace
+        {
+            // The 48-bit virtual address space: bit 47 extends into the upper bits of a canonical address.
+            constexpr int virtual_address_bits = 48;
+
+            uint64_t canonical_address(const uint64_t address)
+            {
+                constexpr int upper_bits = 64 - virtual_address_bits;
+                return static_cast<uint64_t>(static_cast<int64_t>(address << upper_bits) >> upper_bits);
+            }
+
+            struct control_registers
+            {
+                uint16_t code_selector{};
+                uint64_t rip{};
+                uint32_t eflags{};
+            };
+
+            // KiVerifyContextRecord gives a native process's context the 64-bit code selector. KxContextToKframes takes any
+            // other selector than that as the 32-bit one, under which RIP keeps 32 bits, and makes RIP canonical otherwise;
+            // EFlags keeps EFLAGS_USER_SANITIZE with IF set, and SS is always the data selector.
+            control_registers sanitized_control(const CONTEXT64& context, const bool wow64_process, const context_verification verification)
+            {
+                const bool native_code = verification == context_verification::verified && !wow64_process;
+                const auto code_selector = native_code || context.SegCs == user_code_selector ? user_code_selector : wow64_code_selector;
+                return {
+                    .code_selector = code_selector,
+                    .rip = code_selector == wow64_code_selector ? uint64_t{static_cast<uint32_t>(context.Rip)}
+                                                                : canonical_address(context.Rip),
+                    .eflags = (context.EFlags & eflags_user_legal) | eflags_interrupt,
+                };
+            }
+        }
+
+        void sanitize_control(CONTEXT64& context, const bool wow64_process, const context_verification verification)
+        {
+            const auto control = sanitized_control(context, wow64_process, verification);
+            context.SegCs = control.code_selector;
+            context.SegSs = user_data_selector;
+            context.Rip = control.rip;
+            context.EFlags = control.eflags;
+        }
+
+        void restore(x86_64_cpu& emu, const CONTEXT64& context, const bool wow64_process, const context_verification verification)
         {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
@@ -24,13 +67,15 @@ namespace sogen
 
             if ((context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
             {
-                emu.reg<uint16_t>(x86_register::ss, context.SegSs);
-                emu.reg<uint16_t>(x86_register::cs, context.SegCs);
+                const auto control = sanitized_control(context, wow64_process, verification);
 
-                emu.reg(x86_register::rip, context.Rip);
+                emu.reg<uint16_t>(x86_register::ss, user_data_selector);
+                emu.reg<uint16_t>(x86_register::cs, control.code_selector);
+
+                emu.reg(x86_register::rip, control.rip);
                 emu.reg(x86_register::rsp, context.Rsp);
 
-                emu.reg<uint32_t>(x86_register::eflags, context.EFlags);
+                emu.reg<uint32_t>(x86_register::eflags, control.eflags | eflags_always_one);
             }
 
             if ((context.ContextFlags & CONTEXT_INTEGER_64) == CONTEXT_INTEGER_64)

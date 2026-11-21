@@ -122,9 +122,9 @@ namespace sogen::test
         context.FltSave.ControlWord = default_control_word;
         context.FltSave.StatusWord = top_is_register_7;
         context.FltSave.TagWord = static_cast<BYTE>(only_register_7_in_use);
-        cpu_context::restore(cpu, context);
+        cpu_context::restore(cpu, context, false);
         context.FltSave.FloatRegisters[0] = one;
-        cpu_context::restore(cpu, context);
+        cpu_context::restore(cpu, context, false);
 
         cpu.reg(x86_register::rip, code);
         cpu.reg(x86_register::rdi, environment);

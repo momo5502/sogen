@@ -525,7 +525,7 @@ namespace sogen::test
             EXPECT_EQ(context.Rip, this->process_.rtl_user_thread_start);
             EXPECT_EQ(context.Rcx, start);
             EXPECT_EQ(context.Rdx, argument);
-            cpu_context::restore(*this->machine_, context);
+            cpu_context::restore(*this->machine_, context, false);
         }
         EXPECT_EQ(this->abi_.instruction_pointer(*this->machine_), this->process_.rtl_user_thread_start);
         EXPECT_EQ(this->abi_.function_argument(*this->machine_, 0), start);

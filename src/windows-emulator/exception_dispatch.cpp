@@ -436,6 +436,13 @@ namespace sogen
 
         // The kernel builds the dispatcher frame below the raising context's stack, not the syscall's.
         cpu.reg(x86_register::rsp, ctx.Rsp);
+
+        // KiDispatchException enters the dispatcher with the 64-bit code selector and the trap flag clear in the trap
+        // frame, while the CONTEXT it hands the handlers keeps the raised ones. The system call runs in 64-bit code, so
+        // the dispatcher is entered from there, also when a debugger that declined the exception was shown the raised
+        // selector.
+        cpu.reg<uint16_t>(x86_register::cs, cpu_context::user_code_selector);
+        cpu.reg<uint32_t>(x86_register::eflags, cpu.reg<uint32_t>(x86_register::eflags) & ~cpu_context::eflags_trap);
         sync_wow64_cpu_reserved_context(win_emu, cpu, vcpu.thread(), ctx);
 
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
