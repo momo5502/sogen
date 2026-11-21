@@ -644,8 +644,9 @@ namespace sogen
                            package_count == name.size() && request->size() >= 0x68 + name_bytes &&
                            std::memcmp(request->data() + 0x68, name.data(), name_bytes) == 0;
                 };
-                const auto package = std::ranges::find_if(k_schannel_package_names, is_requested_package);
-                if (package == k_schannel_package_names.end())
+                const auto package_index = static_cast<size_t>(std::ranges::find_if(k_schannel_package_names, is_requested_package) -
+                                                               k_schannel_package_names.begin());
+                if (package_index == k_schannel_package_names.size())
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -659,7 +660,7 @@ namespace sogen
                 ++this->credential_.acquisitions;
                 const auto start = writer.offset();
                 // sspicli expects the index of the package the credential was acquired through in the lower half.
-                writer.write<uint64_t>(static_cast<uint64_t>(package - k_schannel_package_names.begin()));
+                writer.write<uint64_t>(package_index);
                 writer.write<uint64_t>(this->credential_.handle.upper);
                 writer.write<uint64_t>(k_expiry);
                 write_callback_result(writer);
