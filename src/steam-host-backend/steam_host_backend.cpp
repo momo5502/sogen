@@ -25,6 +25,7 @@
 #include <unordered_set>
 
 #include "steam_host_runtime.hpp"
+#include "steam_interface_handles.hpp"
 #include "steam_host_backend.h"
 
 #include "steam_tags.generated.hxx"
@@ -57,14 +58,7 @@ namespace
     void (*g_freelastcallback)(int32_t) = nullptr;
     bool (*g_getapicallresult)(int32_t, uint64_t, void*, int32_t, int32_t, bool*) = nullptr;
 
-    struct entry
-    {
-        std::string version;
-        void* iface;
-    };
-
-    std::unordered_map<uint64_t, entry> g_handles;
-    uint64_t g_next_handle = 1;
+    sogen::steam_host::interface_handles g_handles;
 
 #ifdef _WIN32
     using lib_handle = HMODULE;
@@ -212,8 +206,7 @@ namespace sogen::steam_host
         return (g_call_grants & sogen_steam_grant_app_tickets) != 0 && g_game_app_id_configured;
     }
 
-    // Dedupes by pointer, so repeated getters for the same object share one handle.
-    uint64_t register_returned_interface(const char* version, void* iface)
+    uint64_t register_returned_interface(const char* version, void* iface, const interface_owner owner)
     {
         if (!iface || !version)
         {
@@ -224,21 +217,23 @@ namespace sogen::steam_host
             }
             return 0;
         }
-        for (const auto& [h, e] : g_handles)
-        {
-            if (e.iface == iface)
-            {
-                return h;
-            }
-        }
-        const uint64_t handle = g_next_handle++;
-        g_handles[handle] = {.version = std::string(version), .iface = iface};
+        const uint64_t handle = g_handles.add(version, iface, owner);
         if (std::getenv("SOGEN_STEAM_TRACE"))
         {
             std::fprintf(stderr, "[steam-returned-iface] version=%s -> handle=%llu\n", version, static_cast<unsigned long long>(handle));
             std::fflush(stderr);
         }
         return handle;
+    }
+
+    void release_pipe_interfaces(const int32_t pipe)
+    {
+        g_handles.release_pipe(pipe);
+    }
+
+    void release_user_interfaces(const int32_t pipe, const int32_t user)
+    {
+        g_handles.release_user(pipe, user);
     }
 
     void* host_resolve_fallback(const char* version)
@@ -338,13 +333,13 @@ extern "C" uint64_t sogen_steam_backend_create_interface(const char* version)
     {
         return 0;
     }
-    return sogen::steam_host::register_returned_interface(safe, iface);
+    return sogen::steam_host::register_returned_interface(safe, iface, {});
 }
 
 extern "C" void sogen_steam_backend_release(uint64_t handle)
 {
     std::lock_guard lock{g_mutex};
-    g_handles.erase(handle);
+    g_handles.remove(handle);
 }
 
 extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len, uint8_t* out,
@@ -360,14 +355,14 @@ extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, cons
     }
 
     std::lock_guard lock{g_mutex};
-    const auto it = g_handles.find(handle);
-    if (it == g_handles.end())
+    const auto* registered = g_handles.find(handle);
+    if (!registered)
     {
         return sh::steam_host_unknown_interface;
     }
 
-    const char* version = it->second.version.c_str();
-    void* iface = it->second.iface;
+    const char* version = registered->version.c_str();
+    void* iface = registered->iface;
     const unsigned char* inb = in ? in : reinterpret_cast<const unsigned char*>("");
     const uint32_t inlen = in ? in_len : 0;
 

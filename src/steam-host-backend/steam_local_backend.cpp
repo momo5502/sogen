@@ -295,9 +295,17 @@ namespace sogen::steam_host
         return false;
     }
 
-    uint64_t register_returned_interface(const char* version, void*)
+    uint64_t register_returned_interface(const char* version, void*, interface_owner)
     {
         return version ? open_interface(version) : 0;
+    }
+
+    void release_pipe_interfaces(int32_t)
+    {
+    }
+
+    void release_user_interfaces(int32_t, int32_t)
+    {
     }
 
     void* host_resolve_fallback(const char*)

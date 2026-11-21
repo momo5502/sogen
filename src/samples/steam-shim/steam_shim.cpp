@@ -25,6 +25,8 @@
 
 #include <steam_bridge_protocol.hpp>
 
+#include "sub_interface_proxies.hpp"
+
 namespace sb = sogen::steam_bridge;
 
 #include "steam_tags.generated.hxx"
@@ -76,6 +78,7 @@ namespace
 {
     std::mutex g_mutex;
     std::unordered_map<std::string, void*> g_interfaces; // version -> proxy (Steam interfaces are singletons)
+    sogen::steam_shim::sub_interface_proxies g_sub_interfaces;
 
     HANDLE bridge()
     {
@@ -155,8 +158,7 @@ void sogen::steam_shim::report_unsupported(const char* /*iface*/, const char* /*
 
 // A method returning a sub-interface hands us the host handle plus the exact version the game asked for.
 // Resolve a guest proxy for THAT version across every built tag (see the header): the interface that
-// returned it need not belong to the same SDK snapshot. Cache like top-level interfaces (Steam objects are
-// per-version singletons, and games may compare the pointers).
+// returned it need not belong to the same SDK snapshot.
 void* sogen::steam_shim::resolve_proxy(const char* version, uint64_t handle)
 {
     if (!version || !handle)
@@ -164,16 +166,7 @@ void* sogen::steam_shim::resolve_proxy(const char* version, uint64_t handle)
         return nullptr;
     }
     std::lock_guard lock{g_mutex};
-    if (const auto it = g_interfaces.find(version); it != g_interfaces.end())
-    {
-        return it->second;
-    }
-    void* proxy = sogen_make_proxy(version, handle);
-    if (proxy)
-    {
-        g_interfaces.emplace(version, proxy);
-    }
-    return proxy;
+    return g_sub_interfaces.resolve(handle, [&] { return sogen_make_proxy(version, handle); });
 }
 
 // The host drains all pending callbacks in one batch; we hand them back one at a time, as the
