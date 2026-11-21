@@ -1577,6 +1577,8 @@ namespace sogen::whp
                 }
 
                 std::unique_lock lock(this->partition_mutex_);
+                // Releases acknowledged since the last unmap may have left whole chunks idle.
+                this->guest_slabs_.trim(this->epoch_acknowledged());
 
                 bool can_batch_map = true;
                 for (size_t offset = 0; offset < size; offset += page_size)
