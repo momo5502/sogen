@@ -1,6 +1,7 @@
 ﻿#include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../smbios.hpp"
 
 namespace sogen
 {
@@ -9,6 +10,64 @@ namespace sogen
     {
         namespace
         {
+            // SYSTEM_FIRMWARE_TABLE_INFORMATION, followed by the table. Only the raw SMBIOS provider exists, and it has one
+            // table that it returns for any table ID, like ntoskrnl's.
+            NTSTATUS query_firmware_table(const syscall_context& c, const uint64_t system_information,
+                                          const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+            {
+                struct firmware_table_information
+                {
+                    uint32_t provider_signature;
+                    uint32_t action;
+                    uint32_t table_id;
+                    uint32_t table_buffer_length;
+                };
+
+                constexpr uint32_t raw_smbios_provider = 0x52534D42; // 'RSMB'
+                constexpr uint32_t enumerate_action = 0;
+                constexpr uint32_t get_action = 1;
+                constexpr uint32_t smbios_table_id = 0;
+
+                const auto write_return_length = [&](const uint32_t length) { return !return_length || return_length.try_write(length); };
+
+                firmware_table_information header{};
+                if (system_information_length < sizeof(header))
+                {
+                    return write_return_length(sizeof(header)) ? STATUS_INFO_LENGTH_MISMATCH : STATUS_ACCESS_VIOLATION;
+                }
+                if (!c.emu.try_read_memory(system_information, &header, sizeof(header)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                if (header.provider_signature != raw_smbios_provider)
+                {
+                    return STATUS_NOT_IMPLEMENTED;
+                }
+                if (header.action != enumerate_action && header.action != get_action)
+                {
+                    return STATUS_INVALID_PARAMETER_1;
+                }
+
+                const auto& smbios = smbios::raw_smbios_data();
+                const std::span<const uint8_t> table =
+                    header.action == get_action ? std::span{smbios}
+                                                : std::span{reinterpret_cast<const uint8_t*>(&smbios_table_id), sizeof(smbios_table_id)};
+
+                header.table_buffer_length = static_cast<uint32_t>(table.size());
+                const auto required = static_cast<uint32_t>(sizeof(header) + table.size());
+                if (!write_return_length(required) || !c.emu.try_write_memory(system_information, &header, sizeof(header)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                if (system_information_length < required)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                return c.emu.try_write_memory(system_information + sizeof(header), table.data(), table.size()) ? STATUS_SUCCESS
+                                                                                                               : STATUS_ACCESS_VIOLATION;
+            }
+
             // Physical memory has holes, so the page numbers span more than the simulated page count.
             constexpr uint32_t lowest_physical_page = 0x00000001;
             constexpr uint32_t highest_physical_page = 0x00c9c7ff;
@@ -912,9 +971,11 @@ namespace sogen
             case SystemCodeIntegrityPoliciesFullInformation:
             case SystemFeatureConfigurationInformation:
             case SystemFeatureConfigurationSectionInformation:
-            case SystemFirmwareTableInformation:
             case SystemPolicyInformation:
                 return STATUS_NOT_SUPPORTED;
+
+            case SystemFirmwareTableInformation:
+                return query_firmware_table(c, system_information, system_information_length, return_length);
 
             case SystemControlFlowTransition:
                 c.win_emu.callbacks.on_suspicious_activity("Warbird control flow transition");
