@@ -48,6 +48,7 @@ namespace sogen
         std::string encode_url_segment(const std::string_view value)
         {
             constexpr auto hex = "0123456789ABCDEF"sv;
+
             std::string result{};
             result.reserve(value.size());
             for (const auto character : value)
@@ -172,6 +173,7 @@ namespace sogen
                 const auto compressed_path = std::filesystem::path{slot->path.string() + ".compressed"};
                 const auto expanded_path =
                     slot->temporary_directory ? slot->path : std::filesystem::path{slot->path.string() + ".expanded"};
+
                 const auto compressed =
                     download_symbol(make_symbol_url(server, symbol_cache::store_relative_path(sig, true)), compressed_path);
                 if (compressed.success)
@@ -205,16 +207,9 @@ namespace sogen
                         });
                     }
                 }
-                std::filesystem::remove(compressed_path, ec);
 
-                if (expanded_path != slot->path)
-                {
-                    std::filesystem::remove(expanded_path, ec);
-                }
-                else
-                {
-                    std::filesystem::remove(slot->path, ec);
-                }
+                std::filesystem::remove(compressed_path, ec);
+                std::filesystem::remove(expanded_path != slot->path ? expanded_path : slot->path, ec);
             }
 
             const auto download = download_symbol(make_symbol_url(server, symbol_cache::store_relative_path(sig)), slot->path);
@@ -263,6 +258,7 @@ namespace sogen
             {
                 return symbol_server::result{.path = path, .origin = symbol_server::source::symbol_store};
             }
+
             if (pdb_validation_failed(validation.status))
             {
                 on_event(artifact_processing_event{
@@ -272,6 +268,7 @@ namespace sogen
                     .error = validation.error,
                 });
             }
+
             return std::nullopt;
         }
     }
@@ -290,10 +287,12 @@ namespace sogen
 
         const auto download_root = options.symbol_cache.value_or(symbol_cache::default_root());
         const auto target = symbol_cache::prepare_target(download_root, sig, on_event, module_name);
+
         if (target.status == symbol_cache::target_status::available)
         {
             return result{.path = target.path, .origin = source::cache};
         }
+
         if (target.status == symbol_cache::target_status::unavailable)
         {
             return std::nullopt;

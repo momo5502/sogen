@@ -71,8 +71,10 @@ namespace sogen
         windows_emulator* win_emu_{};
         symbol_options options_{};
         symbol_event_callback on_event_;
+
         std::unique_ptr<pdb_symbol_source> pdb_{};
         std::unique_ptr<map_symbol_source> map_{};
+
         utils::callback_id_type module_load_callback_{};
         utils::callback_id_type module_unload_callback_{};
         std::set<uint64_t> attempted_modules_{};

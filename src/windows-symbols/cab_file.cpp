@@ -39,10 +39,12 @@ namespace sogen
             const auto& context = *reinterpret_cast<cabinet_system*>(system);
             const auto reading = mode == MSPACK_SYS_OPEN_READ && std::strcmp(filename, "input") == 0;
             const auto writing = mode == MSPACK_SYS_OPEN_WRITE && std::strcmp(filename, "output") == 0;
+
             if (!reading && !writing)
             {
                 return nullptr;
             }
+
             const auto& path = *(reading ? context.input : context.output);
 #ifdef _WIN32
             auto* stream = _wfopen(path.c_str(), reading ? L"rb" : L"wb");
@@ -53,11 +55,13 @@ namespace sogen
             {
                 return nullptr;
             }
+
             auto* handle = new (std::nothrow) cabinet_stream{.stream = stream};
             if (!handle)
             {
                 std::fclose(stream);
             }
+
             return handle ? &handle->handle : nullptr;
         }
 
@@ -143,19 +147,24 @@ namespace sogen
         {
             throw std::runtime_error("CAB decoder offset ABI mismatch");
         }
+
         auto system = make_cabinet_system(cabinet_path, output_path);
         auto* decoder = mspack_create_cab_decompressor(&system.api);
         if (!decoder)
         {
             throw std::runtime_error("Failed to create CAB decoder");
         }
+
         const auto destroy_decoder = utils::finally([&] { mspack_destroy_cab_decompressor(decoder); });
+
         auto* cabinet = decoder->open(decoder, "input");
         if (!cabinet)
         {
             throw std::runtime_error("Invalid CAB artifact");
         }
+
         const auto close_cabinet = utils::finally([&] { decoder->close(decoder, cabinet); });
+
         mscabd_file* selected{};
         for (auto* file = cabinet->files; file; file = file->next)
         {
@@ -168,18 +177,24 @@ namespace sogen
                 selected = file;
             }
         }
+
         if (!selected)
         {
             throw std::runtime_error("CAB does not contain the requested PDB");
         }
-        auto cleanup = utils::finally([&] {
+
+        try
+        {
+            if (decoder->extract(decoder, selected, "output") != MSPACK_ERR_OK)
+            {
+                throw std::runtime_error("Failed to decompress CAB artifact");
+            }
+        }
+        catch (...)
+        {
             std::error_code ec{};
             std::filesystem::remove(output_path, ec);
-        });
-        if (decoder->extract(decoder, selected, "output") != MSPACK_ERR_OK)
-        {
-            throw std::runtime_error("Failed to decompress CAB artifact");
+            throw;
         }
-        cleanup.cancel();
     }
 }

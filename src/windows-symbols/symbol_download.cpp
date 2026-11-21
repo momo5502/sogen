@@ -59,6 +59,29 @@ namespace sogen
                 return 0;
             }
         }
+
+        void set_curl_options(CURL* curl, const std::string& url, std::ofstream& output, std::array<char, CURL_ERROR_SIZE>& error)
+        {
+            const auto set_curl_option = [curl]<typename T>(const CURLoption option, const T value) {
+                const auto code = curl_easy_setopt(curl, option, value);
+                if (code != CURLE_OK)
+                {
+                    throw std::runtime_error(curl_easy_strerror(code));
+                }
+            };
+            set_curl_option(CURLOPT_ERRORBUFFER, error.data());
+            set_curl_option(CURLOPT_URL, url.c_str());
+            set_curl_option(CURLOPT_PROTOCOLS_STR, "http,https");
+            set_curl_option(CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+            set_curl_option(CURLOPT_FOLLOWLOCATION, 1L);
+            set_curl_option(CURLOPT_MAXREDIRS, 10L);
+            set_curl_option(CURLOPT_FAILONERROR, 1L);
+            set_curl_option(CURLOPT_CONNECTTIMEOUT, 10L);
+            set_curl_option(CURLOPT_TIMEOUT, 120L);
+            set_curl_option(CURLOPT_NOSIGNAL, 1L);
+            set_curl_option(CURLOPT_WRITEFUNCTION, &write_download);
+            set_curl_option(CURLOPT_WRITEDATA, &output);
+        }
     }
 #endif
 
@@ -77,39 +100,27 @@ namespace sogen
             {
                 return {.reason = "Failed to initialize HTTP download"};
             }
+
             std::ofstream output{output_path, std::ios::binary | std::ios::trunc};
             if (!output)
             {
                 return {.reason = "Failed to open symbol download file"};
             }
+
             auto cleanup = utils::finally([&] {
                 output.close();
                 std::error_code ec{};
                 std::filesystem::remove(output_path, ec);
             });
-            const auto set_option = [&]<typename T>(const CURLoption option, const T value) {
-                const auto code = curl_easy_setopt(curl.get(), option, value);
-                if (code != CURLE_OK)
-                {
-                    throw std::runtime_error(curl_easy_strerror(code));
-                }
-            };
+
             std::array<char, CURL_ERROR_SIZE> error{};
-            set_option(CURLOPT_ERRORBUFFER, error.data());
-            set_option(CURLOPT_URL, url.c_str());
-            set_option(CURLOPT_PROTOCOLS_STR, "http,https");
-            set_option(CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-            set_option(CURLOPT_FOLLOWLOCATION, 1L);
-            set_option(CURLOPT_MAXREDIRS, 10L);
-            set_option(CURLOPT_FAILONERROR, 1L);
-            set_option(CURLOPT_CONNECTTIMEOUT, 10L);
-            set_option(CURLOPT_TIMEOUT, 120L);
-            set_option(CURLOPT_NOSIGNAL, 1L);
-            set_option(CURLOPT_WRITEFUNCTION, &write_download);
-            set_option(CURLOPT_WRITEDATA, &output);
+            set_curl_options(curl.get(), url, output, error);
+
             const auto code = curl_easy_perform(curl.get());
+
             long status{}; // NOLINT(google-runtime-int): CURLINFO_RESPONSE_CODE requires long* on every platform.
             (void)curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+
             if (code != CURLE_OK)
             {
                 if (status == 404)
@@ -118,11 +129,14 @@ namespace sogen
                 }
                 return {.reason = error[0] ? error.data() : curl_easy_strerror(code)};
             }
+
             output.close();
+
             if (!output)
             {
                 return {.reason = "Failed to write symbol download"};
             }
+
             cleanup.cancel();
             return {.success = true};
         }

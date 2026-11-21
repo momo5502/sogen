@@ -660,6 +660,7 @@ namespace sogen
             const auto export_entry = binary->address_names.find(address);
             const auto symbol_entry =
                 c.symbols && c.symbols->use_for_trace() ? binary->symbol_address_names.find(address) : binary->symbol_address_names.end();
+
             std::optional<std::string_view> function_name{};
             if (symbol_entry != binary->symbol_address_names.end())
             {
@@ -669,6 +670,7 @@ namespace sogen
             {
                 function_name = export_entry->second;
             }
+
             if (function_name)
             {
                 if (!c.settings->ignored_functions.contains(*function_name))

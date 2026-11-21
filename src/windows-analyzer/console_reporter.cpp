@@ -122,12 +122,12 @@ namespace sogen
                     return module;
                 }
 
+                std::string formatted = *function + " (" + module + ")";
                 if (raw_address)
                 {
-                    return *function + " (" + module + ") (0x" + utils::string::to_hex_number(*raw_address) + ")";
+                    formatted += " (0x" + utils::string::to_hex_number(*raw_address) + ")";
                 }
-
-                return *function + " (" + module + ")";
+                return formatted;
             }
 
             void report_symbol(const symbol_event& event)
@@ -139,16 +139,13 @@ namespace sogen
                             switch (e.status)
                             {
                             case map_load_status::started:
-                                log(color::cyan, "Loading MSVC MAP symbols for %s from %s\n", std::string(e.module).c_str(),
-                                    e.path.string().c_str());
+                                log(color::cyan, "Loading MSVC MAP symbols for %s from %s\n", e.module.c_str(), e.path.string().c_str());
                                 break;
                             case map_load_status::loaded:
-                                log(color::cyan, "Loaded MSVC MAP symbols for %s from %s\n", std::string(e.module).c_str(),
-                                    e.path.string().c_str());
+                                log(color::cyan, "Loaded MSVC MAP symbols for %s from %s\n", e.module.c_str(), e.path.string().c_str());
                                 break;
                             case map_load_status::failed:
-                                log(color::yellow, "Failed to load MAP symbols for %s: %s\n", std::string(e.module).c_str(),
-                                    e.error.c_str());
+                                log(color::yellow, "Failed to load MAP symbols for %s: %s\n", e.module.c_str(), e.error.c_str());
                                 break;
                             }
                         },
@@ -156,28 +153,28 @@ namespace sogen
                             switch (e.status)
                             {
                             case pdb_lookup_result::candidate_validation_failed: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 log(color::yellow, "Failed to validate sibling PDB for %s at %s: %s\n", name.c_str(),
-                                    e.path.string().c_str(), std::string(e.error).c_str());
+                                    e.path.string().c_str(), e.error.c_str());
                                 break;
                             }
                             case pdb_lookup_result::not_found: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 log(color::yellow, "No usable PDB found for %s in symbol caches or symbol servers\n", name.c_str());
                                 break;
                             }
                             case pdb_lookup_result::no_reference: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 log(color::cyan, "Skipping automatic PDB lookup for %s: no RSDS reference\n", name.c_str());
                                 break;
                             }
                             case pdb_lookup_result::no_candidates:
-                                log(color::cyan, "No PDB candidates for %s\n", std::string(e.module).c_str());
+                                log(color::cyan, "No PDB candidates for %s\n", e.module.c_str());
                                 break;
                             case pdb_lookup_result::found:
                                 break;
                             case pdb_lookup_result::invalid_filename: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 log(color::yellow, "Skipping symbol server lookup for %s: invalid PDB filename in debug signature\n",
                                     name.c_str());
                                 break;
@@ -207,7 +204,7 @@ namespace sogen
                                     source = "downloaded PDB";
                                     break;
                                 }
-                                log(color::cyan, "Loading PDB symbols for %s from %s: %s\n", std::string(e.module).c_str(), source,
+                                log(color::cyan, "Loading PDB symbols for %s from %s: %s\n", e.module.c_str(), source,
                                     e.path.string().c_str());
                                 break;
                             }
@@ -226,9 +223,9 @@ namespace sogen
                             }
                         },
                         [&](const cache_validation_event& e) {
-                            const auto name = std::string(e.module);
+                            const auto& name = e.module;
                             const auto file = e.path.string();
-                            const auto reason = std::string(e.error);
+                            const auto& reason = e.error;
                             log(color::yellow, "Failed to validate cached PDB for %s at %s: %s\n", name.c_str(), file.c_str(),
                                 reason.c_str());
                         },
@@ -236,20 +233,20 @@ namespace sogen
                             switch (e.status)
                             {
                             case cache_status::cleanup_failed: {
-                                const auto reason = std::string(e.error);
+                                const auto& reason = e.error;
                                 log(color::yellow, "PDB cache cleanup encountered an error: %s\n", reason.c_str());
                                 break;
                             }
                             case cache_status::removing: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 const auto file = e.path.string();
                                 log(color::yellow, "Removing unusable cached PDB for %s: %s\n", name.c_str(), file.c_str());
                                 break;
                             }
                             case cache_status::removal_failed: {
-                                const auto name = std::string(e.module);
+                                const auto& name = e.module;
                                 const auto file = e.path.string();
-                                const auto reason = std::string(e.error);
+                                const auto& reason = e.error;
                                 log(color::yellow, "Failed to remove unusable cached PDB for %s at %s: %s\n", name.c_str(), file.c_str(),
                                     reason.c_str());
                                 break;
@@ -260,21 +257,21 @@ namespace sogen
                             switch (e.status)
                             {
                             case download_status::started: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
                                 log(color::cyan, "Downloading PDB symbols for %s from %s\n", name.c_str(), host.c_str());
                                 break;
                             }
                             case download_status::not_found: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
                                 log(color::cyan, "PDB symbols for %s were not found on %s\n", name.c_str(), host.c_str());
                                 break;
                             }
                             case download_status::failed: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
                                 log(color::yellow, "Failed to download PDB symbols for %s from %s: %s\n", name.c_str(), host.c_str(),
                                     reason.c_str());
                                 break;
@@ -285,47 +282,47 @@ namespace sogen
                             switch (e.status)
                             {
                             case artifact_error::mismatch: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
                                 log(color::yellow, "Downloaded PDB for %s from %s did not match expected GUID and age\n", name.c_str(),
                                     host.c_str());
                                 break;
                             }
                             case artifact_error::invalid: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
                                 log(color::yellow, "Downloaded symbol artifact for %s from %s was not a usable PDB: %s\n", name.c_str(),
                                     host.c_str(), reason.c_str());
                                 break;
                             }
                             case artifact_error::cache_failed: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
                                 log(color::yellow, "Failed to cache downloaded PDB for %s from %s: %s\n", name.c_str(), host.c_str(),
                                     reason.c_str());
                                 break;
                             }
                             case artifact_error::create_file_failed: {
-                                const auto name = std::string(e.module);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& reason = e.error;
                                 log(color::yellow, "Failed to create a PDB download file for %s: %s\n", name.c_str(), reason.c_str());
                                 break;
                             }
                             case artifact_error::decompression_failed: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
                                 log(color::yellow,
                                     "Failed to decompress PDB for %s from %s, falling back to the uncompressed artifact: %s\n",
                                     name.c_str(), host.c_str(), reason.c_str());
                                 break;
                             }
                             case artifact_error::store_validation_failed: {
-                                const auto name = std::string(e.module);
-                                const auto host = std::string(e.server);
-                                const auto reason = std::string(e.error);
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
                                 log(color::yellow, "Failed to validate PDB for %s in symbol store %s: %s\n", name.c_str(), host.c_str(),
                                     reason.c_str());
                                 break;

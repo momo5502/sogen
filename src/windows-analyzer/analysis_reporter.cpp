@@ -213,6 +213,7 @@ namespace sogen
                 {
                     return;
                 }
+
                 std::string line{};
                 line.reserve(768);
 

@@ -97,26 +97,31 @@ namespace sogen
         }
 
         template <class Elem, class Traits, class Allocator>
-        std::basic_string<Elem, Traits, Allocator> trim_left(std::basic_string<Elem, Traits, Allocator> value)
+        std::basic_string_view<Elem, Traits> trim_left(const std::basic_string<Elem, Traits, Allocator>& value)
         {
-            const auto trimmed = trim_left(std::basic_string_view<Elem, Traits>{value});
-            value.erase(0, static_cast<size_t>(trimmed.data() - value.data()));
-            return value;
+            return trim_left(std::basic_string_view<Elem, Traits>{value});
         }
 
         template <class Elem, class Traits, class Allocator>
-        std::basic_string<Elem, Traits, Allocator> trim_right(std::basic_string<Elem, Traits, Allocator> value)
+        std::basic_string_view<Elem, Traits> trim_right(const std::basic_string<Elem, Traits, Allocator>& value)
         {
-            const auto trimmed = trim_right(std::basic_string_view<Elem, Traits>{value});
-            value.erase(trimmed.size());
-            return value;
+            return trim_right(std::basic_string_view<Elem, Traits>{value});
         }
 
         template <class Elem, class Traits, class Allocator>
-        std::basic_string<Elem, Traits, Allocator> trim(std::basic_string<Elem, Traits, Allocator> value)
+        std::basic_string_view<Elem, Traits> trim(const std::basic_string<Elem, Traits, Allocator>& value)
         {
-            return trim_right(trim_left(std::move(value)));
+            return trim(std::basic_string_view<Elem, Traits>{value});
         }
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string_view<Elem, Traits> trim_left(const std::basic_string<Elem, Traits, Allocator>&&) = delete;
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string_view<Elem, Traits> trim_right(const std::basic_string<Elem, Traits, Allocator>&&) = delete;
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string_view<Elem, Traits> trim(const std::basic_string<Elem, Traits, Allocator>&&) = delete;
 
         inline char char_to_lower(const char val)
         {

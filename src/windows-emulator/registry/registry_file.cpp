@@ -129,15 +129,14 @@ namespace sogen
 
                 if (!lines.empty())
                 {
-                    const auto previous = utils::string::trim_right(std::u16string_view{lines.back().second});
+                    const auto previous = utils::string::trim_right(lines.back().second);
                     const auto equals = find_assignment_separator(previous);
                     const auto value = equals ? utils::string::trim_left(previous.substr(*equals + 1)) : std::u16string_view{};
-                    const auto is_hex_continuation =
-                        previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, std::u16string_view{u"hex"});
+                    const auto is_hex_continuation = previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, u"hex"sv);
                     if (is_hex_continuation)
                     {
                         lines.back().second.resize(previous.size() - 1);
-                        const auto continuation = utils::string::trim_left(std::u16string_view{line});
+                        const auto continuation = utils::string::trim_left(line);
                         lines.back().second.append(continuation.begin(), continuation.end());
                     }
                     else
@@ -457,7 +456,7 @@ namespace sogen
 
                 if (!header_seen)
                 {
-                    if (!utils::string::equals_ignore_case(line, std::u16string{u"Windows Registry Editor Version 5.00"}))
+                    if (!utils::string::equals_ignore_case(line, u"Windows Registry Editor Version 5.00"sv))
                     {
                         throw parse_error(source_name, line_number, "missing or unsupported .reg file header");
                     }

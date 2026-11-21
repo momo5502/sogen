@@ -52,6 +52,7 @@ namespace sogen
             {
                 throw std::runtime_error("PDB stream exceeds file size");
             }
+
             std::vector<std::byte> result(size);
             for (size_t i = 0, offset = 0; offset < size; ++i)
             {
@@ -60,11 +61,13 @@ namespace sogen
                 {
                     throw std::runtime_error("Invalid PDB block index");
                 }
+
                 const auto count = std::min<size_t>(header.blockSize, size - offset);
                 const auto source = checked_slice(bytes, static_cast<size_t>(index) * header.blockSize, count);
                 std::memcpy(result.data() + offset, source.data(), count);
                 offset += count;
             }
+
             return result;
         }
 
@@ -89,6 +92,7 @@ namespace sogen
             {
                 throw std::runtime_error("Invalid PDB stream count");
             }
+
             const auto sizes = checked_slice(directory, sizeof(uint32_t), static_cast<size_t>(stream_count) * sizeof(uint32_t));
             size_t offset = sizeof(uint32_t) + sizes.size();
             for (uint32_t i = 0; i < stream_count; ++i)
@@ -98,10 +102,12 @@ namespace sogen
                 {
                     continue;
                 }
+
                 if (size > bytes.size() || size > std::numeric_limits<uint32_t>::max() - header.blockSize)
                 {
                     throw std::runtime_error("Invalid PDB stream size");
                 }
+
                 const auto count = block_count(size, header.blockSize);
                 const auto blocks = checked_slice(directory, offset, count * sizeof(uint32_t));
                 for (size_t j = 0; j < count; ++j)
@@ -147,6 +153,7 @@ namespace sogen
             {
                 throw std::runtime_error("Unsupported PDB info header");
             }
+
             const auto dbi = read_stream(file, 3);
             const auto dbi_header = read_dbi_header(stream_bytes(dbi));
             pdb_signature signature{
@@ -154,10 +161,12 @@ namespace sogen
                 .age = dbi_header.age,
                 .path = path.string(),
             };
+
             if (!signature.valid())
             {
                 throw std::runtime_error("Invalid PDB identity");
             }
+
             return signature;
         }
 
@@ -172,7 +181,9 @@ namespace sogen
             {
                 return;
             }
+
             const auto address = std::pair<uint32_t, uint32_t>{section, offset};
+
             if (replace)
             {
                 symbols.insert_or_assign(address, name);
@@ -193,7 +204,9 @@ namespace sogen
                 {
                     throw std::runtime_error("Invalid CodeView record size");
                 }
+
                 const auto payload = checked_slice(bytes, offset, size).subspan(sizeof(header));
+
                 switch (header.kind)
                 {
                 case record_kind::S_PUB32:
@@ -213,6 +226,7 @@ namespace sogen
                 default:
                     break;
                 }
+
                 offset = (offset + size + 3) & ~size_t{3};
             }
         }
@@ -223,26 +237,32 @@ namespace sogen
             {
                 const auto module = read_object<PDB::DBI::ModuleInfo>(modules, offset);
                 offset += sizeof(module);
+
                 for (size_t i = 0; i < 2; ++i)
                 {
                     const auto name = utils::safe_buffer_accessor{modules}.as_string(offset);
                     offset += name.size() + 1;
                 }
+
                 offset = (offset + 3) & ~size_t{3};
+
                 if (offset > modules.size())
                 {
                     throw std::runtime_error("Invalid PDB module alignment");
                 }
+
                 if (module.moduleSymbolStreamIndex == PDB::NilStreamIndex || module.symbolSize == 0)
                 {
                     continue;
                 }
+
                 const auto stream = read_stream(file, module.moduleSymbolStreamIndex);
                 const auto bytes = checked_slice(stream_bytes(stream), 0, module.symbolSize);
                 if (read_object<uint32_t>(bytes) != 4)
                 {
                     throw std::runtime_error("Unsupported CodeView module signature");
                 }
+
                 read_symbols(bytes.subspan(sizeof(uint32_t)), symbols);
             }
         }
@@ -266,9 +286,11 @@ namespace sogen
         {
             const auto data = utils::io::read_file(this->path_);
             validate_msf(data);
+
             const auto file = PDB::CreateRawFile(data.data());
             auto parsed_signature = read_signature(file, this->path_);
             symbol_map parsed_symbols{};
+
             const auto dbi = read_stream(file, 3);
             const auto bytes = stream_bytes(dbi);
             const auto header = read_dbi_header(bytes);
@@ -278,6 +300,7 @@ namespace sogen
                 read_symbols(stream_bytes(stream), parsed_symbols);
             }
             read_module_symbols(file, checked_slice(bytes, sizeof(header), header.moduleInfoSize), parsed_symbols);
+
             this->signature = std::move(parsed_signature);
             this->symbols = std::move(parsed_symbols);
             return {.success = true};
@@ -295,6 +318,7 @@ namespace sogen
         {
             return {.status = pdb_validation_status::validation_error, .error = "Failed to read PDB file"};
         }
+
         try
         {
             validate_msf(data);

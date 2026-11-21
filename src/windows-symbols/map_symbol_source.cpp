@@ -5,13 +5,37 @@
 
 #include <charconv>
 #include <fstream>
-#include <sstream>
 
 namespace sogen
 {
     namespace
     {
         using section_symbol_mapping = std::map<std::pair<uint32_t, uint32_t>, std::string>;
+
+        std::optional<std::pair<std::string_view, std::string_view>> parse_symbol_fields(std::string_view line)
+        {
+            constexpr std::string_view whitespace = " \t\r\n\f\v";
+
+            const auto address_end = line.find_first_of(whitespace);
+            if (address_end == std::string_view::npos)
+            {
+                return std::nullopt;
+            }
+
+            const auto address = line.substr(0, address_end);
+
+            line.remove_prefix(address_end);
+            const auto name_begin = line.find_first_not_of(whitespace);
+            if (name_begin == std::string_view::npos)
+            {
+                return std::nullopt;
+            }
+
+            line.remove_prefix(name_begin);
+            const auto name = line.substr(0, line.find_first_of(whitespace));
+
+            return std::pair{address, name};
+        }
 
         std::optional<std::pair<uint32_t, uint32_t>> parse_section_offset(const std::string_view value)
         {
@@ -54,7 +78,7 @@ namespace sogen
             std::string line{};
             while (std::getline(stream, line))
             {
-                const auto trimmed = utils::string::trim(std::move(line));
+                const auto trimmed = utils::string::trim(line);
                 if (trimmed.starts_with("Address") && trimmed.find("Publics by Value") != std::string::npos)
                 {
                     parsing_symbols = true;
@@ -66,22 +90,19 @@ namespace sogen
                     continue;
                 }
 
-                std::istringstream fields{trimmed};
-                std::string address{};
-                std::string name{};
-                fields >> address >> name;
-                if (address.empty() || name.empty())
+                const auto fields = parse_symbol_fields(trimmed);
+                if (!fields)
                 {
                     continue;
                 }
 
-                const auto section_offset = parse_section_offset(address);
+                const auto section_offset = parse_section_offset(fields->first);
                 if (!section_offset || section_offset->first == 0)
                 {
                     continue;
                 }
 
-                symbols.try_emplace(*section_offset, std::move(name));
+                symbols.try_emplace(*section_offset, fields->second);
             }
 
             if (symbols.empty())
@@ -128,6 +149,7 @@ namespace sogen
                     .path = input.path,
                     .error = {},
                 });
+
                 const auto symbols = parse_map(input.path);
                 size_t merged_symbols = 0;
                 for (const auto& [address, name] : symbols)
