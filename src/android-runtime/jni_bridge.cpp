@@ -214,7 +214,7 @@ extern "C"
         jstring steam_language, jbyteArray steam_ownership_ticket, jstring steam_ownership_ticket_digest, jstring sandbox_executable,
         jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory,
         jstring resume_file, jobjectArray registry_files, jobjectArray expanded_registry_files, jstring registry_state,
-        jobjectArray managed_arguments)
+        jobjectArray managed_arguments, jstring guest_shims_directory, jstring guest_shims_version)
     {
         sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -240,6 +240,8 @@ extern "C"
             .resume_file = to_string(*env, resume_file),
             .registry_state = to_string(*env, registry_state),
             .managed_arguments = to_strings(*env, managed_arguments),
+            .guest_shims_directory = to_string(*env, guest_shims_directory),
+            .guest_shims_version = to_string(*env, guest_shims_version),
         };
 
         try

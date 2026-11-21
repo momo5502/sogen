@@ -1353,6 +1353,7 @@ jobs:
   build-android-app:
     name: Build Android App
     runs-on: ubuntu-24.04
+    needs: [build-root-tools]
     steps:
       # The full history provides the commit count for the version code.
       - name: Checkout Source
@@ -1360,6 +1361,20 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Download Root Build Tools
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Temp Root Build Tools
+          path: build/root-tools
+
+      - name: Stage Matching Guest Shims
+        run: |
+          destination=app/android/app/src/main/assets/guest-shims
+          mkdir -p "$destination"
+          cp build/root-tools/{steamclient.dll,steamclient64.dll,vulkan-shim-x86.dll,vulkan-shim-x64.dll} "$destination/"
+          (cd "$destination" && sha256sum steamclient.dll steamclient64.dll vulkan-shim-x86.dll vulkan-shim-x64.dll) \
+            | sha256sum | cut -d' ' -f1 > "$destination/version"
 
       # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
       - name: Install Android NDK
@@ -1497,6 +1512,18 @@ jobs:
             export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
           done
           exit 1
+
+      - name: Verify Bundled Guest Shims
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          shims = Path("app/android/app/src/main/assets/guest-shims")
+          with ZipFile("app/build/app/outputs/flutter-apk/app-release.apk") as apk:
+              for shim in shims.iterdir():
+                  assert apk.read(f"assets/guest-shims/{shim.name}") == shim.read_bytes(), shim.name
+          PY
 
       # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
       # creates unit test tasks for the debug build type.
