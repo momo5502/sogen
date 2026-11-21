@@ -52,13 +52,14 @@ namespace sogen::smbios
             structure_table table{};
 
             // Type 0, BIOS: vendor, version, starting segment, release date, ROM size, characteristics (not
-            // supported), extension bytes, BIOS and firmware revisions.
+            // supported), extension bytes, BIOS and firmware revisions, extended ROM size.
             table.add(0,
                       {
                           1,    2,    0x00, 0xE8, 3, 0x00,       //
                           0x08, 0,    0,    0,    0, 0,    0, 0, //
                           0x00, 0x00,                            //
                           1,    0,    0xFF, 0xFF,                //
+                          0x00, 0x00,                            //
                       },
                       {"Sogen", "1.0", "01/01/2024"});
 

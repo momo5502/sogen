@@ -122,7 +122,8 @@ namespace sogen::test
     TEST_F(FirmwareTableTest, RawSmbiosQueryFollowsTheNativeBufferContract)
     {
         const auto table_size = static_cast<uint32_t>(smbios::raw_smbios_data().size());
-        const firmware_table_information request{.provider_signature = raw_smbios_provider, .action = 1, .table_buffer_length = 0xAAAA};
+        const firmware_table_information request{
+            .provider_signature = raw_smbios_provider, .action = 1, .table_id = 0, .table_buffer_length = 0xAAAA};
 
         EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH, this->query(request, 8));
         EXPECT_EQ(16u, this->returned_length());
@@ -132,7 +133,8 @@ namespace sogen::test
         EXPECT_EQ(16 + table_size, this->returned_length());
         EXPECT_EQ(table_size, this->header().table_buffer_length);
 
-        EXPECT_EQ(STATUS_SUCCESS, this->query({.provider_signature = raw_smbios_provider, .action = 1, .table_id = 5}, 0x1000));
+        EXPECT_EQ(STATUS_SUCCESS,
+                  this->query({.provider_signature = raw_smbios_provider, .action = 1, .table_id = 5, .table_buffer_length = 0}, 0x1000));
         EXPECT_EQ(16 + table_size, this->returned_length());
         std::vector<uint8_t> table(table_size);
         this->emu->memory.read_memory(this->buffer() + 16, table.data(), table.size());
@@ -141,7 +143,8 @@ namespace sogen::test
 
     TEST_F(FirmwareTableTest, RawSmbiosEnumeratesItsSingleTable)
     {
-        EXPECT_EQ(STATUS_SUCCESS, this->query({.provider_signature = raw_smbios_provider, .action = 0}, 0x100));
+        EXPECT_EQ(STATUS_SUCCESS,
+                  this->query({.provider_signature = raw_smbios_provider, .action = 0, .table_id = 0, .table_buffer_length = 0}, 0x100));
         EXPECT_EQ(20u, this->returned_length());
         EXPECT_EQ(4u, this->header().table_buffer_length);
         EXPECT_EQ(0u, this->emu->memory.read_memory<uint32_t>(this->buffer() + 16));
@@ -149,8 +152,15 @@ namespace sogen::test
 
     TEST_F(FirmwareTableTest, UnknownProvidersAndActionsAreRejected)
     {
-        EXPECT_EQ(STATUS_NOT_IMPLEMENTED, this->query({.provider_signature = 0x41424344, .action = 1}, 0x100));
-        EXPECT_EQ(STATUS_INVALID_PARAMETER_1, this->query({.provider_signature = raw_smbios_provider, .action = 2}, 0x100));
+        this->emu->memory.write_memory(this->storage, 0xBBBBu);
+        EXPECT_EQ(STATUS_NOT_IMPLEMENTED,
+                  this->query({.provider_signature = 0x41424344, .action = 1, .table_id = 0, .table_buffer_length = 0}, 0x100));
+        EXPECT_EQ(0u, this->returned_length());
+
+        this->emu->memory.write_memory(this->storage, 0xBBBBu);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER_1,
+                  this->query({.provider_signature = raw_smbios_provider, .action = 2, .table_id = 0, .table_buffer_length = 0}, 0x100));
+        EXPECT_EQ(0x100u, this->returned_length());
     }
 
     // RawSMBIOSData: calling method, SMBIOS major and minor version, DMI revision, table length, the DSP0134 table.
@@ -176,7 +186,7 @@ namespace sogen::test
         }
 
         // The minimum formatted lengths of the BIOS, system, baseboard and chassis structures DSP0134 defines.
-        for (const auto& [type, minimum] : std::initializer_list<std::pair<uint8_t, uint8_t>>{{0, 0x12}, {1, 0x1B}, {2, 0x08}, {3, 0x09}})
+        for (const auto& [type, minimum] : std::initializer_list<std::pair<uint8_t, uint8_t>>{{0, 0x1A}, {1, 0x1B}, {2, 0x08}, {3, 0x09}})
         {
             ASSERT_TRUE(by_type.contains(type)) << static_cast<int>(type);
             EXPECT_GE(by_type[type].length, minimum) << static_cast<int>(type);

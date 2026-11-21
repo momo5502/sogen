@@ -41,11 +41,11 @@ namespace sogen
                 }
                 if (header.provider_signature != raw_smbios_provider)
                 {
-                    return STATUS_NOT_IMPLEMENTED;
+                    return write_return_length(0) ? STATUS_NOT_IMPLEMENTED : STATUS_ACCESS_VIOLATION;
                 }
                 if (header.action != enumerate_action && header.action != get_action)
                 {
-                    return STATUS_INVALID_PARAMETER_1;
+                    return write_return_length(system_information_length) ? STATUS_INVALID_PARAMETER_1 : STATUS_ACCESS_VIOLATION;
                 }
 
                 const auto& smbios = smbios::raw_smbios_data();
