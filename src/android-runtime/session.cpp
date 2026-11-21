@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "session.hpp"
 
+#include <array>
 #include <future>
 #include <iterator>
 
@@ -11,6 +12,7 @@
 #include <managed_process_start.hpp>
 #include <utils/finally.hpp>
 #include <filesystem/document_mount.hpp>
+#include <filesystem/host_directory_provider.hpp>
 #include <filesystem/layered_provider.hpp>
 #include <registry/registry_file.hpp>
 #include <registry/registry_state_file.hpp>
@@ -24,6 +26,15 @@ namespace sogen::android
     {
         // Opening a document costs milliseconds, and games open the same few files over and over.
         constexpr size_t cached_document_descriptors = 64;
+
+        constexpr std::array bundled_shim_mounts{
+            std::pair{uR"(C:\steam\steamclient.dll)", "steamclient.dll"},
+            std::pair{uR"(C:\steam\steamclient64.dll)", "steamclient64.dll"},
+            std::pair{uR"(C:\windows\system32\vulkan-1.dll)", "vulkan-shim-x64.dll"},
+            std::pair{uR"(C:\windows\system32\winevulkan.dll)", "vulkan-shim-x64.dll"},
+            std::pair{uR"(C:\windows\syswow64\vulkan-1.dll)", "vulkan-shim-x86.dll"},
+            std::pair{uR"(C:\windows\syswow64\winevulkan.dll)", "vulkan-shim-x86.dll"},
+        };
 
         jstring make_java_string(JNIEnv& env, const std::u16string_view text)
         {
@@ -105,7 +116,8 @@ namespace sogen::android
                                         "\nmax-display-mode=" + (config.max_display_mode ? to_string(*config.max_display_mode) : "") +
                                         "\nsteam-app-id=" + std::to_string(config.steam_app_id) +
                                         "\nsteam-id=" + std::to_string(config.steam_id) + "\nsteam-language=" + config.steam_language +
-                                        "\nsteam-ownership-ticket=" + config.steam_ownership_ticket_digest + "\n";
+                                        "\nsteam-ownership-ticket=" + config.steam_ownership_ticket_digest +
+                                        "\nguest-shims=" + config.guest_shims_version + "\n";
             for (const auto& mount : config.directory_mounts)
             {
                 configuration += "directory=" + mount.host_directory.string() + ":" + mount.guest_path.string() + ":" +
@@ -228,6 +240,7 @@ namespace sogen::android
             auto settings = create_emulator_settings(config);
 
             std::vector<provider_mount> mounts{};
+            mounts.reserve(config.directory_mounts.size() + config.document_trees.size() + bundled_shim_mounts.size());
             for (const auto& mount : config.directory_mounts)
             {
                 mounts.push_back(provider_mount{
@@ -249,6 +262,24 @@ namespace sogen::android
                         std::make_unique<layered_provider>(std::make_unique<document_tree_provider>(tree.entries, std::move(source)),
                                                            tree.upper_directory, tree.state_directory),
                     .mode = filesystem_mode::copy_on_write,
+                });
+            }
+
+            if (config.guest_shims_directory.empty() || config.guest_shims_version.empty())
+            {
+                throw std::runtime_error("Bundled guest shims are missing");
+            }
+            for (const auto& [guest_path, name] : bundled_shim_mounts)
+            {
+                const auto host_path = config.guest_shims_directory / name;
+                if (!std::filesystem::is_regular_file(host_path))
+                {
+                    throw std::runtime_error("Bundled guest shim is missing: " + host_path.string());
+                }
+                mounts.push_back(provider_mount{
+                    .guest_path = windows_path{guest_path},
+                    .provider = std::make_unique<host_directory_provider>(host_path),
+                    .mode = filesystem_mode::read_only,
                 });
             }
 

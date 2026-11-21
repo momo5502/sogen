@@ -188,6 +188,13 @@ open class SogenService : Service() {
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
+        val shims = try {
+            GuestShims.prepare(File(filesDir, "guest-shims")) { assets.open("guest-shims/$it") }
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not load bundled guest shims", e)
+            reportFailure(callback, "Could not load bundled guest shims: ${e.message}")
+            return
+        }
         val mounts = try {
             resolveMounts(config)
         } catch (e: Exception) {
@@ -202,6 +209,7 @@ open class SogenService : Service() {
             mounts.second,
             if (sandbox.exists()) sandbox.path else "",
             prepareVulkanDriver(),
+            shims,
         )
         synchronized(statsSampler) {
             statsSampler.shutdownNow()

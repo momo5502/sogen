@@ -82,6 +82,8 @@ namespace sogen::android
         std::filesystem::path registry_state{};
         // What the parent's process manager passed to this child process; empty for the game itself.
         std::vector<std::string> managed_arguments{};
+        std::filesystem::path guest_shims_directory{};
+        std::string guest_shims_version{};
     };
 
     class session final : public ui_host

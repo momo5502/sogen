@@ -23,6 +23,23 @@ mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
 cp build/android-arm64/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 ```
 
+## Guest shims
+
+The APK carries the Steam and Vulkan guest DLLs built with its native runtime. `build-android-app` downloads the
+same workflow's `Temp Root Build Tools` artifact and stages `steamclient.dll`, `steamclient64.dll`,
+`vulkan-shim-x86.dll` and `vulkan-shim-x64.dll` in `android/app/src/main/assets/guest-shims/`. A `version` file
+contains the SHA-256 of their `sha256sum` listing, in that order.
+
+Every game service, including child processes, extracts these assets to private storage and mounts them read-only
+over `C:\steam\steamclient*.dll` and both `vulkan-1.dll` and `winevulkan.dll` in `system32`/`syswow64`. Downloading
+a newer root or retaining an older game's writable layer cannot replace these APK-matched DLLs. Missing bundled
+assets stop startup instead of falling back to the downloaded root's shims.
+
+For local APK builds, stage those four DLLs from a root-tools build of the same commit as the native libraries,
+then generate `version` with the `Stage Matching Guest Shims` command in `.github/workflows/ci-reusable.yml`.
+Updating the APK refreshes the private copies when the bundled DLLs change. Saved processes record this version;
+if it changes, start the game again rather than restoring its old DLL images.
+
 ## Steam
 
 Android has no Steam client, so the `android-app` preset builds the runtime with a Steam provider

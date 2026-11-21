@@ -52,6 +52,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         documentTrees: List<DocumentTree>,
         sandboxExecutable: String,
         vulkan: VulkanDriver,
+        shims: GuestShims,
     ): Int = nativeRun(
         handle,
         config.emulationRoot,
@@ -80,6 +81,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.expandedRegistryFiles.toTypedArray(),
         config.registryState,
         config.managedArguments.toTypedArray(),
+        shims.directory.path,
+        shims.version,
     )
 
     fun childStarted(request: Long, processId: Int) = nativeChildStarted(handle, request, processId)
@@ -139,6 +142,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         expandedRegistryFiles: Array<String>,
         registryState: String,
         managedArguments: Array<String>,
+        guestShimsDirectory: String,
+        guestShimsVersion: String,
     ): Int
 
     private external fun nativeChildStarted(handle: Long, request: Long, processId: Int)
