@@ -3293,7 +3293,6 @@ namespace sogen
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
         this->ui().reset();
-        this->audio().stop();
         this->console().reset();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
@@ -3497,7 +3496,6 @@ namespace sogen
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
         this->ui().reset();
-        this->audio().stop();
         this->console().reset();
 
         this->emu().deserialize_state(buffer, false);

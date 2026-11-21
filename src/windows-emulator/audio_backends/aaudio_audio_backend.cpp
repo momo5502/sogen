@@ -53,39 +53,32 @@ namespace sogen
             }
         }
 
-        class aaudio_audio_backend final : public audio_backend
+        // One AAudio output stream. Android mixes every stream an app has open.
+        class aaudio_audio_output final : public audio_output
         {
           public:
-            ~aaudio_audio_backend() override
+            explicit aaudio_audio_output(const audio_format& format)
+                : format_(format)
             {
-                this->stop();
             }
 
-            aaudio_audio_backend() = default;
-            aaudio_audio_backend(const aaudio_audio_backend&) = delete;
-            aaudio_audio_backend& operator=(const aaudio_audio_backend&) = delete;
-            aaudio_audio_backend(aaudio_audio_backend&&) = delete;
-            aaudio_audio_backend& operator=(aaudio_audio_backend&&) = delete;
-
-            bool start(const audio_format& format) override
+            ~aaudio_audio_output() override
             {
-                const std::lock_guard lifecycle{this->lifecycle_mutex_};
-
+                if (this->stream_)
                 {
-                    const std::lock_guard lock{this->mutex_};
-                    if (this->stream_ && this->format_ == format)
-                    {
-                        return true;
-                    }
+                    // AAudioStream_close waits for an in-flight data callback, which takes mutex_, so it is not held here.
+                    AAudioStream_requestStop(this->stream_);
+                    AAudioStream_close(this->stream_);
                 }
+            }
 
-                this->close_stream();
+            aaudio_audio_output(const aaudio_audio_output&) = delete;
+            aaudio_audio_output& operator=(const aaudio_audio_output&) = delete;
+            aaudio_audio_output(aaudio_audio_output&&) = delete;
+            aaudio_audio_output& operator=(aaudio_audio_output&&) = delete;
 
-                if (!is_supported_format(format))
-                {
-                    return false;
-                }
-
+            bool open()
+            {
                 AAudioStreamBuilder* builder{};
                 if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK)
                 {
@@ -94,10 +87,10 @@ namespace sogen
 
                 AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
                 AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
-                AAudioStreamBuilder_setChannelCount(builder, format.channels);
-                AAudioStreamBuilder_setSampleRate(builder, static_cast<int32_t>(format.sample_rate));
+                AAudioStreamBuilder_setChannelCount(builder, this->format_.channels);
+                AAudioStreamBuilder_setSampleRate(builder, static_cast<int32_t>(this->format_.sample_rate));
                 AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-                AAudioStreamBuilder_setDataCallback(builder, &aaudio_audio_backend::data_callback, this);
+                AAudioStreamBuilder_setDataCallback(builder, &aaudio_audio_output::data_callback, this);
 
                 AAudioStream* stream{};
                 const auto result = AAudioStreamBuilder_openStream(builder, &stream);
@@ -113,9 +106,7 @@ namespace sogen
                     return false;
                 }
 
-                const std::lock_guard lock{this->mutex_};
                 this->stream_ = stream;
-                this->format_ = format;
                 return true;
             }
 
@@ -126,56 +117,30 @@ namespace sogen
                     return;
                 }
 
-                audio_format format{};
-                {
-                    const std::lock_guard lock{this->mutex_};
-                    if (!this->stream_)
-                    {
-                        return;
-                    }
-                    format = this->format_;
-                }
-
-                // Converted outside the lock, which the real-time data callback contends for.
-                const auto bytes_per_sample = static_cast<size_t>(format.bits_per_sample / 8);
+                const auto bytes_per_sample = static_cast<size_t>(this->format_.bits_per_sample / 8);
                 const auto* bytes = static_cast<const uint8_t*>(data);
                 std::vector<float> converted(size / bytes_per_sample);
                 for (size_t i = 0; i < converted.size(); ++i)
                 {
-                    converted[i] = to_float_sample(format, bytes + (i * bytes_per_sample));
+                    converted[i] = to_float_sample(this->format_, bytes + (i * bytes_per_sample));
                 }
 
                 const std::lock_guard lock{this->mutex_};
-                if (this->stream_ && this->format_ == format)
-                {
-                    this->samples_.insert(this->samples_.end(), converted.begin(), converted.end());
-                }
+                this->samples_.insert(this->samples_.end(), converted.begin(), converted.end());
             }
 
             std::optional<uint64_t> queued_bytes() const override
             {
                 const std::lock_guard lock{this->mutex_};
-
-                if (!this->stream_)
-                {
-                    return std::nullopt;
-                }
-
                 const auto queued_samples = this->samples_.size() - this->read_offset_;
                 return static_cast<uint64_t>(queued_samples) * (this->format_.bits_per_sample / 8);
-            }
-
-            void stop() override
-            {
-                const std::lock_guard lifecycle{this->lifecycle_mutex_};
-                this->close_stream();
             }
 
           private:
             static aaudio_data_callback_result_t data_callback(AAudioStream* stream, void* user_data, void* audio_data,
                                                                const int32_t num_frames)
             {
-                auto& self = *static_cast<aaudio_audio_backend*>(user_data);
+                auto& self = *static_cast<aaudio_audio_output*>(user_data);
                 const auto requested = static_cast<size_t>(num_frames) * static_cast<size_t>(AAudioStream_getChannelCount(stream));
                 self.fill(static_cast<float*>(audio_data), requested);
                 return AAUDIO_CALLBACK_RESULT_CONTINUE;
@@ -207,33 +172,30 @@ namespace sogen
                 }
             }
 
-            // Called with lifecycle_mutex_ held. AAudioStream_close waits for an in-flight data callback, which takes
-            // mutex_, so the stream is closed without holding mutex_.
-            void close_stream()
-            {
-                AAudioStream* stream{};
-                {
-                    const std::lock_guard lock{this->mutex_};
-                    stream = std::exchange(this->stream_, nullptr);
-                    this->format_ = {};
-                    this->samples_.clear();
-                    this->read_offset_ = 0;
-                }
-
-                if (stream)
-                {
-                    AAudioStream_requestStop(stream);
-                    AAudioStream_close(stream);
-                }
-            }
-
-            // Serializes start and stop, so a stream is never opened while another one is being closed.
-            std::mutex lifecycle_mutex_{};
+            const audio_format format_{};
             mutable std::mutex mutex_{};
             AAudioStream* stream_{};
-            audio_format format_{};
             std::vector<float> samples_{};
             size_t read_offset_{};
+        };
+
+        class aaudio_audio_backend final : public audio_backend
+        {
+          public:
+            std::unique_ptr<audio_output> open_output(const audio_format& format) override
+            {
+                if (!is_supported_format(format))
+                {
+                    return nullptr;
+                }
+
+                auto output = std::make_unique<aaudio_audio_output>(format);
+                if (!output->open())
+                {
+                    return nullptr;
+                }
+                return output;
+            }
         };
     }
 
