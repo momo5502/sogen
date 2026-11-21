@@ -12,6 +12,7 @@ list(REMOVE_ITEM SRC_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/fex_hvf_spike_test.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/kvm_exception_context_test.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wow64_emulation_test.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/whp_guest_page_slabs_test.cpp"
 )
 
 add_executable(wow64-emulation-test wow64_emulation_test.cpp)
@@ -20,6 +21,15 @@ add_test(NAME wow64-emulation-test COMMAND wow64-emulation-test)
 set_tests_properties(wow64-emulation-test PROPERTIES TIMEOUT 60)
 sogen_targets_set_folder("tests" wow64-emulation-test)
 sogen_enable_hypervisor_entitlement(wow64-emulation-test)
+
+if(TARGET whp-emulator)
+  add_executable(whp-guest-page-slabs-test whp_guest_page_slabs_test.cpp)
+  target_include_directories(whp-guest-page-slabs-test PRIVATE "${PROJECT_SOURCE_DIR}/src/backends/whp-emulator")
+  target_link_libraries(whp-guest-page-slabs-test PRIVATE gtest gtest_main)
+  add_test(NAME whp-guest-page-slabs-test COMMAND whp-guest-page-slabs-test)
+  set_tests_properties(whp-guest-page-slabs-test PROPERTIES TIMEOUT 30)
+  sogen_targets_set_folder("tests" whp-guest-page-slabs-test)
+endif()
 
 if(TARGET kvm-emulator)
   add_executable(kvm-exception-context-test kvm_exception_context_test.cpp)
