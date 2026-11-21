@@ -459,6 +459,7 @@ namespace sogen
                                             BOOLEAN open_as_self, ULONG /*handle_attributes*/, emulator_object<handle> token_handle);
         NTSTATUS handle_NtTerminateThread(const syscall_context& c, handle thread_handle, NTSTATUS exit_status);
         NTSTATUS handle_NtDelayExecution(const syscall_context& c, BOOLEAN alertable, emulator_object<LARGE_INTEGER> delay_interval);
+        NTSTATUS handle_NtAlertThread(const syscall_context& c, handle thread_handle);
         NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, uint64_t thread_id);
         NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, uint64_t thread_id,
                                                   emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock);
@@ -1326,8 +1327,15 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // KeTestAlertThread: a pending user-mode alert is taken (STATUS_ALERTED); without one, queued user APCs are delivered.
         NTSTATUS handle_NtTestAlert(const syscall_context& c)
         {
+            if (auto& thread = c.thread(); thread.user_alerted)
+            {
+                thread.user_alerted = false;
+                return STATUS_ALERTED;
+            }
+
             c.win_emu.yield_thread(c.vcpu, true);
             return STATUS_SUCCESS;
         }
@@ -2006,6 +2014,7 @@ namespace sogen
         add_handler(NtWaitForAlertByThreadId);
         add_handler(NtAlertThreadByThreadIdEx);
         add_handler(NtAlertThreadByThreadId);
+        add_handler(NtAlertThread);
         add_handler(NtReadFile);
         add_handler(NtSetInformationFile);
         add_handler(NtUserRegisterWindowMessage);

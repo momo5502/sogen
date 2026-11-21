@@ -616,6 +616,10 @@ namespace sogen
             // A worker back for work takes the port's next packet itself.
             leave_away_mode(*factory);
 
+            // IoRemoveIoCompletion's KeRemoveQueueEx: the worker joins the factory's port (KiSwitchQueue), which it stays with
+            // after the call.
+            c.thread().associated_io_completion = factory->io_completion;
+
             const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion, count);
             if (!messages.empty())
             {

@@ -103,7 +103,7 @@ namespace sogen
                 {
                     if (auto* thread = c.proc.find_thread_by_id(request.thread_id))
                     {
-                        thread->pending_apcs.push_back({
+                        thread->queue_user_apc({
                             .apc_routine = request.apc_routine,
                             .apc_argument1 = request.apc_context,
                             .apc_argument2 = request.io_status_block,
