@@ -332,7 +332,7 @@ namespace sogen
     {
         hwnd window{};
         UINT message{};
-        uint64_t scratch_text{}; // guest buffer holding a re-encoded text payload; freed on completion
+        window_message_text text{};
         bool dispatching_result_callback{};
         bool dispatching_nested_send{};
         bool destroying_window{};
@@ -343,7 +343,7 @@ namespace sogen
         {
             buffer.write(this->window);
             buffer.write(this->message);
-            buffer.write(this->scratch_text);
+            buffer.write(this->text);
             buffer.write(this->dispatching_result_callback);
             buffer.write(this->dispatching_nested_send);
             buffer.write(this->destroying_window);
@@ -354,7 +354,7 @@ namespace sogen
         {
             buffer.read(this->window);
             buffer.read(this->message);
-            buffer.read(this->scratch_text);
+            buffer.read(this->text);
             buffer.read(this->dispatching_result_callback);
             buffer.read(this->dispatching_nested_send);
             buffer.read(this->destroying_window);

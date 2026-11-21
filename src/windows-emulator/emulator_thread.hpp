@@ -192,6 +192,37 @@ namespace sogen
         }
     };
 
+    struct window_message_text
+    {
+        uint64_t scratch_text{};
+        uint64_t scratch_capacity{};
+        bool target_unicode{};
+
+        uint64_t target_w_param(const uint64_t w_param) const
+        {
+            return this->scratch_capacity != 0 ? this->scratch_capacity : w_param;
+        }
+
+        uint64_t target_l_param(const uint64_t l_param) const
+        {
+            return this->scratch_text != 0 ? this->scratch_text : l_param;
+        }
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->scratch_text);
+            buffer.write(this->scratch_capacity);
+            buffer.write(this->target_unicode);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->scratch_text);
+            buffer.read(this->scratch_capacity);
+            buffer.read(this->target_unicode);
+        }
+    };
+
     struct sent_window_message
     {
         uint32_t sender_thread_id{};
@@ -200,7 +231,7 @@ namespace sogen
         UINT message{};
         uint64_t w_param{};
         uint64_t l_param{};
-        uint64_t scratch_text{};
+        window_message_text text{};
         BOOL ansi{};
         bool replied{};
 
@@ -212,7 +243,7 @@ namespace sogen
             buffer.write(this->message);
             buffer.write(this->w_param);
             buffer.write(this->l_param);
-            buffer.write(this->scratch_text);
+            buffer.write(this->text);
             buffer.write(this->ansi);
             buffer.write(this->replied);
         }
@@ -225,7 +256,7 @@ namespace sogen
             buffer.read(this->message);
             buffer.read(this->w_param);
             buffer.read(this->l_param);
-            buffer.read(this->scratch_text);
+            buffer.read(this->text);
             buffer.read(this->ansi);
             buffer.read(this->replied);
         }
