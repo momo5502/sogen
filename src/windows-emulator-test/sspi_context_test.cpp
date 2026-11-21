@@ -2,6 +2,11 @@
 
 #include "../windows-emulator/ports/sspi_context.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#endif
+
 namespace
 {
     template <typename T>
@@ -154,3 +159,69 @@ TEST(sspi_context, counts_only_post_ccs_owned_records)
     ASSERT_FALSE(inbound.observe(finished_and_extra));
     EXPECT_EQ(inbound.value(), 1);
 }
+
+#ifdef _WIN32
+namespace
+{
+    std::vector<std::vector<uint8_t>> host_root_certificates(const size_t count)
+    {
+        std::vector<std::vector<uint8_t>> certificates{};
+        auto* store = CertOpenSystemStoreW(0, L"ROOT");
+        if (!store)
+        {
+            return certificates;
+        }
+
+        for (const CERT_CONTEXT* certificate = nullptr; certificates.size() < count;)
+        {
+            certificate = CertEnumCertificatesInStore(store, certificate);
+            if (!certificate)
+            {
+                break;
+            }
+            certificates.emplace_back(certificate->pbCertEncoded, certificate->pbCertEncoded + certificate->cbCertEncoded);
+        }
+
+        CertCloseStore(store, 0);
+        return certificates;
+    }
+}
+
+// The caller's crypt32 rebuilds the chain from the serialized store and the leaf from the serialized element.
+TEST(sspi_context, serialized_certificate_context_is_readable_by_crypt32)
+{
+    const auto chain = host_root_certificates(2);
+    ASSERT_EQ(2u, chain.size());
+    const auto serialized = sogen::sspi::serialize_certificate_context(chain);
+
+    const auto store_size = read_value<uint32_t>(serialized, 0);
+    CRYPT_DATA_BLOB store_blob{.cbData = store_size, .pbData = const_cast<uint8_t*>(serialized.data() + sizeof(uint32_t))};
+    auto* store = CertOpenStore(CERT_STORE_PROV_SERIALIZED, X509_ASN_ENCODING, 0, 0, &store_blob);
+    ASSERT_NE(nullptr, store);
+
+    std::vector<std::vector<uint8_t>> parsed{};
+    for (const CERT_CONTEXT* certificate = nullptr; (certificate = CertEnumCertificatesInStore(store, certificate)) != nullptr;)
+    {
+        parsed.emplace_back(certificate->pbCertEncoded, certificate->pbCertEncoded + certificate->cbCertEncoded);
+    }
+    CertCloseStore(store, 0);
+    EXPECT_EQ(chain.size(), parsed.size());
+    for (const auto& certificate : chain)
+    {
+        EXPECT_NE(parsed.end(), std::ranges::find(parsed, certificate));
+    }
+
+    const auto element_offset = sizeof(uint32_t) + store_size;
+    const auto element_size = read_value<uint32_t>(serialized, element_offset);
+    ASSERT_EQ(serialized.size(), element_offset + sizeof(uint32_t) + element_size);
+
+    const void* context = nullptr;
+    DWORD context_type = 0;
+    ASSERT_TRUE(CertAddSerializedElementToStore(nullptr, serialized.data() + element_offset + sizeof(uint32_t), element_size,
+                                                CERT_STORE_ADD_ALWAYS, 0, CERT_STORE_CERTIFICATE_CONTEXT_FLAG, &context_type, &context));
+    const auto* leaf = static_cast<const CERT_CONTEXT*>(context);
+    EXPECT_EQ(static_cast<DWORD>(CERT_STORE_CERTIFICATE_CONTEXT), context_type);
+    EXPECT_EQ(chain.front(), std::vector<uint8_t>(leaf->pbCertEncoded, leaf->pbCertEncoded + leaf->cbCertEncoded));
+    CertFreeCertificateContext(leaf);
+}
+#endif

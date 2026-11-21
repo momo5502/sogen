@@ -40,6 +40,9 @@ namespace sogen::sspi
         handshake_result process(std::span<const uint8_t> input);
         std::optional<provider_context_input> take_handoff_state();
 
+        // The certificates the server sent, leaf first, as DER.
+        std::vector<std::vector<uint8_t>> peer_certificates() const;
+
       private:
         struct impl;
 
