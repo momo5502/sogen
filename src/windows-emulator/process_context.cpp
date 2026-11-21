@@ -1434,6 +1434,11 @@ namespace sogen
 
     void process_context::prepare_for_state_restore(windows_emulator& win_emu)
     {
+        for (auto& device : this->devices | std::views::values)
+        {
+            device.prepare_for_state_restore(win_emu);
+        }
+
         for (auto& port : this->ports | std::views::values)
         {
             port.prepare_for_state_restore(win_emu);

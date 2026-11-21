@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -963,6 +965,267 @@ namespace
         return ok;
     }
 
+    // The calls the shim queues in its command ring instead of making them (descriptor-set allocations and updates,
+    // recorded command buffers, command-pool and descriptor-pool resets, buffer-view destroys), round after round, each
+    // checked by what the GPU filled in, until the ring has wrapped several times; then command buffers recorded back to
+    // back with no other call in between, which fill the ring until the shim has the host run it. Where the host maps no
+    // ring, the same calls are made one by one and the results must be the same.
+    bool test_command_ring(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                           VkDevice device, VkQueue queue, uint32_t queue_family)
+    {
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
+        const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
+        const auto get_buffer_reqs =
+            reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
+        const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
+        const auto bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
+        const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
+        const auto create_buffer_view = reinterpret_cast<PFN_vkCreateBufferView>(get_instance_proc(instance, "vkCreateBufferView"));
+        const auto destroy_buffer_view = reinterpret_cast<PFN_vkDestroyBufferView>(get_instance_proc(instance, "vkDestroyBufferView"));
+        const auto create_set_layout =
+            reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(get_instance_proc(instance, "vkCreateDescriptorSetLayout"));
+        const auto destroy_set_layout =
+            reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(get_instance_proc(instance, "vkDestroyDescriptorSetLayout"));
+        const auto create_descriptor_pool =
+            reinterpret_cast<PFN_vkCreateDescriptorPool>(get_instance_proc(instance, "vkCreateDescriptorPool"));
+        const auto destroy_descriptor_pool =
+            reinterpret_cast<PFN_vkDestroyDescriptorPool>(get_instance_proc(instance, "vkDestroyDescriptorPool"));
+        const auto reset_descriptor_pool =
+            reinterpret_cast<PFN_vkResetDescriptorPool>(get_instance_proc(instance, "vkResetDescriptorPool"));
+        const auto allocate_sets = reinterpret_cast<PFN_vkAllocateDescriptorSets>(get_instance_proc(instance, "vkAllocateDescriptorSets"));
+        const auto update_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(get_instance_proc(instance, "vkUpdateDescriptorSets"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto reset_command_pool = reinterpret_cast<PFN_vkResetCommandPool>(get_instance_proc(instance, "vkResetCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto cmd_fill_buffer = reinterpret_cast<PFN_vkCmdFillBuffer>(get_instance_proc(instance, "vkCmdFillBuffer"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
+        const auto reset_fences = reinterpret_cast<PFN_vkResetFences>(get_instance_proc(instance, "vkResetFences"));
+        const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
+        const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+
+        // 512 fills a command buffer make a ~25 KB record, so 600 rounds wrap the 4 MiB ring several times and 300
+        // recordings in a row overrun it.
+        constexpr uint32_t words = 512;
+        constexpr VkDeviceSize buffer_size = words * sizeof(uint32_t);
+        constexpr uint32_t rounds = 600;
+        constexpr uint32_t back_to_back = 300;
+        const auto value = [](const uint32_t round, const uint32_t word) { return (round << 16) | word; };
+
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = buffer_size;
+        buffer_info.usage =
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (create_buffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] command ring: vkCreateBuffer failed -> FAIL\n");
+            return false;
+        }
+
+        VkMemoryRequirements reqs{};
+        get_buffer_reqs(device, buffer, &reqs);
+        VkPhysicalDeviceMemoryProperties mem_props{};
+        get_memory_properties(physical_device, &mem_props);
+        VkMemoryAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.allocationSize = reqs.size;
+        alloc.memoryTypeIndex =
+            find_memory_type(mem_props, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (alloc.memoryTypeIndex == UINT32_MAX || allocate_memory(device, &alloc, nullptr, &memory) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] command ring: no host-visible memory -> FAIL\n");
+            destroy_buffer(device, buffer, nullptr);
+            return false;
+        }
+        bind_buffer_memory(device, buffer, memory, 0);
+
+        VkDescriptorSetLayoutBinding binding{};
+        binding.binding = 0;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &binding;
+        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+        create_set_layout(device, &layout_info, nullptr, &layout);
+
+        // No FREE_DESCRIPTOR_SET: the shim answers these allocations itself and queues them.
+        const VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32};
+        VkDescriptorPoolCreateInfo descriptor_pool_info{};
+        descriptor_pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        descriptor_pool_info.maxSets = 32;
+        descriptor_pool_info.poolSizeCount = 1;
+        descriptor_pool_info.pPoolSizes = &pool_size;
+        VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+        create_descriptor_pool(device, &descriptor_pool_info, nullptr, &descriptor_pool);
+
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool_info.queueFamilyIndex = queue_family;
+        VkCommandPool pool = VK_NULL_HANDLE;
+        create_command_pool(device, &pool_info, nullptr, &pool);
+        VkCommandBufferAllocateInfo cb_info{};
+        cb_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cb_info.commandPool = pool;
+        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cb_info.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        allocate_command_buffers(device, &cb_info, &cmd);
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        create_fence(device, &fence_info, nullptr, &fence);
+
+        void* mapped = nullptr;
+        const bool mapped_ok = map_memory(device, memory, 0, buffer_size, 0, &mapped) == VK_SUCCESS && mapped;
+        const auto* readback = static_cast<const volatile uint32_t*>(mapped);
+
+        const auto record = [&](const uint32_t round) {
+            VkCommandBufferBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            begin_command_buffer(cmd, &begin);
+            for (uint32_t word = 0; word < words; ++word)
+            {
+                cmd_fill_buffer(cmd, buffer, word * sizeof(uint32_t), sizeof(uint32_t), value(round, word));
+            }
+            return end_command_buffer(cmd);
+        };
+
+        std::array<char, 160> failure{};
+        const auto submit_and_check = [&](const uint32_t round) {
+            reset_fences(device, 1, &fence);
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &cmd;
+            const VkResult submitted = queue_submit(queue, 1, &submit, fence);
+            const VkResult waited = submitted == VK_SUCCESS ? wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL) : submitted;
+            if (submitted != VK_SUCCESS || waited != VK_SUCCESS)
+            {
+                std::snprintf(failure.data(), failure.size(), "round %u: submit %d, wait %d", round, submitted, waited);
+                return false;
+            }
+            for (uint32_t word = 0; word < words; ++word)
+            {
+                if (readback[word] != value(round, word))
+                {
+                    std::snprintf(failure.data(), failure.size(), "round %u: word %u is 0x%08X, not 0x%08X", round, word, readback[word],
+                                  value(round, word));
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        LARGE_INTEGER frequency{};
+        LARGE_INTEGER start{};
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&start);
+
+        bool ok = mapped_ok && layout && descriptor_pool && pool && cmd && fence;
+        if (!ok)
+        {
+            std::snprintf(failure.data(), failure.size(), "setup failed");
+        }
+        for (uint32_t round = 0; ok && round < rounds; ++round)
+        {
+            reset_command_pool(device, pool, 0);
+
+            VkDescriptorSetAllocateInfo set_info{};
+            set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            set_info.descriptorPool = descriptor_pool;
+            set_info.descriptorSetCount = 1;
+            set_info.pSetLayouts = &layout;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            if (const VkResult allocated = allocate_sets(device, &set_info, &set); allocated != VK_SUCCESS)
+            {
+                std::snprintf(failure.data(), failure.size(), "round %u: vkAllocateDescriptorSets %d", round, allocated);
+                ok = false;
+                break;
+            }
+            const VkDescriptorBufferInfo buffer_descriptor{buffer, 0, VK_WHOLE_SIZE};
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = set;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.pBufferInfo = &buffer_descriptor;
+            update_sets(device, 1, &write, 0, nullptr);
+
+            VkBufferViewCreateInfo view_info{};
+            view_info.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
+            view_info.buffer = buffer;
+            view_info.format = VK_FORMAT_R32_UINT;
+            view_info.range = VK_WHOLE_SIZE;
+            VkBufferView view = VK_NULL_HANDLE;
+            if (create_buffer_view(device, &view_info, nullptr, &view) == VK_SUCCESS)
+            {
+                destroy_buffer_view(device, view, nullptr);
+            }
+
+            if (const VkResult recorded = record(round); recorded != VK_SUCCESS)
+            {
+                std::snprintf(failure.data(), failure.size(), "round %u: vkEndCommandBuffer %d", round, recorded);
+                ok = false;
+                break;
+            }
+            ok = submit_and_check(round);
+
+            if ((round + 1) % 16 == 0)
+            {
+                reset_descriptor_pool(device, descriptor_pool, 0);
+            }
+        }
+
+        // Nothing but recording between these, so the ring fills up and the shim has to have the host run it.
+        uint32_t last = rounds;
+        for (uint32_t i = 0; ok && i < back_to_back; ++i)
+        {
+            last = rounds + i;
+            if (const VkResult recorded = record(last); recorded != VK_SUCCESS)
+            {
+                std::snprintf(failure.data(), failure.size(), "recording %u: vkEndCommandBuffer %d", last, recorded);
+                ok = false;
+            }
+        }
+        ok = ok && submit_and_check(last);
+
+        LARGE_INTEGER end{};
+        QueryPerformanceCounter(&end);
+        std::printf("[shim-test] command ring: %u checked rounds + %u recordings in a row, %.1f ms -> %s%s%s\n", rounds, back_to_back,
+                    1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(frequency.QuadPart),
+                    ok ? "PASS" : "FAIL", ok ? "" : ": ", ok ? "" : failure.data());
+
+        if (mapped_ok)
+        {
+            unmap_memory(device, memory);
+        }
+        destroy_fence(device, fence, nullptr);
+        destroy_command_pool(device, pool, nullptr);
+        destroy_descriptor_pool(device, descriptor_pool, nullptr);
+        destroy_set_layout(device, layout, nullptr);
+        free_memory(device, memory, nullptr);
+        destroy_buffer(device, buffer, nullptr);
+        return ok;
+    }
+
     // Renders into an image the simplest possible way -- clears it to a known color on the GPU -- then
     // copies it into a host-visible buffer and reads the pixels back. This is the offscreen render
     // target + readback path that windowed present will reuse (present = clear/draw -> copy -> readback).
@@ -1704,6 +1967,301 @@ namespace
         destroy_shader_module(device, shader, nullptr);
         return identifiers_match && pipeline_ok;
     }
+
+    // A ring record the host could not run fails the next submission, and only that one: the submissions after it ran.
+    // The record resets a command pool the host never handed out. Where the host maps no ring, the reset is made at once
+    // and fails there.
+    bool test_ring_failure_is_reported_once(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device,
+                                            VkQueue queue)
+    {
+        const auto reset_command_pool = reinterpret_cast<PFN_vkResetCommandPool>(get_instance_proc(instance, "vkResetCommandPool"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
+        const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+        const auto reset_fences = reinterpret_cast<PFN_vkResetFences>(get_instance_proc(instance, "vkResetFences"));
+        const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
+        if (!reset_command_pool || !create_fence || !destroy_fence || !wait_for_fences || !reset_fences || !queue_submit)
+        {
+            std::printf("[shim-test] ring failure: missing entry points -> FAIL\n");
+            return false;
+        }
+
+        const VkResult reset = reset_command_pool(device, VK_NULL_HANDLE, 0);
+        if (reset != VK_SUCCESS)
+        {
+            std::printf("[shim-test] ring failure: no ring, the reset failed at once (%d) -> SKIP\n", reset);
+            return true;
+        }
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        if (create_fence(device, &fence_info, nullptr, &fence) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] ring failure: vkCreateFence failed -> FAIL\n");
+            return false;
+        }
+
+        // An empty submission with a fence still goes to the host, which runs the ring before it.
+        const VkResult first = queue_submit(queue, 0, nullptr, fence);
+        wait_for_fences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+        reset_fences(device, 1, &fence);
+        const VkResult second = queue_submit(queue, 0, nullptr, fence);
+        wait_for_fences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+        destroy_fence(device, fence, nullptr);
+
+        const bool ok = first == VK_ERROR_INITIALIZATION_FAILED && second == VK_SUCCESS;
+        std::printf("[shim-test] ring failure: first submission %d, second %d -> %s\n", first, second, ok ? "PASS" : "FAIL");
+        return ok;
+    }
+
+    // Compiles graphics pipelines on this thread while another thread keeps calling the bridge, so bridge calls arrive
+    // during the compiles. The bridge compiles with neither the kernel lock nor its own lock held: a compile that kept its
+    // own lock would take the kernel lock back while the polling thread holds the kernel lock and waits for the bridge's,
+    // and the emulator would hang here. That takes more than one vCPU.
+    bool test_pipelines_compile_beside_bridge_calls(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
+    {
+        const auto get_device_proc = reinterpret_cast<PFN_vkGetDeviceProcAddr>(get_instance_proc(instance, "vkGetDeviceProcAddr"));
+        if (!get_device_proc)
+        {
+            std::printf("[shim-test] no vkGetDeviceProcAddr for the pipeline compile test\n");
+            return false;
+        }
+
+        const auto create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(get_device_proc(device, "vkCreateShaderModule"));
+        const auto destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(get_device_proc(device, "vkDestroyShaderModule"));
+        const auto create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(get_device_proc(device, "vkCreatePipelineLayout"));
+        const auto destroy_pipeline_layout =
+            reinterpret_cast<PFN_vkDestroyPipelineLayout>(get_device_proc(device, "vkDestroyPipelineLayout"));
+        const auto create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(get_device_proc(device, "vkCreateRenderPass"));
+        const auto destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(get_device_proc(device, "vkDestroyRenderPass"));
+        const auto create_graphics_pipelines =
+            reinterpret_cast<PFN_vkCreateGraphicsPipelines>(get_device_proc(device, "vkCreateGraphicsPipelines"));
+        const auto destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(get_device_proc(device, "vkDestroyPipeline"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_device_proc(device, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_device_proc(device, "vkDestroyFence"));
+        const auto get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(get_device_proc(device, "vkGetFenceStatus"));
+        if (!create_shader_module || !destroy_shader_module || !create_pipeline_layout || !destroy_pipeline_layout || !create_render_pass ||
+            !destroy_render_pass || !create_graphics_pipelines || !destroy_pipeline || !create_fence || !destroy_fence || !get_fence_status)
+        {
+            std::printf("[shim-test] pipeline compile test entry point missing\n");
+            return false;
+        }
+
+        // SPIR-V 1.0 (glslang -V --target-env vulkan1.0 -g0) of
+        //   #version 450
+        //   out gl_PerVertex { vec4 gl_Position; };
+        //   void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }
+        constexpr std::array<uint32_t, 119> vertex_spirv{
+            0x07230203, 0x00010000, 0x0008000b, 0x00000012, 0x00000000, 0x00020011, 0x00000001, 0x0006000b, 0x00000001, 0x4c534c47,
+            0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001, 0x0006000f, 0x00000000, 0x00000004, 0x6e69616d,
+            0x00000000, 0x0000000a, 0x00030003, 0x00000002, 0x000001c2, 0x00040005, 0x00000004, 0x6e69616d, 0x00000000, 0x00060005,
+            0x00000008, 0x505f6c67, 0x65567265, 0x78657472, 0x00000000, 0x00060006, 0x00000008, 0x00000000, 0x505f6c67, 0x7469736f,
+            0x006e6f69, 0x00030005, 0x0000000a, 0x00000000, 0x00030047, 0x00000008, 0x00000002, 0x00050048, 0x00000008, 0x00000000,
+            0x0000000b, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+            0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x0003001e, 0x00000008, 0x00000007, 0x00040020, 0x00000009, 0x00000003,
+            0x00000008, 0x0004003b, 0x00000009, 0x0000000a, 0x00000003, 0x00040015, 0x0000000b, 0x00000020, 0x00000001, 0x0004002b,
+            0x0000000b, 0x0000000c, 0x00000000, 0x0004002b, 0x00000006, 0x0000000d, 0x00000000, 0x0004002b, 0x00000006, 0x0000000e,
+            0x3f800000, 0x0007002c, 0x00000007, 0x0000000f, 0x0000000d, 0x0000000d, 0x0000000d, 0x0000000e, 0x00040020, 0x00000010,
+            0x00000003, 0x00000007, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x00050041,
+            0x00000010, 0x00000011, 0x0000000a, 0x0000000c, 0x0003003e, 0x00000011, 0x0000000f, 0x000100fd, 0x00010038,
+        };
+        // and of
+        //   #version 450
+        //   layout(constant_id = 0) const float shade = 1.0;
+        //   layout(location = 0) out vec4 color;
+        //   void main() { color = vec4(shade); }
+        constexpr std::array<uint32_t, 91> fragment_spirv{
+            0x07230203, 0x00010000, 0x0008000b, 0x0000000c, 0x00000000, 0x00020011, 0x00000001, 0x0006000b, 0x00000001, 0x4c534c47,
+            0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001, 0x0006000f, 0x00000004, 0x00000004, 0x6e69616d,
+            0x00000000, 0x00000009, 0x00030010, 0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001c2, 0x00040005, 0x00000004,
+            0x6e69616d, 0x00000000, 0x00040005, 0x00000009, 0x6f6c6f63, 0x00000072, 0x00040005, 0x0000000a, 0x64616873, 0x00000065,
+            0x00040047, 0x00000009, 0x0000001e, 0x00000000, 0x00040047, 0x0000000a, 0x00000001, 0x00000000, 0x00020013, 0x00000002,
+            0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+            0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003b, 0x00000008, 0x00000009, 0x00000003, 0x00040032, 0x00000006,
+            0x0000000a, 0x3f800000, 0x00070033, 0x00000007, 0x0000000b, 0x0000000a, 0x0000000a, 0x0000000a, 0x0000000a, 0x00050036,
+            0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x0003003e, 0x00000009, 0x0000000b, 0x000100fd,
+            0x00010038,
+        };
+
+        VkShaderModuleCreateInfo vertex_info{};
+        vertex_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        vertex_info.codeSize = vertex_spirv.size() * sizeof(uint32_t);
+        vertex_info.pCode = vertex_spirv.data();
+        VkShaderModuleCreateInfo fragment_info = vertex_info;
+        fragment_info.codeSize = fragment_spirv.size() * sizeof(uint32_t);
+        fragment_info.pCode = fragment_spirv.data();
+
+        VkPipelineLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        VkAttachmentDescription attachment{};
+        attachment.format = VK_FORMAT_R8G8B8A8_UNORM;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        const VkAttachmentReference color_reference{.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_reference;
+        VkRenderPassCreateInfo render_pass_info{};
+        render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        render_pass_info.attachmentCount = 1;
+        render_pass_info.pAttachments = &attachment;
+        render_pass_info.subpassCount = 1;
+        render_pass_info.pSubpasses = &subpass;
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+        VkShaderModule vertex_shader = VK_NULL_HANDLE;
+        VkShaderModule fragment_shader = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkRenderPass render_pass = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        const bool setup_ok = create_shader_module(device, &vertex_info, nullptr, &vertex_shader) == VK_SUCCESS &&
+                              create_shader_module(device, &fragment_info, nullptr, &fragment_shader) == VK_SUCCESS &&
+                              create_pipeline_layout(device, &layout_info, nullptr, &layout) == VK_SUCCESS &&
+                              create_render_pass(device, &render_pass_info, nullptr, &render_pass) == VK_SUCCESS &&
+                              create_fence(device, &fence_info, nullptr, &fence) == VK_SUCCESS;
+
+        // A new constant value for each pipeline, so the host driver compiles every one instead of reusing the first.
+        float shade = 0.0f;
+        const VkSpecializationMapEntry shade_entry{.constantID = 0, .offset = 0, .size = sizeof(shade)};
+        VkSpecializationInfo specialization{};
+        specialization.mapEntryCount = 1;
+        specialization.pMapEntries = &shade_entry;
+        specialization.dataSize = sizeof(shade);
+        specialization.pData = &shade;
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vertex_shader;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = fragment_shader;
+        stages[1].pName = "main";
+        stages[1].pSpecializationInfo = &specialization;
+
+        VkPipelineVertexInputStateCreateInfo vertex_input{};
+        vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        constexpr uint32_t extent = 16;
+        VkViewport viewport{};
+        viewport.width = static_cast<float>(extent);
+        viewport.height = static_cast<float>(extent);
+        viewport.maxDepth = 1.0f;
+        const VkRect2D scissor{.offset = {.x = 0, .y = 0}, .extent = {.width = extent, .height = extent}};
+        VkPipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.pViewports = &viewport;
+        viewport_state.scissorCount = 1;
+        viewport_state.pScissors = &scissor;
+        VkPipelineRasterizationStateCreateInfo rasterization{};
+        rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterization.cullMode = VK_CULL_MODE_NONE;
+        rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterization.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo multisample{};
+        multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState blend_attachment{};
+        blend_attachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo color_blend{};
+        color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        color_blend.attachmentCount = 1;
+        color_blend.pAttachments = &blend_attachment;
+
+        VkGraphicsPipelineCreateInfo pipeline_info{};
+        pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.stageCount = static_cast<uint32_t>(stages.size());
+        pipeline_info.pStages = stages.data();
+        pipeline_info.pVertexInputState = &vertex_input;
+        pipeline_info.pInputAssemblyState = &input_assembly;
+        pipeline_info.pViewportState = &viewport_state;
+        pipeline_info.pRasterizationState = &rasterization;
+        pipeline_info.pMultisampleState = &multisample;
+        pipeline_info.pColorBlendState = &color_blend;
+        pipeline_info.layout = layout;
+        pipeline_info.renderPass = render_pass;
+
+        constexpr uint32_t pipeline_count = 64;
+        uint32_t compiled = 0;
+        std::atomic<bool> compiling{true};
+        std::atomic<uint32_t> polls{0};
+        std::atomic<bool> polls_ok{true};
+        if (setup_ok)
+        {
+            // The fence is never submitted, so every poll is a bridge call that answers VK_NOT_READY.
+            std::thread poller([&] {
+                while (compiling.load())
+                {
+                    if (get_fence_status(device, fence) != VK_NOT_READY)
+                    {
+                        polls_ok = false;
+                    }
+                    polls.fetch_add(1);
+                }
+            });
+            // The polls start before the first compile, so they run through all of them.
+            while (polls.load() == 0)
+            {
+                std::this_thread::yield();
+            }
+
+            for (uint32_t i = 0; i < pipeline_count; ++i)
+            {
+                shade = static_cast<float>(i) / static_cast<float>(pipeline_count);
+                VkPipeline pipeline = VK_NULL_HANDLE;
+                if (create_graphics_pipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) == VK_SUCCESS)
+                {
+                    ++compiled;
+                    destroy_pipeline(device, pipeline, nullptr);
+                }
+            }
+
+            compiling = false;
+            poller.join();
+        }
+
+        const bool ok = setup_ok && compiled == pipeline_count && polls_ok.load();
+        std::printf("[shim-test] %u of %u graphics pipelines compiled beside %u fence polls -> %s\n", compiled, pipeline_count,
+                    polls.load(), ok ? "PASS" : "FAIL");
+
+        if (fence != VK_NULL_HANDLE)
+        {
+            destroy_fence(device, fence, nullptr);
+        }
+        if (render_pass != VK_NULL_HANDLE)
+        {
+            destroy_render_pass(device, render_pass, nullptr);
+        }
+        if (layout != VK_NULL_HANDLE)
+        {
+            destroy_pipeline_layout(device, layout, nullptr);
+        }
+        if (fragment_shader != VK_NULL_HANDLE)
+        {
+            destroy_shader_module(device, fragment_shader, nullptr);
+        }
+        if (vertex_shader != VK_NULL_HANDLE)
+        {
+            destroy_shader_module(device, vertex_shader, nullptr);
+        }
+        return ok;
+    }
 }
 
 int main(int argc, char** argv)
@@ -1785,6 +2343,9 @@ int main(int argc, char** argv)
     bool concurrent_mapped_ranges_test_ok = true;
     bool parallel_command_recording_test_ok = true;
     bool bc_formats_test_ok = true;
+    bool command_ring_test_ok = true;
+    bool pipeline_compile_test_ok = true;
+    bool ring_failure_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
     std::printf("[shim-test] vkEnumeratePhysicalDevices -> %d, count=%u\n", result, count);
@@ -2062,6 +2623,7 @@ int main(int argc, char** argv)
                 }
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
                 fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
+                command_ring_test_ok = test_command_ring(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 clear_image_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 bc_formats_test_ok = test_bc_formats(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 if (shader_identifier_supported)
@@ -2072,6 +2634,8 @@ int main(int argc, char** argv)
                 concurrent_mapped_ranges_test_ok = test_concurrent_mapped_ranges(get_instance_proc, instance, devices[0], device);
                 parallel_command_recording_test_ok =
                     test_parallel_command_recording(get_instance_proc, instance, devices[0], device, queue, graphics_family);
+                pipeline_compile_test_ok = test_pipelines_compile_beside_bridge_calls(get_instance_proc, instance, device);
+                ring_failure_test_ok = test_ring_failure_is_reported_once(get_instance_proc, instance, device, queue);
 
                 destroy_device(device, nullptr);
             }
@@ -2085,7 +2649,8 @@ int main(int argc, char** argv)
 
     const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
                         transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok && bc_formats_test_ok &&
-                        concurrent_mapped_ranges_test_ok && parallel_command_recording_test_ok;
+                        concurrent_mapped_ranges_test_ok && parallel_command_recording_test_ok && command_ring_test_ok &&
+                        pipeline_compile_test_ok && ring_failure_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }

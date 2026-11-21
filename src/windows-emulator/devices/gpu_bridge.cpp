@@ -10,7 +10,68 @@ namespace sogen
     namespace
     {
         constexpr int32_t vk_success = 0;
+        constexpr int32_t vk_error_initialization_failed = -3;
         constexpr int32_t vk_error_memory_map_failed = -5;
+        constexpr int32_t vk_error_feature_not_present = -8;
+
+        // The command ring's record area (gpu_bridge::command_ring_header): large enough that a frame's records never wait
+        // for the host to catch up.
+        constexpr uint32_t command_ring_data_size = 4 * 1024 * 1024;
+        // The header page and the records, as the guest maps them.
+        constexpr size_t command_ring_size = gpu_bridge::command_ring_data_offset + command_ring_data_size;
+
+        // A word of the command ring's header, which the shim reads and writes from the guest's threads. Some C++20 standard
+        // libraries, the Android NDK's among them, do not ship std::atomic_ref yet. Where it is missing the compiler builtins
+        // give the same guarantees on the word; they take std::memory_order's values, as the standard libraries' own
+        // std::atomic does.
+#ifdef __cpp_lib_atomic_ref
+        template <typename T>
+        std::atomic_ref<T> ring_word(T& word)
+        {
+            return std::atomic_ref<T>{word};
+        }
+#else
+        template <typename T>
+        class builtin_atomic_ref
+        {
+          public:
+            explicit builtin_atomic_ref(T& word)
+                : word_(&word)
+            {
+            }
+
+            T load(const std::memory_order order) const
+            {
+                return __atomic_load_n(this->word_, static_cast<int>(order));
+            }
+
+            void store(const T value, const std::memory_order order) const
+            {
+                __atomic_store_n(this->word_, value, static_cast<int>(order));
+            }
+
+            T fetch_add(const T value, const std::memory_order order) const
+            {
+                return __atomic_fetch_add(this->word_, value, static_cast<int>(order));
+            }
+
+            // The ring compares and exchanges its words only relaxed, so a failed exchange is relaxed too; a stronger order
+            // would need the failure order std::atomic_ref derives from it.
+            bool compare_exchange_strong(T& expected, const T desired, const std::memory_order order) const
+            {
+                return __atomic_compare_exchange_n(this->word_, &expected, desired, false, static_cast<int>(order), __ATOMIC_RELAXED);
+            }
+
+          private:
+            T* word_;
+        };
+
+        template <typename T>
+        builtin_atomic_ref<T> ring_word(T& word)
+        {
+            return builtin_atomic_ref<T>{word};
+        }
+#endif
 
         // Host endpoint of the GPU paravirtualization bridge. The guest reaches it by opening
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
@@ -18,15 +79,36 @@ namespace sogen
         // vulkan_host) and the guest only ever sees opaque object ids.
         struct gpu_bridge_device : io_device
         {
+            gpu_bridge_device() = default;
+            gpu_bridge_device(const gpu_bridge_device&) = delete;
+            gpu_bridge_device& operator=(const gpu_bridge_device&) = delete;
+            gpu_bridge_device(gpu_bridge_device&&) = delete;
+            gpu_bridge_device& operator=(gpu_bridge_device&&) = delete;
+
+            ~gpu_bridge_device() override
+            {
+                this->release_command_ring();
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
+                // The bridge thread runs the command ring without the kernel lock; vulkan_ is shared with it under this.
+                const std::scoped_lock bridge(this->bridge_mutex_);
                 this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
                 this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
+
+                // A call answers as of everything the guest did before it, including the records it queued.
+                this->run_command_ring(win_emu);
 
                 switch (context.io_control_code)
                 {
                 case gpu_bridge::ioctl_get_version:
                     return handle_get_version(win_emu, context);
+                case gpu_bridge::ioctl_create_command_ring:
+                    return handle_create_command_ring(win_emu, context);
+                case gpu_bridge::ioctl_drain_command_ring:
+                    return write_output(win_emu, context,
+                                        gpu_bridge::result_response{.vk_result = this->ring_first_error(), .reserved = 0});
                 case gpu_bridge::ioctl_create_instance:
                     return handle_create_instance(win_emu, context);
                 case gpu_bridge::ioctl_destroy_instance:
@@ -269,10 +351,36 @@ namespace sogen
                 return this->vulkan_.has_swapchains();
             }
 
+            // Every scheduler pass, under the kernel lock: hands the analyzer what the bridge thread ran, and wakes the bridge
+            // thread when the guest queued records since it last looked.
+            void work(windows_emulator& win_emu) override
+            {
+                if (!this->ring_)
+                {
+                    return;
+                }
+
+                this->raise_ring_events(win_emu);
+
+                const uint32_t head = ring_word(this->ring_->header().head).load(std::memory_order_acquire);
+                if (head != this->ring_notified_head_)
+                {
+                    this->ring_notified_head_ = head;
+                    {
+                        const std::scoped_lock wake(this->ring_wake_mutex_);
+                        this->ring_wake_pending_ = true;
+                    }
+                    this->ring_wake_.notify_one();
+                }
+            }
+
             // Guest memory is saved as the CPU sees it, so what the GPU wrote into non-coherent imported memory has to reach
-            // the CPU first, and what the guest wrote must not be discarded on the way.
+            // the CPU first, and what the guest wrote must not be discarded on the way. The queued records run first, as
+            // they belong to what the guest has done.
             void prepare_serialization(windows_emulator& win_emu) override
             {
+                const std::scoped_lock bridge(this->bridge_mutex_);
+                this->run_command_ring(win_emu);
                 this->vulkan_.quiesce();
                 // Invalidating after a failed flush would discard what the guest wrote, and the process keeps running.
                 if (const auto flushed = this->flush_imported_memory(win_emu); flushed != vk_success)
@@ -347,6 +455,14 @@ namespace sogen
                 }
 
                 buffer.write_map(this->pending_semaphore_waits_);
+
+                // prepare_serialization ran the ring, so only where it is and how far it got remain, with the failures the app
+                // has not been told of yet: the header page is host memory, which a snapshot leaves out.
+                buffer.write(this->ring_ ? this->ring_->guest_address : uint64_t{0});
+                buffer.write(this->ring_ ? this->ring_->tail : uint32_t{0});
+                buffer.write(this->ring_ ? this->ring_->sequence : uint32_t{0});
+                buffer.write(this->ring_ ? ring_word(this->ring_->header().first_error).load(std::memory_order_relaxed) : int32_t{0});
+                buffer.write(this->ring_ ? ring_word(this->ring_->header().failed_records).load(std::memory_order_relaxed) : uint32_t{0});
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -393,12 +509,38 @@ namespace sogen
                 }
 
                 buffer.read_map(this->pending_semaphore_waits_);
+
+                // The guest's memory is the snapshot's by now, so a ring this device still had is not unmapped here
+                // (prepare_for_state_restore unmapped it while its range was still the ring's).
+                this->stop_bridge_thread();
+                this->ring_.reset();
+                this->restored_ring_ = {};
+                buffer.read(this->restored_ring_.guest_address);
+                buffer.read(this->restored_ring_.position);
+                buffer.read(this->restored_ring_.sequence);
+                buffer.read(this->restored_ring_.first_error);
+                buffer.read(this->restored_ring_.failed_records);
+            }
+
+            // A restore unmaps the guest's memory and puts the snapshot's back, so the ring is unmapped first, while its range
+            // is still the ring's; the restored device maps its own (restore_after_state_restore).
+            void prepare_for_state_restore(windows_emulator& win_emu) override
+            {
+                (void)win_emu;
+                this->release_command_ring();
             }
 
             // The Vulkan objects are re-created only once the guest memory imported memory aliases is back, and the
-            // guest's mappings of device memory are put back at the addresses the guest holds.
+            // guest's mappings of device memory are put back at the addresses the guest holds. So is the command ring, empty
+            // and where it had got to, since the guest keeps its own copy of the head.
             void restore_after_state_restore(windows_emulator& win_emu) override
             {
+                if (const auto ring = std::exchange(this->restored_ring_, {});
+                    ring.guest_address != 0 && !this->create_command_ring(win_emu, ring))
+                {
+                    throw std::runtime_error("[gpu-bridge] Restoring the command ring at its guest address failed");
+                }
+
                 if (this->restored_vulkan_state_.empty())
                 {
                     return;
@@ -494,6 +636,403 @@ namespace sogen
 
           private:
             vulkan_host vulkan_{};
+
+            // Shares vulkan_ between the calls, which hold the kernel lock, and the bridge thread, which runs the command
+            // ring without it. Taken after the kernel lock.
+            std::mutex bridge_mutex_{};
+
+            static constexpr size_t ring_page = 0x1000;
+
+            struct ring_memory_free
+            {
+                void operator()(std::byte* memory) const
+                {
+                    ::operator delete(memory, std::align_val_t{ring_page});
+                }
+            };
+
+            // This handle's command ring (gpu_bridge::command_ring_header), once the shim has asked for it.
+            struct command_ring
+            {
+                std::unique_ptr<std::byte, ring_memory_free> memory{};
+                windows_emulator* emulator{}; // whose guest maps it
+                uint64_t guest_address{};
+                uint32_t tail{};     // what the header's tail says; changed only under bridge_mutex_
+                uint32_t sequence{}; // the last record's sequence number
+                bool stopped{};      // the guest published a head no writer of records can: no record runs any more
+
+                gpu_bridge::command_ring_header& header() const
+                {
+                    return *reinterpret_cast<gpu_bridge::command_ring_header*>(this->memory.get());
+                }
+
+                std::byte* data() const
+                {
+                    return this->memory.get() + gpu_bridge::command_ring_data_offset;
+                }
+            };
+
+            std::optional<command_ring> ring_{};
+
+            struct saved_ring
+            {
+                uint64_t guest_address{};
+                uint32_t position{};
+                uint32_t sequence{};
+                int32_t first_error{};
+                uint32_t failed_records{};
+            };
+
+            saved_ring restored_ring_{};
+            uint32_t ring_notified_head_{};
+
+            // What the bridge thread ran, as IOCTL codes in ring order, for the analyzer: raised under the kernel lock.
+            std::mutex ring_events_mutex_{};
+            std::vector<uint32_t> ring_events_{};
+
+            std::thread bridge_thread_{};
+            std::mutex ring_wake_mutex_{};
+            std::condition_variable ring_wake_{};
+            bool ring_wake_pending_{};
+            std::atomic_bool ring_stopping_{};
+
+            NTSTATUS handle_create_command_ring(windows_emulator& win_emu, const io_device_context& context)
+            {
+                if (!this->ring_)
+                {
+                    this->create_command_ring(win_emu, {});
+                }
+
+                gpu_bridge::create_command_ring_response response{
+                    .vk_result = vk_error_feature_not_present, .data_size = 0, .guest_address = 0};
+                if (this->ring_)
+                {
+                    response = {.vk_result = vk_success, .data_size = command_ring_data_size, .guest_address = this->ring_->guest_address};
+                }
+                return write_output(win_emu, context, response);
+            }
+
+            // Maps a ring into the guest, anywhere for a new one and at its address when restoring one, empty at its position
+            // with the failures not reported yet, and starts the bridge thread. False when the backend cannot map host memory
+            // into the guest, the address is taken, or the host cannot start a thread (WebAssembly without threads).
+            bool create_command_ring(windows_emulator& win_emu, const saved_ring& state)
+            {
+                std::unique_ptr<std::byte, ring_memory_free> memory{
+                    static_cast<std::byte*>(::operator new(command_ring_size, std::align_val_t{ring_page}))};
+                std::memset(memory.get(), 0, command_ring_size);
+
+                uint64_t guest_address = 0;
+                if (state.guest_address == 0)
+                {
+                    guest_address = win_emu.memory.allocate_host_memory(command_ring_size, memory.get(), memory_permission::read_write,
+                                                                        win_emu.highest_user_address());
+                }
+                else if (win_emu.memory.allocate_host_memory_at(state.guest_address, command_ring_size, memory.get(),
+                                                                memory_permission::read_write))
+                {
+                    guest_address = state.guest_address;
+                }
+                if (guest_address == 0)
+                {
+                    return false;
+                }
+
+                this->ring_.emplace(command_ring{.memory = std::move(memory),
+                                                 .emulator = &win_emu,
+                                                 .guest_address = guest_address,
+                                                 .tail = state.position,
+                                                 .sequence = state.sequence});
+                auto& header = this->ring_->header();
+                header.head = state.position;
+                header.tail = state.position;
+                header.first_error = state.first_error;
+                header.failed_records = state.failed_records;
+                this->ring_notified_head_ = state.position;
+                try
+                {
+                    this->bridge_thread_ = std::thread([this, &win_emu] { this->bridge_thread_main(win_emu); });
+                }
+                catch (const std::system_error&)
+                {
+                    // Nothing would run the records: no ring, and the shim makes every call as before.
+                    this->release_command_ring();
+                    return false;
+                }
+
+                return true;
+            }
+
+            // Stops the bridge thread and unmaps the ring from the guest before its memory goes: the guest keeps the address,
+            // and its writes there would reach freed host memory.
+            void release_command_ring()
+            {
+                this->stop_bridge_thread();
+                if (this->ring_)
+                {
+                    this->ring_->emulator->memory.release_memory(this->ring_->guest_address, command_ring_size);
+                    this->ring_.reset();
+                }
+            }
+
+            void stop_bridge_thread()
+            {
+                if (!this->bridge_thread_.joinable())
+                {
+                    return;
+                }
+
+                {
+                    const std::scoped_lock wake(this->ring_wake_mutex_);
+                    this->ring_stopping_ = true;
+                }
+                this->ring_wake_.notify_one();
+                this->bridge_thread_.join();
+                this->ring_stopping_ = false;
+            }
+
+            // Runs the records the guest queues, without the kernel lock and one per hold of bridge_mutex_, so a call waits
+            // for one record at most. work() wakes it when the head moves; it also looks every millisecond.
+            void bridge_thread_main(windows_emulator& win_emu)
+            {
+                auto& header = this->ring_->header();
+                std::unique_lock wake(this->ring_wake_mutex_);
+                while (!this->ring_stopping_)
+                {
+                    this->ring_wake_.wait_for(wake, std::chrono::milliseconds(1),
+                                              [this] { return this->ring_wake_pending_ || this->ring_stopping_.load(); });
+                    this->ring_wake_pending_ = false;
+                    wake.unlock();
+
+                    while (!this->ring_stopping_ &&
+                           ring_word(header.tail).load(std::memory_order_acquire) != ring_word(header.head).load(std::memory_order_acquire))
+                    {
+                        const std::scoped_lock bridge(this->bridge_mutex_);
+                        if (!this->run_ring_record(win_emu, true))
+                        {
+                            break;
+                        }
+                    }
+
+                    wake.lock();
+                }
+            }
+
+            // Runs the ring to its head under the kernel lock, for a call that answers as of every record before it. What the
+            // bridge thread ran reaches the analyzer first, to keep ring order. Needs bridge_mutex_.
+            void run_command_ring(windows_emulator& win_emu)
+            {
+                if (!this->ring_)
+                {
+                    return;
+                }
+
+                this->raise_ring_events(win_emu);
+                while (this->run_ring_record(win_emu, false))
+                {
+                }
+            }
+
+            void raise_ring_events(windows_emulator& win_emu)
+            {
+                std::vector<uint32_t> codes{};
+                {
+                    const std::scoped_lock lock(this->ring_events_mutex_);
+                    codes.swap(this->ring_events_);
+                }
+
+                for (const auto code : codes)
+                {
+                    win_emu.callbacks.on_ioctrl(*this, u"SogenGpu", code);
+                }
+            }
+
+            // A record reaches the analyzer as the IOCTL it replaces: at once under the kernel lock, else through work().
+            void ring_event(windows_emulator& win_emu, const bool by_bridge_thread, const uint32_t code)
+            {
+                if (!by_bridge_thread)
+                {
+                    win_emu.callbacks.on_ioctrl(*this, u"SogenGpu", code);
+                    return;
+                }
+
+                const std::scoped_lock lock(this->ring_events_mutex_);
+                this->ring_events_.push_back(code);
+            }
+
+            int32_t ring_first_error() const
+            {
+                return this->ring_ ? ring_word(this->ring_->header().first_error).load(std::memory_order_relaxed) : vk_success;
+            }
+
+            // The records whose call returns its result to the app, so whose failure the guest is told of at its next
+            // submission; the others return nothing, or a result the shim ignored before it queued them.
+            static bool ring_command_reports_result(const uint32_t command)
+            {
+                switch (static_cast<gpu_bridge::command>(command))
+                {
+                case gpu_bridge::command::record_commands:
+                case gpu_bridge::command::reset_command_pool:
+                case gpu_bridge::command::reset_descriptor_pool:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            void ring_failed(const int32_t result, const bool reported)
+            {
+                auto& header = this->ring_->header();
+                if (reported)
+                {
+                    // The shim sets first_error back to 0 when it reports it (ring_error), so only a 0 is replaced.
+                    int32_t none = vk_success;
+                    ring_word(header.first_error).compare_exchange_strong(none, result, std::memory_order_relaxed);
+                }
+                ring_word(header.failed_records).fetch_add(1, std::memory_order_relaxed);
+            }
+
+            void advance_ring_tail(const uint32_t tail)
+            {
+                this->ring_->tail = tail;
+                ring_word(this->ring_->header().tail).store(tail, std::memory_order_release);
+            }
+
+            // Runs the record at the ring's tail; false once the ring is empty. A record the guest cannot have written that way
+            // (it runs past the ring's end or past what the head published) is dropped with everything up to the head, as one
+            // failure. A head off the record boundary, which no writer of records publishes, stops the ring for good: the tail
+            // never leaves the boundary, where a record header always fits before the end of the data. Needs bridge_mutex_.
+            bool run_ring_record(windows_emulator& win_emu, const bool by_bridge_thread)
+            {
+                auto& ring = *this->ring_;
+                if (ring.stopped)
+                {
+                    return false;
+                }
+
+                const uint32_t head = ring_word(ring.header().head).load(std::memory_order_acquire);
+                const uint32_t pending = head - ring.tail;
+                if (pending == 0)
+                {
+                    return false;
+                }
+
+                if (head % gpu_bridge::command_ring_alignment != 0)
+                {
+                    win_emu.log.error("[gpu-bridge] Command ring: head %u is off the record boundary (tail %u); no record runs any more\n",
+                                      head, ring.tail);
+                    this->ring_failed(vk_error_initialization_failed, true);
+                    ring.stopped = true;
+                    return false;
+                }
+
+                const uint32_t position = ring.tail & (command_ring_data_size - 1);
+                const uint32_t contiguous = command_ring_data_size - position;
+                gpu_bridge::command_ring_record record{};
+                const bool header_fits = ring.tail % gpu_bridge::command_ring_alignment == 0 && contiguous >= sizeof(record) &&
+                                         pending >= sizeof(record) && pending <= command_ring_data_size;
+                if (header_fits)
+                {
+                    std::memcpy(&record, ring.data() + position, sizeof(record));
+                }
+                if (!header_fits || record.size > contiguous - sizeof(record) ||
+                    gpu_bridge::command_ring_record_bytes(record.size) > pending)
+                {
+                    win_emu.log.error("[gpu-bridge] Command ring: malformed record at %u (head %u); dropping %u bytes\n", ring.tail, head,
+                                      pending);
+                    this->ring_failed(vk_error_initialization_failed, true);
+                    this->advance_ring_tail(head);
+                    return false;
+                }
+
+                if (record.command != gpu_bridge::command_ring_wrap)
+                {
+                    ++ring.sequence;
+                    const auto payload = std::span<const std::byte>(ring.data() + position + sizeof(record), record.size);
+                    const uint32_t code = gpu_bridge::make_ioctl(record.command);
+                    this->ring_event(win_emu, by_bridge_thread, code);
+
+                    const int32_t result = this->run_ring_command(win_emu, by_bridge_thread, record.command, payload);
+
+                    if (result != vk_success)
+                    {
+                        win_emu.log.error("[gpu-bridge] Command ring: record %u (command 0x%X from thread %u) failed: VkResult %d\n",
+                                          record.sequence, record.command, record.thread_id, result);
+                        this->ring_failed(result, ring_command_reports_result(record.command));
+                    }
+                }
+
+                this->advance_ring_tail(ring.tail + gpu_bridge::command_ring_record_bytes(record.size));
+                return true;
+            }
+
+            template <typename Request, typename F>
+            static int32_t run_ring_request(const std::span<const std::byte> payload, F&& run)
+            {
+                Request request{};
+                if (payload.size() < sizeof(request))
+                {
+                    return vk_error_initialization_failed;
+                }
+                std::memcpy(&request, payload.data(), sizeof(request));
+                return run(request);
+            }
+
+            // The calls a ring record replaces, run with the input their IOCTL would take. Needs bridge_mutex_.
+            int32_t run_ring_command(windows_emulator& win_emu, const bool by_bridge_thread, const uint32_t command,
+                                     const std::span<const std::byte> payload)
+            {
+                switch (static_cast<gpu_bridge::command>(command))
+                {
+                case gpu_bridge::command::update_descriptor_sets_batch:
+                    if (payload.size() > max_descriptor_update_input_bytes)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->apply_descriptor_update_batch(
+                        win_emu, payload, [&](const uint32_t code) { this->ring_event(win_emu, by_bridge_thread, code); });
+                case gpu_bridge::command::record_commands:
+                    if (payload.size() > max_recorded_command_bytes)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->execute_recorded_commands(win_emu, payload, true, std::nullopt).first_failure;
+                case gpu_bridge::command::reset_query_pool:
+                    return run_ring_request<gpu_bridge::reset_query_pool_request>(payload, [this](const auto& request) {
+                        return this->vulkan_.reset_query_pool(request.device, request.query_pool, request.first_query, request.query_count);
+                    });
+                case gpu_bridge::command::reset_command_pool:
+                    return run_ring_request<gpu_bridge::reset_command_pool_request>(payload, [this](const auto& request) {
+                        return this->vulkan_.reset_command_pool(request.device, request.command_pool, request.flags);
+                    });
+                case gpu_bridge::command::reset_descriptor_pool:
+                    return run_ring_request<gpu_bridge::reset_descriptor_pool_request>(payload, [this](const auto& request) {
+                        return this->vulkan_.reset_descriptor_pool(request.device, request.descriptor_pool, request.flags);
+                    });
+                case gpu_bridge::command::destroy_image_view:
+                    return run_ring_request<gpu_bridge::device_child_request>(payload, [this](const auto& request) {
+                        this->vulkan_.destroy_image_view(request.device, request.object);
+                        return vk_success;
+                    });
+                case gpu_bridge::command::destroy_buffer_view:
+                    return run_ring_request<gpu_bridge::device_child_request>(payload, [this](const auto& request) {
+                        this->vulkan_.destroy_buffer_view(request.device, request.object);
+                        return vk_success;
+                    });
+                default:
+                    return vk_error_initialization_failed;
+                }
+            }
+
+            // Runs f with neither the kernel lock nor bridge_mutex_ held, for host calls that block (presents, waits). Both
+            // are held again afterwards, the kernel lock first.
+            template <typename F>
+            decltype(auto) run_unlocked(windows_emulator& win_emu, F&& f)
+            {
+                this->bridge_mutex_.unlock();
+                const auto relock = utils::finally([this] { this->bridge_mutex_.lock(); });
+                return win_emu.run_without_kernel_lock(std::forward<F>(f));
+            }
+
             std::unordered_map<uint64_t, hwnd> surface_windows_{};
 
             // VkDeviceMemory aliased directly into the guest address space (see handle_map_memory_direct),
@@ -604,6 +1143,8 @@ namespace sogen
                     }
                     if (result == vk_success)
                     {
+                        // This runs from the scheduler, outside io_control, while the bridge thread may run records.
+                        const std::scoped_lock bridge(this->bridge_mutex_);
                         this->invalidate_imported_memory(win_emu);
                     }
 
@@ -782,7 +1323,7 @@ namespace sogen
 
                 uint64_t instance = gpu_bridge::null_object;
                 auto& ui = win_emu.ui();
-                const auto extensions = win_emu.run_without_kernel_lock([&ui] { return ui.vulkan_instance_extensions(); });
+                const auto extensions = this->run_unlocked(win_emu, [&ui] { return ui.vulkan_instance_extensions(); });
                 const int32_t result = this->vulkan_.create_instance(extensions, instance);
 
                 const gpu_bridge::create_instance_response response{
@@ -2520,7 +3061,6 @@ namespace sogen
                 uint64_t native_instance = 0;
                 if (!this->vulkan_.get_native_instance_handle(request.instance, native_instance))
                 {
-                    constexpr int32_t vk_error_initialization_failed = -3;
                     return write_output(win_emu, context,
                                         gpu_bridge::create_surface_response{.vk_result = vk_error_initialization_failed,
                                                                             .reserved = 0,
@@ -2529,7 +3069,7 @@ namespace sogen
 
                 auto& ui = win_emu.ui();
                 const uint64_t native_surface =
-                    win_emu.run_without_kernel_lock([&ui, window = static_cast<hwnd>(request.hwnd), native_instance] {
+                    this->run_unlocked(win_emu, [&ui, window = static_cast<hwnd>(request.hwnd), native_instance] {
                         return ui.create_vulkan_surface(window, native_instance);
                     });
                 uint64_t surface = gpu_bridge::null_object;
@@ -2642,7 +3182,7 @@ namespace sogen
                 uint32_t index = 0;
                 const int32_t result =
                     this->vulkan_.acquire_next_image(request.swapchain, request.timeout, request.semaphore, request.fence, index,
-                                                     [&](const std::function<void()>& wait) { win_emu.run_without_kernel_lock(wait); });
+                                                     [&](const std::function<void()>& wait) { this->run_unlocked(win_emu, wait); });
                 return write_output(win_emu, context, gpu_bridge::acquire_next_image_response{.vk_result = result, .image_index = index});
             }
 
@@ -2661,14 +3201,14 @@ namespace sogen
 
                 if (win_emu.frames().limited())
                 {
-                    win_emu.run_without_kernel_lock([&win_emu] { win_emu.frames().wait(); });
+                    this->run_unlocked(win_emu, [&win_emu] { win_emu.frames().wait(); });
                 }
 
                 // The host driver may block in vkQueuePresentKHR for frame pacing; holding the kernel lock meanwhile
                 // would stall every other vCPU.
                 const int32_t result = this->vulkan_.queue_present(
                     request.queue, request.swapchain, request.image_index, wait_semaphores,
-                    [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
+                    [&](const std::function<int32_t()>& present) { return this->run_unlocked(win_emu, present); });
                 constexpr int32_t vk_suboptimal_khr = 1000001003; // VK_SUBOPTIMAL_KHR (no vulkan.h here)
                 if (result == vk_success || result == vk_suboptimal_khr)
                 {
@@ -3322,8 +3862,7 @@ namespace sogen
                     .blend_attachments = blend_attachments,
                 };
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
-                    desc, [&win_emu](const std::function<int32_t()>& compile) { return win_emu.run_without_kernel_lock(compile); },
-                    pipeline);
+                    desc, [&](const std::function<int32_t()>& compile) { return this->run_unlocked(win_emu, compile); }, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(
@@ -3611,7 +4150,6 @@ namespace sogen
             // single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
-                constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
                 using request_t = gpu_bridge::update_descriptor_sets_request;
 
                 if (size - offset < sizeof(request_t))
@@ -3693,7 +4231,8 @@ namespace sogen
                 std::vector<std::byte> buffer(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
 
-                const int32_t result = this->apply_descriptor_update_batch(win_emu, buffer);
+                const int32_t result = this->apply_descriptor_update_batch(
+                    win_emu, buffer, [&](const uint32_t code) { this->ring_event(win_emu, false, code); });
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3717,7 +4256,7 @@ namespace sogen
 
                 std::vector<std::byte> updates(prefix.updates_bytes);
                 win_emu.emu().read_memory(context.input_buffer + sizeof(prefix), updates.data(), updates.size());
-                this->apply_descriptor_update_batch(win_emu, updates);
+                this->apply_descriptor_update_batch(win_emu, updates, [&](const uint32_t code) { this->ring_event(win_emu, false, code); });
 
                 auto allocation = context;
                 allocation.input_buffer += sizeof(prefix) + prefix.updates_bytes;
@@ -3727,9 +4266,9 @@ namespace sogen
 
             // Allocates the sets of one allocate_descriptor_sets_deferred record under the guest's ids and advances `offset`
             // past it; false if the record is malformed. The guest has already been told the allocation succeeded, so the
-            // analyzer hears of it here, as of the vkAllocateDescriptorSets IOCTL it replaces.
-            bool apply_deferred_descriptor_allocation(windows_emulator& win_emu, const std::byte* data, size_t size, size_t& offset,
-                                                      int32_t& result)
+            // analyzer hears of it here (through `raise`), as of the vkAllocateDescriptorSets IOCTL it replaces.
+            bool apply_deferred_descriptor_allocation([[maybe_unused]] windows_emulator& win_emu, const std::byte* data, size_t size,
+                                                      size_t& offset, int32_t& result, const std::function<void(uint32_t)>& raise)
             {
                 gpu_bridge::allocate_descriptor_sets_deferred record{};
                 if (size - offset < sizeof(record))
@@ -3751,15 +4290,15 @@ namespace sogen
                 offset += 2 * array_bytes;
 
                 result = this->vulkan_.allocate_descriptor_sets_as(record.device, record.descriptor_pool, layouts, {}, ids);
-                win_emu.callbacks.on_ioctrl(*this, u"SogenGpu", gpu_bridge::ioctl_allocate_descriptor_sets);
+                raise(gpu_bridge::ioctl_allocate_descriptor_sets);
                 return true;
             }
 
             // Applies the shim's coalesced descriptor records in issue order and reports the first failure. A malformed record
-            // stops the batch, since nothing after it can be found.
-            int32_t apply_descriptor_update_batch(windows_emulator& win_emu, const std::vector<std::byte>& buffer)
+            // stops the batch, since nothing after it can be found. `raise` tells the analyzer of each deferred allocation.
+            int32_t apply_descriptor_update_batch(windows_emulator& win_emu, const std::span<const std::byte> buffer,
+                                                  const std::function<void(uint32_t)>& raise)
             {
-                constexpr int32_t vk_error_initialization_failed = -3;
                 int32_t result = 0; // vk_success
                 size_t offset = 0;
                 while (buffer.size() - offset >= sizeof(gpu_bridge::descriptor_batch_record))
@@ -3777,7 +4316,7 @@ namespace sogen
                         well_formed = r != vk_error_initialization_failed;
                         break;
                     case gpu_bridge::descriptor_batch_record_kind::allocate:
-                        well_formed = this->apply_deferred_descriptor_allocation(win_emu, buffer.data(), buffer.size(), offset, r);
+                        well_formed = this->apply_deferred_descriptor_allocation(win_emu, buffer.data(), buffer.size(), offset, r, raise);
                         break;
                     default:
                         well_formed = false;
@@ -3866,7 +4405,6 @@ namespace sogen
 
             int32_t execute_recorded_command(windows_emulator& win_emu, uint32_t command, const std::byte* payload, size_t size)
             {
-                constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
                 const auto read = [&](auto& req) {
                     if (size < sizeof(req))
                     {

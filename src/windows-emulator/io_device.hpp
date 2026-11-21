@@ -198,6 +198,12 @@ namespace sogen
             (void)data;
         }
 
+        // Before a restore unmaps the guest's memory, while the guest still maps what the device mapped into it.
+        virtual void prepare_for_state_restore(windows_emulator& win_emu)
+        {
+            (void)win_emu;
+        }
+
         virtual void restore_after_state_restore(windows_emulator& win_emu)
         {
             (void)win_emu;
@@ -333,6 +339,7 @@ namespace sogen
         }
 
         void work(windows_emulator& win_emu) override;
+        void prepare_for_state_restore(windows_emulator& win_emu) override;
         void restore_after_state_restore(windows_emulator& win_emu) override;
         bool supports_serialization() const override;
         void prepare_serialization(windows_emulator& win_emu) override;

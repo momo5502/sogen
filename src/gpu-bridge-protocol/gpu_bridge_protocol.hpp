@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 49;
+    inline constexpr uint32_t protocol_version = 50;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -218,6 +218,13 @@ namespace sogen::gpu_bridge
         // destroy_image for an image the guest destroyed earlier, then create_image, in one round trip: a
         // create_image_after_destroy_request. Answers as create_image does.
         create_image_after_destroy = 0x8AD,
+        // Maps this handle's command ring (command_ring_header) into the guest, once. No input; answers a
+        // create_command_ring_response, with VK_ERROR_FEATURE_NOT_PRESENT where the backend cannot map host memory into the
+        // guest, and the shim then keeps making every call.
+        create_command_ring = 0x8AE,
+        // Runs the command ring to its head, as every other call does before itself; the shim sends it when the ring is
+        // full. No input; answers a result_response with the ring's first_error.
+        drain_command_ring = 0x8AF,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -337,6 +344,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_device_image_memory_requirements =
         make_ioctl(static_cast<uint32_t>(command::get_device_image_memory_requirements));
     inline constexpr uint32_t ioctl_create_image_after_destroy = make_ioctl(static_cast<uint32_t>(command::create_image_after_destroy));
+    inline constexpr uint32_t ioctl_create_command_ring = make_ioctl(static_cast<uint32_t>(command::create_command_ring));
+    inline constexpr uint32_t ioctl_drain_command_ring = make_ioctl(static_cast<uint32_t>(command::drain_command_ring));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
     inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
     inline constexpr uint32_t ioctl_enumerate_device_extension_properties =
@@ -2583,6 +2592,56 @@ namespace sogen::gpu_bridge
     };
 
     static_assert(sizeof(descriptor_updates_prefix) == 8);
+
+    // The command ring (create_command_ring): host memory the bridge maps into the guest, a header page and then data_size
+    // bytes of records. It carries the calls whose answer nobody waits for (update_descriptor_sets_batch, record_commands,
+    // reset_query_pool, reset_command_pool, reset_descriptor_pool, destroy_image_view, destroy_buffer_view), each with the
+    // input its IOCTL would take. The guest writes records and moves head; the host runs them in order without the kernel
+    // lock and moves tail, and every other call on the handle runs the ring to head before itself. head and tail are byte
+    // counters that wrap at 2^32; data_size is a power of two.
+    struct command_ring_header
+    {
+        uint32_t head; // written by the guest (release) once the records before it are complete
+        std::array<uint32_t, 15> reserved0;
+        uint32_t tail; // written by the host (release) once the records before it have run
+        std::array<uint32_t, 15> reserved1;
+        // The first failure the app is told of at its next vkQueueSubmit/vkQueueSubmit2: of a record whose call returns a
+        // result (record_commands, reset_command_pool, reset_descriptor_pool), or of the ring itself; 0 until then. The
+        // shim sets it back to 0 when it reports it, and the host sets it only while it is 0.
+        int32_t first_error;
+        uint32_t failed_records; // how many records failed, of any kind
+        std::array<uint32_t, 14> reserved2;
+    };
+
+    static_assert(sizeof(command_ring_header) == 192);
+
+    inline constexpr uint32_t command_ring_data_offset = 0x1000; // records start one page after the header
+    inline constexpr uint32_t command_ring_alignment = 16;       // every record starts on this boundary
+    inline constexpr uint32_t command_ring_wrap = 0;             // a record with this command fills the end of the data
+
+    // Leads every record; `size` payload bytes follow, and the record takes command_ring_record_bytes(size).
+    struct command_ring_record
+    {
+        uint32_t size;
+        uint32_t command;   // the command its IOCTL would carry, or command_ring_wrap
+        uint32_t thread_id; // the guest thread that wrote it
+        uint32_t sequence;  // the ring's records counted from 1
+    };
+
+    static_assert(sizeof(command_ring_record) == command_ring_alignment);
+
+    constexpr uint32_t command_ring_record_bytes(const uint32_t payload_size)
+    {
+        return (static_cast<uint32_t>(sizeof(command_ring_record)) + payload_size + command_ring_alignment - 1) &
+               ~(command_ring_alignment - 1);
+    }
+
+    struct create_command_ring_response
+    {
+        int32_t vk_result;
+        uint32_t data_size;     // record bytes after the header page
+        uint64_t guest_address; // the header page
+    };
 
     // ioctl_update_descriptor_sets: header, descriptor_write[write_count], descriptor_copy[copy_count], then inline data.
     struct update_descriptor_sets_request
