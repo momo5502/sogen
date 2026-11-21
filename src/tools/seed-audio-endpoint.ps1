@@ -26,6 +26,7 @@ $REG_OPTION_BACKUP_RESTORE = 4
 $KEY_ALL_ACCESS = 0xF003F
 $HKEY_LOCAL_MACHINE = [UIntPtr][uint32]2147483650
 $REG_SZ = 1
+$REG_BINARY = 3
 $REG_DWORD = 4
 
 function Set-Key([string]$Path, [hashtable]$Values) {
@@ -39,6 +40,10 @@ function Set-Key([string]$Path, [hashtable]$Values) {
         if ($value -is [string]) {
             $data = [Text.Encoding]::Unicode.GetBytes($value + [char]0)
             $type = $REG_SZ
+        }
+        elseif ($value -is [byte[]]) {
+            $data = $value
+            $type = $REG_BINARY
         }
         else {
             $data = [BitConverter]::GetBytes([uint32]$value)
@@ -55,6 +60,31 @@ $previous = $false
 $status = [Sogen.Registry]::RtlAdjustPrivilege($SE_RESTORE_PRIVILEGE, $true, $false, [ref]$previous)
 if ($status -ne 0) { throw "Enabling SeRestorePrivilege failed: $status" }
 
+# The endpoint's device format as mmdevapi stores it: the PROPVARIANT type VT_BLOB and a reserved word, then a
+# 44.1 kHz stereo 16-bit PCM WAVEFORMATEXTENSIBLE, the rate and channels the emulated audio service mixes in.
+function Get-DeviceFormatBlob {
+    $channels = 2
+    $rate = 44100
+    $bits = 16
+    $align = $channels * $bits / 8
+    $stream = New-Object IO.MemoryStream
+    $writer = New-Object IO.BinaryWriter($stream)
+    $writer.Write([uint32]0x41)
+    $writer.Write([uint32]1)
+    $writer.Write([uint16]0xFFFE)
+    $writer.Write([uint16]$channels)
+    $writer.Write([uint32]$rate)
+    $writer.Write([uint32]($rate * $align))
+    $writer.Write([uint16]$align)
+    $writer.Write([uint16]$bits)
+    $writer.Write([uint16]22)
+    $writer.Write([uint16]$bits)
+    $writer.Write([uint32]3)
+    $writer.Write([byte[]]@(1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71))
+    $writer.Flush()
+    return , $stream.ToArray()
+}
+
 $endpointId = '{5e9d8c1a-7b3f-4c2e-9a61-0d4b8f2e6c37}'
 $endpoint = "$Hive\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$endpointId"
 Set-Key $endpoint @{ 'DeviceState' = 1 }
@@ -64,4 +94,6 @@ Set-Key "$endpoint\Properties" @{
     '{a45c254e-df1c-4efd-8020-67d146a850e0},2' = 'Speakers'
     '{b3f8fa53-0004-438e-9003-51a46e139bfc},6' = 'Sogen Audio'
     '{9c119480-ddc2-4954-a150-5bd240d454ad},1' = "\\?\SWD#MMDEVAPI#{0.0.0.00000000}.$endpointId#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+    # PKEY_AudioEngine_DeviceFormat. Wwise does not open an endpoint without it.
+    '{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0' = (Get-DeviceFormatBlob)
 }
