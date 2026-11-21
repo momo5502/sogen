@@ -97,6 +97,11 @@ namespace sogen::test
         EXPECT_TRUE(owner.message_queue.empty());
         EXPECT_TRUE(this->thread(this->second_handle).message_queue.empty());
         EXPECT_EQ(0x80, this->emu->process.key_state[VK_LBUTTON] & 0x80);
+
+        this->send_pointer(root, WM_LBUTTONUP, 20, 170);
+
+        EXPECT_TRUE(owner.message_queue.empty());
+        EXPECT_EQ(0, this->emu->process.key_state[VK_LBUTTON] & 0x80);
     }
 
     TEST_F(PointerRoutingTest, MotionOverAWindowIsQueuedToItsThread)
