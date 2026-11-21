@@ -1468,22 +1468,35 @@ jobs:
 
       # Flutter's included Gradle build declares no plugin repositories, so its plugins and their Kotlin dependencies
       # resolve only through the Gradle Plugin Portal, whose Maven Central proxy intermittently answers 404. Gradle does
-      # not retry a 404, so resolve from Maven Central first in every build, included builds too.
+      # not retry a 404, so resolve from Maven Central first in every build, included builds too. Maven Central itself
+      # sometimes reports artifacts missing; Google's mirror of it is tried first, with Central and the Portal behind it.
       - name: Resolve Gradle Plugins From Maven Central
         run: |
           mkdir -p ~/.gradle/init.d
           cat > ~/.gradle/init.d/plugin-repositories.gradle << 'EOF'
+          // Gradle caches that a module was missing; a retried build must ask the repositories again.
+          if (System.getenv("SOGEN_GRADLE_REFRESH_DEPENDENCIES") == "1") {
+              gradle.startParameter.refreshDependencies = true
+          }
           beforeSettings { settings ->
               settings.pluginManagement.repositories {
+                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
                   mavenCentral()
                   gradlePluginPortal()
               }
           }
           EOF
 
+      # Some plugin markers (org.gradle.kotlin.kotlin-dsl) are only on the Plugin Portal, which intermittently answers 404.
+      # A retry refreshes dependencies, since Gradle otherwise reuses the cached miss.
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} && exit 0
+            export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
+          done
+          exit 1
 
       # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
       # creates unit test tasks for the debug build type.
