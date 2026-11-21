@@ -81,13 +81,16 @@ namespace sogen::test
         constexpr uint32_t length_sentinel = 0xDEADBEEF;
         const auto output = storage + 0x100;
         const auto return_length = storage + 0x10;
-        const std::array inputs{uint64_t{0}, uint64_t{0xDEAD0000}, storage + 0x1000 - sizeof(uint32_t)};
+        // NtQuerySystemInformationEx turns away a NULL input and one off the class's 8-byte alignment itself; an unmapped
+        // one faults when ExpQuerySystemInformation reads it (19041).
+        const std::array inputs{std::pair{uint64_t{0}, STATUS_INVALID_PARAMETER}, std::pair{uint64_t{0xDEAD0000}, STATUS_ACCESS_VIOLATION},
+                                std::pair{storage + 0x1000 - sizeof(uint32_t), STATUS_DATATYPE_MISALIGNMENT}};
 
-        for (const auto input : inputs)
+        for (const auto& [input, status] : inputs)
         {
             emu.memory.write_memory(output, sentinel);
             emu.memory.write_memory(return_length, length_sentinel);
-            EXPECT_EQ(STATUS_ACCESS_VIOLATION,
+            EXPECT_EQ(status,
                       syscalls::handle_NtQuerySystemInformationEx(context, SystemSupportedProcessorArchitectures, input, sizeof(handle),
                                                                   output, sizeof(sentinel), {emu.memory, return_length}));
             EXPECT_EQ((emu.memory.read_memory<std::array<uint32_t, 3>>(output)), sentinel);

@@ -78,6 +78,120 @@ namespace sogen
             // Windows 11 26200 still answers class 0x100, one past the last class SYSTEM_INFORMATION_CLASS names.
             constexpr uint32_t last_system_information_class = 0x100;
 
+            // The alignment ExpQuerySystemInformation's probe asks of a class's buffer (19041).
+            uint32_t system_information_alignment(const uint32_t info_class)
+            {
+                switch (info_class)
+                {
+                case SystemLocksInformation:
+                    return sizeof(uint64_t);
+                case SystemKernelDebuggerInformation:
+                case SystemSecureBootInformation:
+                case SystemPortableWorkspaceEfiLauncherInformation:
+                case SystemKernelDebuggerInformationEx:
+                case SystemEnergyEstimationConfigInformation:
+                case SystemKernelDebuggerFlags:
+                case SystemVsmProtectionInformation:
+                case SystemDmaGuardPolicyInformation:
+                case SystemPoolZeroingInformation:
+                    return sizeof(uint8_t);
+                default:
+                    return sizeof(ULONG);
+                }
+            }
+
+            // ExpQuerySystemInformation probes a user-mode caller's buffers under try before it looks at the class: the buffer
+            // with ProbeForWrite at the class's alignment, each of its pages read and written back unless it is empty, then the
+            // returned length, all of it read and then written back, with no alignment of its own. A probe that faults ends the
+            // query with the fault's code, and a guard page it reaches loses its guard (19041).
+            NTSTATUS probe_system_information(const syscall_context& c, const uint32_t info_class, const uint64_t system_information,
+                                              const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+            {
+                if (system_information_length != 0)
+                {
+                    if (system_information % system_information_alignment(info_class) != 0)
+                    {
+                        return STATUS_DATATYPE_MISALIGNMENT;
+                    }
+
+                    if (const auto status = probe_range(c.win_emu, system_information, system_information_length, memory_permission::write);
+                        status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                }
+
+                if (!return_length)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (const auto status = probe_range(c.win_emu, return_length.value(), sizeof(ULONG), memory_permission::read);
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                return store_range(c.win_emu.memory, c.win_emu.active_thread(), return_length.value(), sizeof(ULONG));
+            }
+
+            // MM_USER_PROBE_ADDRESS: ProbeForRead on behalf of user mode fails a range that reaches it.
+            constexpr uint64_t user_probe_address = 0x7FFFFFFF0000;
+
+            // The classes NtQuerySystemInformation turns away before ExpQuerySystemInformation, so it probes none of their
+            // buffers: they take an input, which only NtQuerySystemInformationEx passes (19041).
+            bool takes_input_only(const uint32_t info_class)
+            {
+                switch (info_class)
+                {
+                case SystemLogicalProcessorAndGroupInformation:
+                case SystemNodeDistanceInformation:
+                case SystemInterruptSteeringInformation:
+                case SystemFeatureConfigurationInformation:
+                case SystemFeatureConfigurationSectionInformation:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            // The classes NtQuerySystemInformationEx takes, with the alignment it asks of each one's input; it turns any other
+            // away (19041). SystemSupportedProcessorArchitectures2, which 19041 does not have, takes a process handle as
+            // SystemSupportedProcessorArchitectures does.
+            std::optional<size_t> system_information_input_alignment(const uint32_t info_class)
+            {
+                switch (info_class)
+                {
+                case SystemProcessorPerformanceInformation:
+                case SystemInterruptInformation:
+                case SystemProcessorIdleInformation:
+                case SystemProcessorPowerInformation:
+                case SystemLogicalProcessorInformation:
+                case SystemProcessorIdleCycleTimeInformation:
+                case SystemProcessorPerformanceDistribution:
+                case SystemProcessorCycleTimeInformation:
+                case SystemNodeDistanceInformation:
+                case SystemProcessorPerformanceInformationEx:
+                case SystemProcessorCycleStatsInformation:
+                    return sizeof(USHORT);
+                case SystemWatchdogTimerInformation:
+                case SystemLogicalProcessorAndGroupInformation:
+                case SystemInterruptSteeringInformation:
+                case SystemFeatureConfigurationInformation:
+                    return sizeof(ULONG);
+                case SystemIsolatedUserModeInformation:
+                case SystemCpuSetInformation:
+                case SystemSecureKernelProfileInformation:
+                case SystemSupportedProcessorArchitectures:
+                case SystemCodeIntegritySyntheticCacheInformation:
+                case SystemFeatureConfigurationSectionInformation:
+                case SystemSupportedProcessorArchitectures2:
+                    return sizeof(uint64_t);
+                default:
+                    return std::nullopt;
+                }
+            }
+
             // ExpQuerySystemInformation reads the processor group these classes answer for from their input (19041).
             bool answers_for_one_processor_group(const uint32_t info_class)
             {
@@ -679,30 +793,6 @@ namespace sogen
             constexpr auto header_size = offsetof(information_t, Handles);
             constexpr auto minimum_size = static_cast<uint32_t>(header_size + sizeof(entry_t));
 
-            // ExpQuerySystemInformation probes the whole buffer for ULONG-aligned write access before any class
-            // check, so a small invalid buffer fails with STATUS_ACCESS_VIOLATION rather than a length mismatch.
-            if (system_information_length != 0)
-            {
-                if (system_information % sizeof(ULONG) != 0)
-                {
-                    return STATUS_DATATYPE_MISALIGNMENT;
-                }
-
-                if (const auto status = probe_range(c.win_emu, system_information, system_information_length, memory_permission::write);
-                    status != STATUS_SUCCESS)
-                {
-                    return status;
-                }
-            }
-
-            if (const auto status = return_length
-                                        ? probe_range(c.win_emu, return_length.value(), sizeof(uint32_t), memory_permission::write)
-                                        : STATUS_SUCCESS;
-                status != STATUS_SUCCESS)
-            {
-                return status;
-            }
-
             if (system_information_length < minimum_size)
             {
                 return_length.write_if_valid(minimum_size);
@@ -920,12 +1010,18 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        // ExpQuerySystemInformation: what both syscalls ask.
+        // ExpQuerySystemInformation: what both syscalls ask once their own checks pass.
         static NTSTATUS query_system_information(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
                                                  const uint32_t input_buffer_length, const std::optional<USHORT> own_group,
                                                  const uint64_t system_information, const uint32_t system_information_length,
                                                  const emulator_object<uint32_t> return_length)
         {
+            if (const auto status = probe_system_information(c, info_class, system_information, system_information_length, return_length);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (info_class > last_system_information_class)
             {
                 c.win_emu.log.error("Unsupported NtQuerySystemInformation(Ex) info class: 0x%X\n", info_class);
@@ -1471,10 +1567,34 @@ namespace sogen
             }
         }
 
+        // NtQuerySystemInformationEx's own checks come before ExpQuerySystemInformation's probe: an input, a class it takes, then
+        // the input's alignment for that class and its range, which it does not touch (19041).
         NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
                                                    const uint32_t input_buffer_length, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
+            if (!input_buffer || input_buffer_length == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto alignment = system_information_input_alignment(info_class);
+            if (!alignment)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (input_buffer % *alignment != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
+            const auto input_end = input_buffer + input_buffer_length;
+            if (input_end > user_probe_address || input_end < input_buffer)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
             return query_system_information(c, info_class, input_buffer, input_buffer_length, std::nullopt, system_information,
                                             system_information_length, return_length);
         }
@@ -1482,6 +1602,11 @@ namespace sogen
         NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class, const uint64_t system_information,
                                                  const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
+            if (takes_input_only(info_class))
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             return query_system_information(c, info_class, 0, 0, own_processor_group(info_class), system_information,
                                             system_information_length, return_length);
         }
