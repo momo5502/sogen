@@ -16,6 +16,7 @@ namespace sogen
     class module_manager;
     class windows_emulator;
     class analysis_reporter;
+    class symbol_loader;
 
     using string_set = std::set<std::string, std::less<>>;
 
@@ -50,6 +51,8 @@ namespace sogen
     {
         const analysis_settings* settings{};
         windows_emulator* win_emu{};
+        symbol_loader* symbols{};
+        bool has_report_output{};
         std::vector<analysis_reporter*> reporters{};
 
         std::string output{};

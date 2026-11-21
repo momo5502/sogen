@@ -165,6 +165,11 @@ namespace sogen
             return modules_;
         }
 
+        module_map& modules()
+        {
+            return modules_;
+        }
+
         // Execution mode accessors
         execution_mode get_execution_mode() const
         {

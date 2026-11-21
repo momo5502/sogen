@@ -506,20 +506,15 @@ namespace sogen
         return data;
     }
 
-    std::filesystem::path file_system::translate(const windows_path& path) const
+    std::optional<std::filesystem::path> file_system::translate(const windows_path& path) const
     {
         if (!path.is_absolute())
         {
-            throw std::runtime_error("Only absolute paths can be translated: " + path.string());
+            return std::nullopt;
         }
 
         const auto resolved = this->resolve(path);
-        if (!resolved)
-        {
-            return {};
-        }
-
-        return resolved->provider->get_host_path(resolved->relative).value_or(std::filesystem::path{});
+        return resolved ? resolved->provider->get_host_path(resolved->relative) : std::nullopt;
     }
 
 } // namespace sogen

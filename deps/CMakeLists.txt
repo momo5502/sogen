@@ -164,3 +164,7 @@ set(GEN_FILES OFF)
 set(USE_STATIC_MBEDTLS_LIBRARY ON)
 set(USE_SHARED_MBEDTLS_LIBRARY OFF)
 add_subdirectory(mbedtls EXCLUDE_FROM_ALL)
+
+if(SOGEN_ENABLE_SYMBOLS)
+  include(symbol-libraries.cmake)
+endif()

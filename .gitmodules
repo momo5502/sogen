@@ -69,3 +69,15 @@
 [submodule "deps/libadrenotools"]
 	path = deps/libadrenotools
 	url = https://github.com/bylaws/libadrenotools.git
+[submodule "deps/raw_pdb"]
+	path = deps/raw_pdb
+	url = https://github.com/MolecularMatters/raw_pdb.git
+	shallow = true
+[submodule "deps/libmspack"]
+	path = deps/libmspack
+	url = https://github.com/kyz/libmspack.git
+	shallow = true
+[submodule "deps/curl"]
+	path = deps/curl
+	url = https://github.com/curl/curl.git
+	shallow = true

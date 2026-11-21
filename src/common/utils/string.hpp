@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <algorithm>
 #include <string_view>
+#include <utility>
 
 namespace sogen
 {
@@ -55,6 +56,66 @@ namespace sogen
         {
             const std::basic_string_view<T> view(data.data(), data.size());
             return view.substr(0, view.find(T{}));
+        }
+
+        template <class Elem, class Traits>
+        std::basic_string_view<Elem, Traits> trim_left(std::basic_string_view<Elem, Traits> value)
+        {
+            const auto is_whitespace = [](const Elem ch) {
+                return ch == static_cast<Elem>(' ') || ch == static_cast<Elem>('\t') || ch == static_cast<Elem>('\r') ||
+                       ch == static_cast<Elem>('\n');
+            };
+
+            while (!value.empty() && is_whitespace(value.front()))
+            {
+                value.remove_prefix(1);
+            }
+
+            return value;
+        }
+
+        template <class Elem, class Traits>
+        std::basic_string_view<Elem, Traits> trim_right(std::basic_string_view<Elem, Traits> value)
+        {
+            const auto is_whitespace = [](const Elem ch) {
+                return ch == static_cast<Elem>(' ') || ch == static_cast<Elem>('\t') || ch == static_cast<Elem>('\r') ||
+                       ch == static_cast<Elem>('\n');
+            };
+
+            while (!value.empty() && is_whitespace(value.back()))
+            {
+                value.remove_suffix(1);
+            }
+
+            return value;
+        }
+
+        template <class Elem, class Traits>
+        std::basic_string_view<Elem, Traits> trim(std::basic_string_view<Elem, Traits> value)
+        {
+            return trim_right(trim_left(value));
+        }
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string<Elem, Traits, Allocator> trim_left(std::basic_string<Elem, Traits, Allocator> value)
+        {
+            const auto trimmed = trim_left(std::basic_string_view<Elem, Traits>{value});
+            value.erase(0, static_cast<size_t>(trimmed.data() - value.data()));
+            return value;
+        }
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string<Elem, Traits, Allocator> trim_right(std::basic_string<Elem, Traits, Allocator> value)
+        {
+            const auto trimmed = trim_right(std::basic_string_view<Elem, Traits>{value});
+            value.erase(trimmed.size());
+            return value;
+        }
+
+        template <class Elem, class Traits, class Allocator>
+        std::basic_string<Elem, Traits, Allocator> trim(std::basic_string<Elem, Traits, Allocator> value)
+        {
+            return trim_right(trim_left(std::move(value)));
         }
 
         inline char char_to_lower(const char val)

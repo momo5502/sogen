@@ -7,13 +7,13 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 list(SORT SRC_FILES)
 
 add_library(windows-analyzer STATIC ${SRC_FILES})
+target_compile_definitions(windows-analyzer PRIVATE SOGEN_ENABLE_SYMBOLS=$<BOOL:${SOGEN_ENABLE_SYMBOLS}>)
 
 sogen_assign_source_group(${SRC_FILES})
 
 if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-analyzer PRIVATE std_include.hpp)
 endif()
-
 target_link_libraries(windows-analyzer PRIVATE
   debugger
   disassembler
@@ -24,6 +24,10 @@ target_link_libraries(windows-analyzer PRIVATE
   backend-selection
   cli11
 )
+
+if(SOGEN_ENABLE_SYMBOLS)
+  target_link_libraries(windows-analyzer PRIVATE windows-symbols)
+endif()
 
 if(WIN)
   # CLI11's ensure_utf8() resolves the UTF-8 command line through CommandLineToArgvW (shell32).

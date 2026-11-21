@@ -27,7 +27,7 @@ namespace sogen
 
             Type get(const size_t element_index = 0) const
             {
-                Type value{};
+                Type value;
                 memcpy(&value, get_valid_pointer(element_index), size);
                 return value;
             }
