@@ -214,6 +214,12 @@ namespace sogen::steam_host
     void release_pipe_interfaces(int32_t pipe);
     void release_user_interfaces(int32_t pipe, int32_t user);
 
+    // The pipe and user the backend opened for itself. Interfaces it obtains through them belong to them, and the
+    // guest may not release them: that would free objects behind handles the guest still holds.
+    interface_owner backend_interface_owner();
+    bool is_backend_pipe(int32_t pipe);
+    bool is_backend_user(int32_t pipe, int32_t user);
+
     // When a typed getter returns null (a modern host steamclient no longer vends a very old interface
     // version), obtain a newer version of the same family via GetISteamGenericInterface. Steam interfaces
     // are append-only, so the newer object is vtable-compatible for the requested version's method prefix.

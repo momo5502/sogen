@@ -308,6 +308,21 @@ namespace sogen::steam_host
     {
     }
 
+    interface_owner backend_interface_owner()
+    {
+        return {};
+    }
+
+    bool is_backend_pipe(int32_t)
+    {
+        return false;
+    }
+
+    bool is_backend_user(int32_t, int32_t)
+    {
+        return false;
+    }
+
     void* host_resolve_fallback(const char*)
     {
         return nullptr;

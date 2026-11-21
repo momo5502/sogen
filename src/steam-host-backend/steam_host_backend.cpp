@@ -194,6 +194,7 @@ namespace
             reinterpret_cast<bool (*)(int32_t, uint64_t, void*, int32_t, int32_t, bool*)>(client_symbol(module, "Steam_GetAPICallResult"));
 
         g_connected = (g_pipe != 0 && g_user != 0 && g_get_generic != nullptr);
+        g_handles.set_backend_owner({.pipe = g_pipe, .user = g_user});
         return g_connected;
     }
 }
@@ -229,6 +230,21 @@ namespace sogen::steam_host
     void release_pipe_interfaces(const int32_t pipe)
     {
         g_handles.release_pipe(pipe);
+    }
+
+    interface_owner backend_interface_owner()
+    {
+        return g_handles.backend_owner();
+    }
+
+    bool is_backend_pipe(const int32_t pipe)
+    {
+        return !g_handles.may_release_pipe(pipe);
+    }
+
+    bool is_backend_user(const int32_t pipe, const int32_t user)
+    {
+        return !g_handles.may_release_user(pipe, user);
     }
 
     void release_user_interfaces(const int32_t pipe, const int32_t user)
@@ -333,7 +349,7 @@ extern "C" uint64_t sogen_steam_backend_create_interface(const char* version)
     {
         return 0;
     }
-    return sogen::steam_host::register_returned_interface(safe, iface, {});
+    return sogen::steam_host::register_returned_interface(safe, iface, sogen::steam_host::backend_interface_owner());
 }
 
 extern "C" void sogen_steam_backend_release(uint64_t handle)

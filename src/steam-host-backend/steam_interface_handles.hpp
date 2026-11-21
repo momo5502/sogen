@@ -56,6 +56,28 @@ namespace sogen::steam_host
             this->entries_.erase(handle);
         }
 
+        // The pipe and user the backend opened for itself. The guest never holds them, and releasing them would free
+        // the objects behind handles it still holds, so they may not be released on the guest's behalf.
+        void set_backend_owner(const interface_owner owner)
+        {
+            this->backend_owner_ = owner;
+        }
+
+        interface_owner backend_owner() const
+        {
+            return this->backend_owner_;
+        }
+
+        bool may_release_pipe(const int32_t pipe) const
+        {
+            return this->backend_owner_.pipe == 0 || pipe != this->backend_owner_.pipe;
+        }
+
+        bool may_release_user(const int32_t pipe, const int32_t user) const
+        {
+            return this->backend_owner_.pipe == 0 || pipe != this->backend_owner_.pipe || user != this->backend_owner_.user;
+        }
+
         void release_pipe(const int32_t pipe)
         {
             std::erase_if(this->entries_, [&](const auto& item) { return pipe != 0 && item.second.owner.pipe == pipe; });
@@ -69,6 +91,7 @@ namespace sogen::steam_host
 
       private:
         std::unordered_map<uint64_t, entry> entries_{};
+        interface_owner backend_owner_{};
         uint64_t next_handle_{1};
     };
 }

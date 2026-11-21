@@ -82,6 +82,34 @@ namespace sogen::test
         EXPECT_NE(nullptr, handles.find(second_user));
     }
 
+    // A top-level interface belongs to the pipe and user the backend opened for itself; if they go away, its handle
+    // must stop resolving like any other.
+    TEST(SteamInterfaceHandlesTest, AnInterfaceOfTheBackendsOwnPipeIsDroppedWithIt)
+    {
+        constexpr interface_owner backend{.pipe = 1, .user = 1};
+        interface_handles handles{};
+        const auto top_level = handles.add("SteamUtils010", &first_object, backend);
+        const auto games = handles.add("SteamUtils011", &first_object, {.pipe = 2, .user = 3});
+
+        handles.release_pipe(backend.pipe);
+
+        EXPECT_EQ(nullptr, handles.find(top_level));
+        EXPECT_NE(nullptr, handles.find(games));
+    }
+
+    // The guest never holds the backend's own pipe or user, so releasing them on its behalf is refused before Steam.
+    TEST(SteamInterfaceHandlesTest, TheBackendsOwnPipeAndUserMayNotBeReleased)
+    {
+        interface_handles handles{};
+        handles.set_backend_owner({.pipe = 1, .user = 1});
+
+        EXPECT_FALSE(handles.may_release_pipe(1));
+        EXPECT_FALSE(handles.may_release_user(1, 1));
+        EXPECT_TRUE(handles.may_release_pipe(2));
+        EXPECT_TRUE(handles.may_release_user(2, 1));
+        EXPECT_TRUE(handles.may_release_user(1, 2));
+    }
+
     // The game obtains the same interface version again after reconnecting; the proxy it gets must reach the new
     // host object, not the one that went away with the old pipe.
     TEST(SteamSubInterfaceProxiesTest, TheSameVersionWithANewHandleGetsAProxyForThatHandle)

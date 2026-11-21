@@ -1105,6 +1105,12 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
 
                 owner_pipe = local_of_type("HSteamPipe")
                 owner_user = local_of_type("HSteamUser")
+                # The guest never holds the backend's own pipe or user; releasing them would free the objects behind
+                # handles it still holds.
+                if m.name == "BReleaseSteamPipe" and owner_pipe != "0":
+                    L.append(f"            if (is_backend_pipe({owner_pipe})) {{ out.put_ret_value(0); return steam_host_ok; }}")
+                elif m.name == "ReleaseUser" and owner_pipe != "0" and owner_user != "0":
+                    L.append(f"            if (is_backend_user({owner_pipe}, {owner_user})) return steam_host_ok;")
                 # Call exactly once (it fills the out locals), then serialize outputs in the guest's read order.
                 call = f"self->{m.name}({', '.join(args)})"
                 if m.ret_kind == "void":
@@ -1144,8 +1150,10 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     # registering under the requested version so the guest's exact old vtable is used.
                     L.append(f"            void* _ifb = _iface ? static_cast<void*>(_iface) "
                              f": host_resolve_fallback({local_of[m.iface_version]});")
-                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _ifb, "
-                             f"interface_owner{{.pipe = {owner_pipe}, .user = {owner_user}}}));")
+                    # The fallback obtains the interface through the backend's own pipe and user.
+                    L.append(f"            const interface_owner _owner = _iface ? interface_owner{{.pipe = {owner_pipe}, "
+                             f".user = {owner_user}}} : backend_interface_owner();")
+                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _ifb, _owner));")
                 elif m.ret_kind == "struct_return":
                     L.append("            out.put_out(&_sret, sizeof(_sret));")
                 elif m.ret_kind == "struct_ptr_return":
