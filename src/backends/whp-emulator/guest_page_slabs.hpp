@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -143,9 +144,9 @@ namespace sogen::whp
             }
 
             this->release_acknowledged_pages(acknowledged);
-            for (auto slab_it = this->slabs_.rbegin(); slab_it != this->slabs_.rend(); ++slab_it)
+            for (const auto& owned_slab : std::views::reverse(this->slabs_))
             {
-                auto& slab = **slab_it;
+                auto& slab = *owned_slab;
                 for (size_t chunk_index = chunks_per_slab; chunk_index > 0; --chunk_index)
                 {
                     if (this->fully_free_chunks_ * chunk_size <= this->budget_.trim_to)

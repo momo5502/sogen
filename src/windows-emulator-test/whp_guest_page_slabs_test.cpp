@@ -129,6 +129,7 @@ namespace sogen::whp
     {
         auto memory = this->make({.trim_above = 0, .trim_to = 0});
         std::vector<slabs::page> pages{};
+        pages.reserve(2 * slabs::pages_per_chunk);
         for (size_t i = 0; i < 2 * slabs::pages_per_chunk; ++i)
         {
             pages.push_back(memory.allocate(this->acknowledged()));
@@ -157,6 +158,7 @@ namespace sogen::whp
     {
         auto memory = this->make({.trim_above = 0, .trim_to = 0});
         std::vector<slabs::page> pages{};
+        pages.reserve(2 * slabs::pages_per_chunk);
         for (size_t i = 0; i < 2 * slabs::pages_per_chunk; ++i)
         {
             pages.push_back(memory.allocate(this->acknowledged()));
@@ -190,6 +192,7 @@ namespace sogen::whp
     {
         auto memory = this->make({.trim_above = 0, .trim_to = 0});
         std::vector<slabs::page> pages{};
+        pages.reserve(slabs::pages_per_chunk);
         for (size_t i = 0; i < slabs::pages_per_chunk; ++i)
         {
             pages.push_back(memory.allocate(this->acknowledged()));
@@ -211,6 +214,7 @@ namespace sogen::whp
     {
         auto memory = this->make({.trim_above = slabs::chunk_size, .trim_to = slabs::chunk_size});
         std::vector<slabs::page> pages{};
+        pages.reserve(3 * slabs::pages_per_chunk);
         for (size_t i = 0; i < 3 * slabs::pages_per_chunk; ++i)
         {
             pages.push_back(memory.allocate(this->acknowledged()));
