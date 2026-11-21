@@ -60,12 +60,13 @@ $previous = $false
 $status = [Sogen.Registry]::RtlAdjustPrivilege($SE_RESTORE_PRIVILEGE, $true, $false, [ref]$previous)
 if ($status -ne 0) { throw "Enabling SeRestorePrivilege failed: $status" }
 
-# An endpoint format property as mmdevapi stores it: the PROPVARIANT type VT_BLOB and a reserved word, then a
-# WAVEFORMATEXTENSIBLE with the front left and right channels.
-function Get-FormatBlob([uint16]$Bits, [byte]$SubFormat) {
+# The endpoint's device format as mmdevapi stores it: the PROPVARIANT type VT_BLOB and a reserved word, then a
+# 44.1 kHz stereo 16-bit PCM WAVEFORMATEXTENSIBLE, the rate and channels the emulated audio service mixes in.
+function Get-DeviceFormatBlob {
     $channels = 2
     $rate = 44100
-    $align = $channels * $Bits / 8
+    $bits = 16
+    $align = $channels * $bits / 8
     $stream = New-Object IO.MemoryStream
     $writer = New-Object IO.BinaryWriter($stream)
     $writer.Write([uint32]0x41)
@@ -75,11 +76,11 @@ function Get-FormatBlob([uint16]$Bits, [byte]$SubFormat) {
     $writer.Write([uint32]$rate)
     $writer.Write([uint32]($rate * $align))
     $writer.Write([uint16]$align)
-    $writer.Write([uint16]$Bits)
+    $writer.Write([uint16]$bits)
     $writer.Write([uint16]22)
-    $writer.Write([uint16]$Bits)
+    $writer.Write([uint16]$bits)
     $writer.Write([uint32]3)
-    $writer.Write([byte[]]@($SubFormat, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71))
+    $writer.Write([byte[]]@(1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71))
     $writer.Flush()
     return , $stream.ToArray()
 }
@@ -93,8 +94,6 @@ Set-Key "$endpoint\Properties" @{
     '{a45c254e-df1c-4efd-8020-67d146a850e0},2' = 'Speakers'
     '{b3f8fa53-0004-438e-9003-51a46e139bfc},6' = 'Sogen Audio'
     '{9c119480-ddc2-4954-a150-5bd240d454ad},1' = "\\?\SWD#MMDEVAPI#{0.0.0.00000000}.$endpointId#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
-    # PKEY_AudioEngine_DeviceFormat and PKEY_AudioEngine_OEMFormat, the 44.1 kHz stereo format the emulated audio
-    # service mixes in. Wwise does not open an endpoint without a device format.
-    '{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0' = (Get-FormatBlob -Bits 16 -SubFormat 1)
-    '{e4870e26-3cc5-4cd2-ba46-ca0a9a70ed04},0' = (Get-FormatBlob -Bits 32 -SubFormat 3)
+    # PKEY_AudioEngine_DeviceFormat. Wwise does not open an endpoint without it.
+    '{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0' = (Get-DeviceFormatBlob)
 }
