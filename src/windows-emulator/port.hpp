@@ -396,6 +396,8 @@ namespace sogen
         bool disconnected{};
         uint64_t next_security_context_handle{4};
         std::vector<uint64_t> security_context_handles{};
+        uint64_t next_resource_reserve{0x10};
+        std::vector<uint64_t> resource_reserves{};
         uint64_t next_section_handle{0x10};
         std::map<uint64_t, alpc_port_section> sections{};
         // The reply headers of requests accepted without a reply, by deferral token.
@@ -429,6 +431,8 @@ namespace sogen
             buffer.write(this->disconnected);
             buffer.write(this->next_security_context_handle);
             buffer.write_vector(this->security_context_handles);
+            buffer.write(this->next_resource_reserve);
+            buffer.write_vector(this->resource_reserves);
             if (!this->completed_deferred_payloads.empty())
             {
                 throw std::runtime_error("Completed deferred replies were not delivered before serialization");
@@ -448,6 +452,8 @@ namespace sogen
             buffer.read(this->disconnected);
             buffer.read(this->next_security_context_handle);
             buffer.read_vector(this->security_context_handles);
+            buffer.read(this->next_resource_reserve);
+            buffer.read_vector(this->resource_reserves);
             buffer.read(this->next_section_handle);
             buffer.read_map(this->sections);
             buffer.read_map(this->deferred_replies);
