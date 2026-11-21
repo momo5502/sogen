@@ -2076,7 +2076,6 @@ namespace sogen::whp
                 bool applied{};
             };
 
-            partition_handle partition_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
             WHV_EXTENDED_VM_EXITS enabled_exits_{};
             // Whether RDTSC/RDTSCP exits can follow the hooks after setup; see update_rdtsc_exit().
@@ -2125,6 +2124,9 @@ namespace sogen::whp
             instruction_hook_entry* syscall_hook_ = nullptr;
             memory_execution_hook_mode memory_execution_hook_mode_ = memory_execution_hook_mode::automatic;
 
+            // Declared after every container that owns host memory the partition maps, so the partition and its
+            // mappings are gone before that memory is released, also when the constructor unwinds.
+            partition_handle partition_{};
             std::vector<std::unique_ptr<whp_vcpu>> vcpus_{};
 
             void ensure_platform_support()
