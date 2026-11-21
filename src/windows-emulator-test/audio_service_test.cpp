@@ -45,11 +45,6 @@ namespace sogen::test
             return format;
         }
 
-        std::array<uint8_t, 40> float_stereo_format()
-        {
-            return float_format(2);
-        }
-
         class AudioServiceTest : public RpcProtocolTest
         {
           protected:
