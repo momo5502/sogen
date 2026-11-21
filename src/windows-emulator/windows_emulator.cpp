@@ -2731,6 +2731,12 @@ namespace sogen
 
             const auto target = route_pointer(this->process, event.window, point_x(l_param), point_y(l_param));
             m.window = target.window;
+
+            // Windows queues pointer input to the thread that owns the window it is routed to. The shell's windows (the
+            // desktop's Progman and the taskbar) belong to explorer, not to a thread of this process, so the input is not
+            // this process's to handle.
+            const auto* target_window = this->process.windows.get(target.window);
+            thread = target_window ? get_thread_by_id(this->process, target_window->thread_id) : nullptr;
             // WM_MOUSEWHEEL/WM_MOUSEHWHEEL carry screen coordinates in lParam, unlike button/move
             // messages which carry client coordinates. Keep the routed target but preserve screen coords.
             m.lParam = is_mouse_wheel_message(event.message) ? pack_point(new_cursor_x, new_cursor_y) : pack_point(target.x, target.y);
@@ -2789,6 +2795,11 @@ namespace sogen
 
             const bool extended = (event.lParam & (1ull << 24)) != 0;
             this->deliver_raw_keyboard_input(vk, scan_code, event.message, extended);
+        }
+
+        if (!thread)
+        {
+            return;
         }
 
         thread->post_message(*this, m, true);
