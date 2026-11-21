@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {
@@ -309,4 +309,4 @@ namespace sogen
         return result;
     }
 
-} // namespace sogen
+} // namespace sogen::symbols

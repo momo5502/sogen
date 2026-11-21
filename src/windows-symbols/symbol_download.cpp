@@ -15,7 +15,7 @@
 #include <curl/curl.h>
 #endif
 
-namespace sogen
+namespace sogen::symbols
 {
 #ifndef __EMSCRIPTEN__
     namespace

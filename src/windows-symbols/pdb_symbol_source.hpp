@@ -4,10 +4,8 @@
 #include "symbol_events.hpp"
 #include <mutex>
 
-namespace sogen
+namespace sogen::symbols
 {
-    class windows_emulator;
-
     class pdb_symbol_source
     {
       public:
@@ -23,4 +21,4 @@ namespace sogen
         mutable std::once_flag cache_initialized_{};
     };
 
-} // namespace sogen
+} // namespace sogen::symbols

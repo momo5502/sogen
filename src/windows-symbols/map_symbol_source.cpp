@@ -6,7 +6,7 @@
 #include <charconv>
 #include <fstream>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {
@@ -187,4 +187,4 @@ namespace sogen
         return result;
     }
 
-} // namespace sogen
+} // namespace sogen::symbols

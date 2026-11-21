@@ -162,7 +162,7 @@ namespace sogen
 
         TEST_F(symbol_file_test, ReadsPublicAndPrivateCodeViewFunctions)
         {
-            pdb_file pdb{this->save("fixture.pdb", make_pdb())};
+            symbols::pdb_file pdb{this->save("fixture.pdb", make_pdb())};
             const auto result = pdb.read();
             ASSERT_TRUE(result.success) << result.error;
             EXPECT_EQ(pdb.symbols.at({1, 0x20}), "PublicFunction");
@@ -173,14 +173,14 @@ namespace sogen
 
         TEST_F(symbol_file_test, MatchesGuidAndDbiAge)
         {
-            const pdb_file pdb{this->save("fixture.pdb", make_pdb())};
+            const symbols::pdb_file pdb{this->save("fixture.pdb", make_pdb())};
             pdb_signature expected{.guid = "123456789ABCDEF03132333435363738", .age = 7};
-            EXPECT_EQ(pdb.validate(expected).status, pdb_validation_status::match);
+            EXPECT_EQ(pdb.validate(expected).status, symbols::pdb_validation_status::match);
             expected.age = 99;
-            EXPECT_EQ(pdb.validate(expected).status, pdb_validation_status::mismatch);
+            EXPECT_EQ(pdb.validate(expected).status, symbols::pdb_validation_status::mismatch);
             expected.age = 7;
             expected.guid[0] = '0';
-            EXPECT_EQ(pdb.validate(expected).status, pdb_validation_status::mismatch);
+            EXPECT_EQ(pdb.validate(expected).status, symbols::pdb_validation_status::mismatch);
         }
 
         TEST_F(symbol_file_test, RejectsTruncatedAndInvalidMsfBlocks)
@@ -188,19 +188,19 @@ namespace sogen
             auto bytes = make_pdb();
             bytes.integer(3 * 512, 100);
             const pdb_signature expected{.guid = "123456789ABCDEF03132333435363738", .age = 7};
-            const pdb_file invalid{this->save("invalid.pdb", bytes)};
-            EXPECT_EQ(invalid.validate(expected).status, pdb_validation_status::invalid_artifact);
+            const symbols::pdb_file invalid{this->save("invalid.pdb", bytes)};
+            EXPECT_EQ(invalid.validate(expected).status, symbols::pdb_validation_status::invalid_artifact);
             bytes = make_pdb();
             bytes.data.resize(511);
-            const pdb_file truncated{this->save("truncated.pdb", bytes)};
-            EXPECT_EQ(truncated.validate(expected).status, pdb_validation_status::invalid_artifact);
+            const symbols::pdb_file truncated{this->save("truncated.pdb", bytes)};
+            EXPECT_EQ(truncated.validate(expected).status, symbols::pdb_validation_status::invalid_artifact);
         }
 
         TEST_F(symbol_file_test, RejectsCodeViewRecordExtendingPastStream)
         {
             auto bytes = make_pdb();
             bytes.integer(8 * 512 + 4, 0xffff, 2);
-            pdb_file pdb{this->save("invalid-record.pdb", bytes)};
+            symbols::pdb_file pdb{this->save("invalid-record.pdb", bytes)};
             EXPECT_FALSE(pdb.read().success);
             EXPECT_TRUE(pdb.symbols.empty());
         }
@@ -209,7 +209,7 @@ namespace sogen
         {
             const auto archive = this->save("fixture.pd_", make_mszip_cab("fixture.pdb", "PDB payload"));
             const auto output = this->root / "expanded.pdb";
-            ASSERT_NO_THROW(extract_cab_file(archive, output, "fixture.pdb"));
+            ASSERT_NO_THROW(symbols::extract_cab_file(archive, output, "fixture.pdb"));
             const auto bytes = utils::io::read_file(output);
             EXPECT_EQ(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), "PDB payload");
         }
@@ -218,7 +218,7 @@ namespace sogen
         {
             const auto archive = this->save("fixture.pd_", make_mszip_cab("../fixture.pdb", "payload"));
             const auto output = this->root / "expanded.pdb";
-            EXPECT_THROW(extract_cab_file(archive, output, "fixture.pdb"), std::runtime_error);
+            EXPECT_THROW(symbols::extract_cab_file(archive, output, "fixture.pdb"), std::runtime_error);
             EXPECT_FALSE(std::filesystem::exists(output));
         }
 
@@ -228,7 +228,7 @@ namespace sogen
             bytes.data.pop_back();
             const auto archive = this->save("fixture.pd_", bytes);
             const auto output = this->root / "expanded.pdb";
-            EXPECT_THROW(extract_cab_file(archive, output, "fixture.pdb"), std::runtime_error);
+            EXPECT_THROW(symbols::extract_cab_file(archive, output, "fixture.pdb"), std::runtime_error);
             EXPECT_FALSE(std::filesystem::exists(output));
         }
     }

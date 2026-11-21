@@ -20,7 +20,7 @@
 #include <PDB_Types.h>
 #include <PDB_DBITypes.h>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {

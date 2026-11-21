@@ -10,7 +10,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace sogen
+namespace sogen::symbols
 {
 
     class symbol_cache
@@ -80,4 +80,4 @@ namespace sogen
         symbol_cache() = delete;
     };
 
-} // namespace sogen
+} // namespace sogen::symbols

@@ -6,7 +6,7 @@
 #include <string>
 #include <variant>
 
-namespace sogen
+namespace sogen::symbols
 {
     enum class map_load_status
     {

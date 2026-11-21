@@ -7,7 +7,7 @@
 #include <optional>
 #include <string_view>
 
-namespace sogen
+namespace sogen::symbols
 {
     struct pdb_symbol_options;
 
@@ -34,4 +34,4 @@ namespace sogen
         symbol_server() = delete;
     };
 
-} // namespace sogen
+} // namespace sogen::symbols

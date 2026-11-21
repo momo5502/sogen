@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace sogen
+namespace sogen::symbols
 {
     enum class pdb_validation_status
     {

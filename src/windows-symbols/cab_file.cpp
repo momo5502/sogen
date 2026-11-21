@@ -14,7 +14,7 @@
 #include <new>
 #include <stdexcept>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {

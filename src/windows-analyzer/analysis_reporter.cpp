@@ -209,7 +209,7 @@ namespace sogen
 
             void report(const analysis_event& event) override
             {
-                if (std::holds_alternative<symbol_event>(event))
+                if (std::holds_alternative<symbols::symbol_event>(event))
                 {
                     return;
                 }
@@ -220,7 +220,7 @@ namespace sogen
                 {
                     json_object_builder object{line};
                     std::visit(make_overloaded([&](const auto& e) {
-                                   if constexpr (!std::is_same_v<std::decay_t<decltype(e)>, symbol_event>)
+                                   if constexpr (!std::is_same_v<std::decay_t<decltype(e)>, symbols::symbol_event>)
                                    {
                                        write_record(object, e);
                                    }

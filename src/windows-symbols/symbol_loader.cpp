@@ -5,7 +5,7 @@
 
 #include <windows_emulator.hpp>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {
@@ -145,4 +145,4 @@ namespace sogen
         mod.has_symbols = !mod.symbol_address_names.empty();
     }
 
-} // namespace sogen
+} // namespace sogen::symbols

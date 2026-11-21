@@ -14,7 +14,7 @@
 #include <system_error>
 #include <vector>
 
-namespace sogen
+namespace sogen::symbols
 {
     namespace
     {
@@ -326,4 +326,4 @@ namespace sogen
         return std::nullopt;
     }
 
-} // namespace sogen
+} // namespace sogen::symbols

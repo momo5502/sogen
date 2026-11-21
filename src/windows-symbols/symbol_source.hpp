@@ -10,7 +10,11 @@
 namespace sogen
 {
     struct mapped_module;
+    class windows_emulator;
+}
 
+namespace sogen::symbols
+{
     using rva_symbol_mapping = std::map<uint32_t, std::string>;
 
     struct loaded_symbols
@@ -50,4 +54,4 @@ namespace sogen
 
     std::optional<uint32_t> symbol_address_to_rva(const mapped_module& mod, uint32_t section_index, uint32_t offset);
 
-} // namespace sogen
+} // namespace sogen::symbols

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-namespace sogen
+namespace sogen::symbols
 {
     struct symbol_download_result
     {

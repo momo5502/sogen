@@ -30,7 +30,7 @@
 #include <unistd.h>
 #endif
 
-namespace sogen
+namespace sogen::symbols
 {
     using namespace std::literals;
 
@@ -679,4 +679,4 @@ namespace sogen
         prune(on_event, explicit_cache);
     }
 
-} // namespace sogen::symbol_cache
+} // namespace sogen::symbols

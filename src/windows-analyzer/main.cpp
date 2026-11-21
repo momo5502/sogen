@@ -38,6 +38,8 @@ namespace sogen
 {
     namespace
     {
+        using namespace symbols; // NOLINT(google-build-using-namespace)
+
         std::filesystem::path get_current_binary_dir()
         {
             return utils::get_current_executable_path().parent_path();

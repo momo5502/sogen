@@ -3,10 +3,8 @@
 #include "symbol_source.hpp"
 #include "symbol_events.hpp"
 
-namespace sogen
+namespace sogen::symbols
 {
-    class windows_emulator;
-
     class map_symbol_source
     {
       public:
@@ -21,4 +19,4 @@ namespace sogen
         std::vector<map_symbol_input> inputs_{};
     };
 
-} // namespace sogen
+} // namespace sogen::symbols

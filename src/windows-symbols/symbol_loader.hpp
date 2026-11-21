@@ -7,7 +7,7 @@
 #include <memory>
 #include <set>
 
-namespace sogen
+namespace sogen::symbols
 {
     enum class symbol_use_mode
     {
@@ -18,7 +18,6 @@ namespace sogen
 
     class map_symbol_source;
     class pdb_symbol_source;
-    class windows_emulator;
 
     struct symbol_options
     {
@@ -83,4 +82,4 @@ namespace sogen
         void load_for_module(mapped_module& mod, bool for_callers);
     };
 
-} // namespace sogen
+} // namespace sogen::symbols

@@ -130,8 +130,10 @@ namespace sogen
                 return formatted;
             }
 
-            void report_symbol(const symbol_event& event)
+            void report_symbol(const symbols::symbol_event& event)
             {
+                using namespace symbols; // NOLINT(google-build-using-namespace)
+
                 auto log = [this](color level, const char* format, auto... args) { this->log_.print(level, format, args...); };
                 std::visit(
                     make_overloaded(
@@ -567,7 +569,7 @@ namespace sogen
                                              e.size, e.value, e.section_name.c_str(), e.address, e.execution.rip,
                                              e.execution.rip_module.c_str());
                         },
-                        [&](const symbol_event& e) { this->report_symbol(e); },
+                        [&](const symbols::symbol_event& e) { this->report_symbol(e); },
                         [&](const fast_fail_event& e) {
                             this->log_.print(color::red, "Process requested fast fail with code %d\n", e.fail_code);
                         }),

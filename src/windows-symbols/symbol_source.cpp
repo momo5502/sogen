@@ -3,7 +3,7 @@
 #include <platform/platform.hpp>
 #include <module/mapped_module.hpp>
 
-namespace sogen
+namespace sogen::symbols
 {
     std::optional<uint32_t> symbol_address_to_rva(const mapped_module& mod, const uint32_t section_index, const uint32_t offset)
     {
@@ -28,4 +28,4 @@ namespace sogen
         return static_cast<uint32_t>(rva);
     }
 
-} // namespace sogen
+} // namespace sogen::symbols
