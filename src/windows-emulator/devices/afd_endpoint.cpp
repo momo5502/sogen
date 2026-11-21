@@ -489,6 +489,7 @@ namespace sogen
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
             std::optional<io_device_context> delayed_ioctl_{};
+            std::optional<std::vector<EMU_WSABUF<Traits>>> pended_receive_buffers_{};
             object_reference retained_event_{};
             object_reference retained_completion_port_{};
             std::optional<std::chrono::steady_clock::time_point> timeout_{};
@@ -608,8 +609,7 @@ namespace sogen
                 write_io_status(context, status);
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
-                    event->set_signaled(true);
-                    win_emu.wake_idle_vcpu();
+                    win_emu.signal_event(*event);
                 }
                 io_device::queue_io_completion(win_emu, context);
             }
@@ -678,6 +678,7 @@ namespace sogen
                 this->timeout_ = {};
                 this->require_poll_ = {};
                 this->delayed_ioctl_ = {};
+                this->pended_receive_buffers_ = {};
                 this->connect_data_sent_ = {};
             }
 
@@ -831,8 +832,7 @@ namespace sogen
 
                         if (auto* event = win_emu.process.get_object_as<sogen::event>(this->event_select_event_))
                         {
-                            event->set_signaled(true);
-                            win_emu.wake_idle_vcpu();
+                            win_emu.signal_event(*event);
                         }
                     }
                 }
@@ -878,6 +878,7 @@ namespace sogen
 
                 buffer.read_optional(this->require_poll_);
                 buffer.read_optional(this->delayed_ioctl_);
+                buffer.read_optional(this->pended_receive_buffers_);
                 buffer.read(this->retained_completion_port_);
                 buffer.read_optional(this->timeout_);
                 buffer.read(this->non_blocking_);
@@ -910,6 +911,7 @@ namespace sogen
                 buffer.write_optional(this->creation_data);
                 buffer.write_optional(this->require_poll_);
                 buffer.write_optional(this->delayed_ioctl_);
+                buffer.write_optional(this->pended_receive_buffers_);
                 buffer.write(this->retained_completion_port_);
                 buffer.write_optional(this->timeout_);
                 buffer.write(this->non_blocking_);
@@ -1551,36 +1553,43 @@ namespace sogen
 
                 auto& emu = win_emu.emu();
 
-                if (c.input_buffer_length < sizeof(AFD_RECV_INFO<Traits>))
-                {
-                    return STATUS_BUFFER_TOO_SMALL;
-                }
-
-                const auto receive_info = emu.read_memory<AFD_RECV_INFO<Traits>>(c.input_buffer);
-
-                if (!receive_info.BufferArray || receive_info.BufferCount == 0)
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                if (receive_info.BufferCount > max_stream_buffer_count)
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
+                // AFD captures the buffer descriptors when the request arrives; the caller's descriptor array (often on its
+                // stack) is gone by the time a pended receive completes. The captured ones belong to the pended receive only.
                 std::vector<EMU_WSABUF<Traits>> buffers{};
-                buffers.reserve(receive_info.BufferCount);
-
-                size_t transfer_size = 0;
-                for (ULONG i = 0; i < receive_info.BufferCount; ++i)
+                if (this->executing_delayed_ioctl_ && this->pended_receive_buffers_)
                 {
-                    const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray + (i * sizeof(EMU_WSABUF<Traits>)));
-                    if (!wsabuf.buf && wsabuf.len != 0)
+                    buffers = std::move(*this->pended_receive_buffers_);
+                    this->pended_receive_buffers_.reset();
+                }
+                else
+                {
+                    if (c.input_buffer_length < sizeof(AFD_RECV_INFO<Traits>))
+                    {
+                        return STATUS_BUFFER_TOO_SMALL;
+                    }
+
+                    const auto receive_info = emu.read_memory<AFD_RECV_INFO<Traits>>(c.input_buffer);
+                    if (!receive_info.BufferArray || receive_info.BufferCount == 0 || receive_info.BufferCount > max_stream_buffer_count)
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
 
-                    buffers.push_back(wsabuf);
+                    buffers.reserve(receive_info.BufferCount);
+                    for (ULONG i = 0; i < receive_info.BufferCount; ++i)
+                    {
+                        const auto wsabuf =
+                            emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray + (i * sizeof(EMU_WSABUF<Traits>)));
+                        if (!wsabuf.buf && wsabuf.len != 0)
+                        {
+                            return STATUS_INVALID_PARAMETER;
+                        }
+                        buffers.push_back(wsabuf);
+                    }
+                }
+
+                size_t transfer_size = 0;
+                for (const auto& wsabuf : buffers)
+                {
                     transfer_size += std::min<size_t>(wsabuf.len, max_stream_transfer_bytes - transfer_size);
                     if (transfer_size == max_stream_transfer_bytes)
                     {
@@ -1603,7 +1612,12 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        return this->pend_or_would_block(win_emu, c, true);
+                        const auto status = this->pend_or_would_block(win_emu, c, true);
+                        if (status == STATUS_PENDING)
+                        {
+                            this->pended_receive_buffers_ = std::move(buffers);
+                        }
+                        return status;
                     }
 
                     if (error == SERR(ECONNRESET))

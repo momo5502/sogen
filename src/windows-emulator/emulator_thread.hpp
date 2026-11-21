@@ -494,6 +494,21 @@ namespace sogen
         get,
     };
 
+    // user32 caches the window a thread last worked with in Win32ClientInfo[8] (its handle) and [9] (its guest pointer).
+    inline std::pair<uint64_t, uint64_t> get_cached_window(const emulator_object<TEB64>& teb)
+    {
+        constexpr auto offset = offsetof(TEB64, Win32ClientInfo);
+        return {teb.field<std::uint64_t>(offset + 8 * sizeof(std::uint64_t)).read(),
+                teb.field<std::uint64_t>(offset + 9 * sizeof(std::uint64_t)).read()};
+    }
+
+    inline void set_cached_window(const emulator_object<TEB64>& teb, const uint64_t handle, const uint64_t window)
+    {
+        constexpr auto offset = offsetof(TEB64, Win32ClientInfo);
+        teb.field<std::uint64_t>(offset + 8 * sizeof(std::uint64_t)).write(handle);
+        teb.field<std::uint64_t>(offset + 9 * sizeof(std::uint64_t)).write(window);
+    }
+
     class emulator_thread : public ref_counted_object
     {
       public:
@@ -644,11 +659,11 @@ namespace sogen
             this->impersonation_token = token;
             if (this->teb64)
             {
-                this->teb64->access([&](TEB64& teb) { teb.IsImpersonating = token != 0; });
+                this->teb64->field<ULONG>(offsetof(TEB64, IsImpersonating)).write(token != 0 ? 1 : 0);
             }
             if (this->teb32)
             {
-                this->teb32->access([&](TEB32& teb) { teb.IsImpersonating = token != 0; });
+                this->teb32->field<ULONG>(offsetof(TEB32, IsImpersonating)).write(token != 0 ? 1 : 0);
             }
         }
 

@@ -45,11 +45,20 @@ extern "C"
 
     void sogen_steam_backend_release(uint64_t handle);
 
+    // Permissions the calling emulator grants its guest for one invocation; none by default.
+    enum
+    {
+        // Encrypted app tickets authenticate the host account to the game's publisher. SteamAppId must also name a game
+        // (a positive id other than Spacewar's 480).
+        sogen_steam_grant_app_tickets = 1
+    };
+
     // Invokes method `method` on `handle`. `in`/`in_len` is the marshalled argument blob (treated as
     // hostile). Out-parameter payload is written to `out` (bounded by `out_cap`, actual length in
-    // `*out_len`); the raw return value goes to `*ret`. Returns a steam_host status (0 == ok).
+    // `*out_len`); the raw return value goes to `*ret`. `grants` are the caller's sogen_steam_grant_* flags.
+    // Returns a steam_host status (0 == ok).
     int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len, uint8_t* out, uint32_t out_cap,
-                                   uint32_t* out_len, uint64_t* ret);
+                                   uint32_t* out_len, uint64_t* ret, uint32_t grants);
 
     // Drains pending callbacks from the host client. `out` receives the normal-callback records (each:
     // int32 callback_id, uint32 data_bytes, payload) followed by the reverse-callback records (each:

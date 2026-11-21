@@ -305,15 +305,9 @@ namespace sogen
 
     static void clear_cached_window(const emulator_thread& thread, const hwnd handle, const uint64_t guest_pointer)
     {
-        if (thread.teb64)
+        if (thread.teb64 && get_cached_window(*thread.teb64) == std::pair{static_cast<uint64_t>(handle), guest_pointer})
         {
-            thread.teb64->access([&](TEB64& teb) {
-                if (teb.Win32ClientInfo.arr[8] == handle && teb.Win32ClientInfo.arr[9] == guest_pointer)
-                {
-                    teb.Win32ClientInfo.arr[8] = 0;
-                    teb.Win32ClientInfo.arr[9] = 0;
-                }
-            });
+            set_cached_window(*thread.teb64, 0, 0);
         }
     }
 

@@ -1383,7 +1383,8 @@ namespace sogen
 
             auto& t = c.thread();
             t.await_objects = {c.proc.reference_of(resolved_handle)};
-            t.await_any = false;
+            // KeWaitForSingleObject waits with WaitAny, so KeSetEvent ends the wait right away.
+            t.await_any = true;
 
             if (timeout.value() && !t.await_time.has_value())
             {

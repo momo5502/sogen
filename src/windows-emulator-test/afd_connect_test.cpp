@@ -574,6 +574,58 @@ namespace sogen::test
         EXPECT_EQ(0, memcmp(received.data(), request.data(), request.size()));
     }
 
+    TEST_F(AfdConnectTest, PendedReceiveFillsTheBuffersItWasGiven)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->bind());
+        ASSERT_EQ(STATUS_SUCCESS, this->super_connect(loopback(listener_port)));
+        network::address peer{};
+        const auto accepted = this->listener->accept(peer);
+        ASSERT_NE(accepted, nullptr);
+
+        constexpr uint64_t descriptors_offset = 0x600;
+        constexpr uint64_t second_request_offset = 0x680;
+        constexpr uint64_t first_buffer_offset = 0x700;
+        constexpr uint64_t second_buffer_offset = 0x800;
+        constexpr ULONG buffer_length = 16;
+
+        // WSABUF: len, then the buffer pointer at 8. AFD_RECV_INFO: the WSABUF array, its count and the AFD and TDI flags.
+        const auto write_descriptor = [&](const uint64_t buffer_offset) {
+            std::array<std::byte, 16> wsabuf{};
+            memcpy(wsabuf.data(), &buffer_length, sizeof(buffer_length));
+            const auto buffer = this->storage + buffer_offset;
+            memcpy(wsabuf.data() + 8, &buffer, sizeof(buffer));
+            this->emu->memory.write_memory(this->storage + descriptors_offset, wsabuf.data(), wsabuf.size());
+        };
+        const auto receive = [&](const uint64_t request_offset) {
+            std::array<std::byte, 24> info{};
+            const auto descriptors = this->storage + descriptors_offset;
+            constexpr ULONG count = 1;
+            constexpr ULONG tdi_receive_normal = 0x20;
+            memcpy(info.data(), &descriptors, sizeof(descriptors));
+            memcpy(info.data() + 8, &count, sizeof(count));
+            memcpy(info.data() + 16, &tdi_receive_normal, sizeof(tdi_receive_normal));
+            this->emu->memory.write_memory(this->storage + request_offset, info.data(), info.size());
+            return this->ioctl(ioctl_afd_receive, this->storage + request_offset, static_cast<ULONG>(info.size()), 0, 0);
+        };
+
+        write_descriptor(first_buffer_offset);
+        ASSERT_EQ(STATUS_PENDING, receive(input_offset));
+
+        // The caller's descriptor array is gone once the receive pends; its memory now describes another buffer, which a
+        // second receive hands in while the first is still pending.
+        write_descriptor(second_buffer_offset);
+        (void)receive(second_request_offset);
+
+        constexpr std::string_view data = "SOGEN-RECEIVE";
+        ASSERT_EQ(static_cast<sent_size>(data.size()), accepted->send(std::as_bytes(std::span{data})));
+        this->emu->process.devices.get(this->endpoint)->work(*this->emu);
+
+        std::array<char, data.size()> first{};
+        this->emu->memory.read_memory(this->storage + first_buffer_offset, first.data(), first.size());
+        EXPECT_EQ(data, std::string_view(first.data(), first.size()));
+        EXPECT_EQ(data.size(), this->status_block().read().Information);
+    }
+
     TEST_F(AfdConnectTest, SuperConnectCompletesOnlyOnceAllConnectDataIsSent)
     {
         constexpr std::string_view request = "SOGEN-CONNECTEX-SENT-IN-PARTS";

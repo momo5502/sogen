@@ -10,6 +10,7 @@
 #include "ports/dns_resolver.hpp"
 #include "ports/event_log.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/nsi_service.hpp"
 #include "ports/local_object_exporter.hpp"
 #include "ports/protected_storage.hpp"
 #include "ports/service_control.hpp"
@@ -25,6 +26,30 @@ namespace sogen
     namespace
     {
         constexpr uint32_t rpc_call_large_payload_flag = 4;
+        constexpr ULONG rpc_call_immediate_response_header_size = 0x18;
+        constexpr ULONG rpc_call_large_response_header_size = 0x20;
+        constexpr ULONG rpc_call_max_immediate_ndr_size = 0xF00;
+
+        // An RPC response whose NDR does not fit an inline message travels in an ALPC view: the message keeps a larger
+        // header with the large-payload flag and the NDR size at 0x18, which LRPC_BASE_CCALL::UnpackResponse reads.
+        std::vector<uint8_t> move_large_ndr_to_view(std::vector<uint8_t>& response)
+        {
+            const auto ndr_size = response.size() - rpc_call_immediate_response_header_size;
+            if (ndr_size <= rpc_call_max_immediate_ndr_size)
+            {
+                return {};
+            }
+
+            std::vector<uint8_t> header(rpc_call_large_response_header_size);
+            std::copy_n(response.begin(), rpc_call_immediate_response_header_size, header.begin());
+            utils::aligned_binary_writer header_writer(header);
+            header_writer.write_at<uint32_t>(0x08, rpc_call_large_payload_flag);
+            header_writer.write_at<uint32_t>(0x18, static_cast<uint32_t>(ndr_size));
+
+            auto view_payload = std::exchange(response, std::move(header));
+            view_payload.erase(view_payload.begin(), view_payload.begin() + rpc_call_immediate_response_header_size);
+            return view_payload;
+        }
 
         struct dummy_port : port
         {
@@ -324,6 +349,11 @@ namespace sogen
             return create_event_log_port();
         }
 
+        if (port == u"\\RPC Control\\" + std::u16string(nsi_service_endpoint))
+        {
+            return create_nsi_service_port();
+        }
+
         if (port == u"\\RPC Control\\epmapper")
         {
             return create_local_object_exporter_port();
@@ -485,12 +515,30 @@ namespace sogen
             return result;
         }
 
-        auto result = this->port_->handle_message(win_emu, c);
+        // The service only defers a reply that the completion port can deliver later.
+        auto result = this->port_->handle_message(win_emu, c, !c.receive_message && static_cast<bool>(this->completion_port_));
+        const auto deliver_completed = [&] { this->deliver_completed_replies(win_emu); };
+
+        if (result.deferred_token)
+        {
+            const auto token = *result.deferred_token;
+            if (c.receive_message || !this->completion_port_)
+            {
+                this->port_->forget_deferred_request(token);
+                deliver_completed();
+                return {.status = STATUS_NOT_SUPPORTED};
+            }
+
+            this->deferred_contexts_.insert_or_assign(token, c.send_message_context);
+            deliver_completed();
+            return {.status = STATUS_SUCCESS};
+        }
 
         if (!c.receive_message)
         {
             if (!this->completion_port_ || !NT_SUCCESS(result.status))
             {
+                deliver_completed();
                 return {.status = result.status};
             }
 
@@ -498,6 +546,7 @@ namespace sogen
             result.message_context = c.send_message_context;
             reply_queue_.push_back(std::move(result));
             this->post_completion(win_emu);
+            deliver_completed();
             return {.status = status};
         }
 
@@ -505,13 +554,39 @@ namespace sogen
         {
             const auto message = result.message;
             reply_queue_.push_back(std::move(result));
+            deliver_completed();
             return {.status = STATUS_BUFFER_TOO_SMALL, .message = message};
         }
 
+        deliver_completed();
         return result;
     }
 
+    void port_container::deliver_completed_replies(windows_emulator& win_emu)
+    {
+        for (auto& reply : this->port_->take_completed_replies())
+        {
+            const auto token = reply.deferred_token.value_or(0);
+            const auto context = this->deferred_contexts_.find(token);
+            if (context == this->deferred_contexts_.end())
+            {
+                continue;
+            }
+
+            reply.message_context = context->second;
+            reply.deferred_token.reset();
+            this->deferred_contexts_.erase(context);
+            this->reply_queue_.push_back(std::move(reply));
+            this->post_completion(win_emu);
+        }
+    }
+
     lpc_message_result port::handle_message(windows_emulator& win_emu, const lpc_message_context& c)
+    {
+        return this->handle_message(win_emu, c, false);
+    }
+
+    lpc_message_result port::handle_message(windows_emulator& win_emu, const lpc_message_context& c, const bool reply_can_be_deferred)
     {
         if (!c.send_message)
         {
@@ -552,8 +627,15 @@ namespace sogen
         context.send_handle = c.send_handle;
         context.send_view_base = c.send_view_base;
         context.send_view_size = c.send_view_size;
+        context.reply_can_be_deferred = reply_can_be_deferred;
 
         auto request_result = this->handle_request(win_emu, context);
+        if (request_result.deferred_token)
+        {
+            this->deferred_replies.insert_or_assign(*request_result.deferred_token, recv_header);
+            return {.status = STATUS_SUCCESS, .message = recv_header, .deferred_token = request_result.deferred_token};
+        }
+
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
 
         if (!request_result.view_payload.empty())
@@ -578,6 +660,76 @@ namespace sogen
         result.view_payload = std::move(request_result.view_payload);
 
         return result;
+    }
+
+    std::vector<lpc_message_result> port::take_completed_replies()
+    {
+        std::vector<lpc_message_result> replies{};
+        for (auto& completed : this->completed_deferred_payloads)
+        {
+            const auto header = this->deferred_replies.find(completed.token);
+            if (header == this->deferred_replies.end())
+            {
+                continue;
+            }
+
+            auto message = header->second;
+            const auto header_size = message.header_size();
+            if (header_size + completed.payload.size() > static_cast<size_t>(std::numeric_limits<CSHORT>::max()))
+            {
+                throw std::runtime_error("Response payload too big");
+            }
+            message.native.u1.s1.DataLength = static_cast<CSHORT>(completed.payload.size());
+            message.native.u1.s1.TotalLength = static_cast<CSHORT>(header_size + completed.payload.size());
+            if (!completed.view_payload.empty())
+            {
+                message.native.u2.s2.Type |= lpc_continuation_required;
+            }
+            this->deferred_replies.erase(header);
+
+            replies.push_back({.status = STATUS_SUCCESS,
+                               .message = message,
+                               .payload = std::move(completed.payload),
+                               .view_payload = std::move(completed.view_payload),
+                               .deferred_token = completed.token});
+        }
+        this->completed_deferred_payloads.clear();
+        return replies;
+    }
+
+    void port::forget_deferred_request(const uint64_t token)
+    {
+        this->deferred_replies.erase(token);
+        std::erase_if(this->completed_deferred_payloads, [&](const auto& entry) { return entry.token == token; });
+    }
+
+    std::optional<uint64_t> rpc_port::defer_current_call()
+    {
+        if (!this->current_call_deferrable_ || this->current_call_deferred_)
+        {
+            return std::nullopt;
+        }
+
+        this->current_call_deferred_ = true;
+        return this->current_call_id_;
+    }
+
+    void rpc_port::complete_deferred_call(const uint64_t token, const std::vector<uint8_t>& ndr_reply)
+    {
+        if (!this->handling_request_)
+        {
+            throw std::logic_error("Deferred RPC calls can only be completed while the port handles a request");
+        }
+
+        constexpr size_t rpc_call_id_offset = 12;
+        std::vector<uint8_t> payload(rpc_call_immediate_response_header_size, 0);
+        payload[0] = 3;
+        const auto call_id = static_cast<uint32_t>(token);
+        std::memcpy(payload.data() + rpc_call_id_offset, &call_id, sizeof(call_id));
+        payload.insert(payload.end(), ndr_reply.begin(), ndr_reply.end());
+        auto view_payload = move_large_ndr_to_view(payload);
+        this->completed_deferred_payloads.push_back(
+            {.token = token, .payload = std::move(payload), .view_payload = std::move(view_payload)});
     }
 
     lpc_request_result rpc_port::handle_request(windows_emulator& win_emu, const lpc_request_context& c)
@@ -658,9 +810,6 @@ namespace sogen
     lpc_request_result rpc_port::handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c)
     {
         constexpr ULONG rpc_call_send_header_size = 0x40;
-        constexpr ULONG rpc_call_immediate_response_header_size = 0x18;
-        constexpr ULONG rpc_call_large_response_header_size = 0x20;
-        constexpr ULONG rpc_call_max_immediate_ndr_size = 0xF00;
         constexpr ULONG rpc_call_id_offset = 12;
         constexpr ULONG rpc_call_opnum_offset = 20;
 
@@ -724,19 +873,23 @@ namespace sogen
         }
 
         std::vector<alpc_reply_handle> reply_handles;
-        const auto status = this->handle_rpc(win_emu, *procedure_id, rpc_context, writer, reply_handles);
-
-        std::vector<uint8_t> view_payload;
-        const auto ndr_size = payload.size() - rpc_call_immediate_response_header_size;
-        if (ndr_size > rpc_call_max_immediate_ndr_size)
+        this->current_call_id_ = *call_id;
+        this->current_call_deferrable_ = c.reply_can_be_deferred;
+        this->current_call_deferred_ = false;
+        this->handling_request_ = true;
+        const auto status = [&] {
+            const auto _ = utils::finally([&] { this->handling_request_ = false; });
+            return this->handle_rpc(win_emu, *procedure_id, rpc_context, writer, reply_handles);
+        }();
+        if (std::exchange(this->current_call_deferred_, false))
         {
-            view_payload.assign(payload.begin() + rpc_call_immediate_response_header_size, payload.end());
-            payload.resize(rpc_call_large_response_header_size);
-            utils::aligned_binary_writer header_writer(payload);
-            header_writer.write_at<uint32_t>(0x08, rpc_call_large_payload_flag);
-            header_writer.write_at<uint32_t>(0x18, static_cast<uint32_t>(ndr_size));
+            lpc_request_result deferred{};
+            deferred.status = STATUS_SUCCESS;
+            deferred.deferred_token = *call_id;
+            return deferred;
         }
 
+        auto view_payload = move_large_ndr_to_view(payload);
         lpc_request_result result{status, std::move(payload)};
         result.view_payload = std::move(view_payload);
 
