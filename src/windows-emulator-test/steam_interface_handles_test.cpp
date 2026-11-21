@@ -45,11 +45,12 @@ namespace sogen::test
     {
         interface_handles handles{};
         const auto on_first = handles.add("SteamUtils011", &first_object, {.pipe = 1, .user = 1});
-        const auto on_second = handles.add("SteamUtils011", &second_object, {.pipe = 2, .user = 1});
+        const auto on_second = handles.add("SteamUtils011", &first_object, {.pipe = 2, .user = 1});
         const auto unowned = handles.add("SteamClient023", &second_object, {});
 
         handles.release_pipe(1);
 
+        EXPECT_NE(on_first, on_second);
         EXPECT_EQ(nullptr, handles.find(on_first));
         EXPECT_NE(nullptr, handles.find(on_second));
         EXPECT_NE(nullptr, handles.find(unowned));
@@ -72,10 +73,11 @@ namespace sogen::test
     {
         interface_handles handles{};
         const auto first_user = handles.add("SteamUser023", &first_object, {.pipe = 1, .user = 1});
-        const auto second_user = handles.add("SteamUser023", &second_object, {.pipe = 1, .user = 2});
+        const auto second_user = handles.add("SteamUser023", &first_object, {.pipe = 1, .user = 2});
 
         handles.release_user(1, 1);
 
+        EXPECT_NE(first_user, second_user);
         EXPECT_EQ(nullptr, handles.find(first_user));
         EXPECT_NE(nullptr, handles.find(second_user));
     }
@@ -86,11 +88,11 @@ namespace sogen::test
     {
         steam_shim::sub_interface_proxies proxies{};
         std::vector<uint64_t> created_for{};
-        std::array<int, 2> proxy_objects{};
+        std::map<uint64_t, int> proxy_objects{};
         const auto resolve = [&](const uint64_t handle) {
             return proxies.resolve(handle, [&] {
                 created_for.push_back(handle);
-                return static_cast<void*>(&proxy_objects[created_for.size() - 1]);
+                return static_cast<void*>(&proxy_objects[handle]);
             });
         };
 
