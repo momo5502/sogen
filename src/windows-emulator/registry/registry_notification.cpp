@@ -96,8 +96,7 @@ namespace sogen
 
                 if (auto* event = c.proc.get_object_as<sogen::event>(request.event))
                 {
-                    event->set_signaled(true);
-                    c.win_emu.wake_idle_vcpu();
+                    c.win_emu.signal_event(*event);
                 }
 
                 if (request.apc_routine)

@@ -43,6 +43,7 @@ namespace sogen
         constexpr uint32_t k_ndis_interface_info = 0; // GetIfEntry2, GetIfTable2
         constexpr uint32_t k_ndis_interface_enum = 1; // GetIfEntry2Ex(MibIfEntryNormalWithoutStatistics)
         constexpr uint32_t k_ndis_index_luid = 2;     // interface index -> NET_LUID
+        constexpr uint32_t k_ndis_compartment = 8;    // the caller's compartment, which GetIfTable2 filters interfaces by
         constexpr uint32_t k_ip_best_route = 0;       // GetBestInterfaceEx
 
         enum class nsi_parameter_type : uint32_t
@@ -495,6 +496,10 @@ namespace sogen
                 switch (c.io_control_code)
                 {
                 case k_nsi_get_all_parameters:
+                    if (module == nsi_module::ndis && object == k_ndis_compartment)
+                    {
+                        return get_compartment(win_emu, c);
+                    }
                     return interface_object ? std::optional{get_interface(win_emu, c, object)} : std::nullopt;
                 case k_nsi_enumerate_objects_all_parameters:
                     return interface_object ? std::optional{enumerate_interfaces(win_emu, c, object)} : std::nullopt;
@@ -503,6 +508,17 @@ namespace sogen
                 default:
                     return std::nullopt;
                 }
+            }
+
+            // The read-write parameters are the compartment id and whether the caller sees all compartments.
+            static NTSTATUS get_compartment(windows_emulator& win_emu, const io_device_context& c)
+            {
+                const auto parameters = read_all_parameters(win_emu, c, false);
+                std::vector<uint8_t> rw(2 * sizeof(uint32_t));
+                put(rw, 0, k_default_compartment);
+                put(rw, 4, uint32_t{0});
+                write_parameters(win_emu, parameters.rw, rw);
+                return STATUS_SUCCESS;
             }
 
             static NTSTATUS get_interface(windows_emulator& win_emu, const io_device_context& c, const uint32_t object)

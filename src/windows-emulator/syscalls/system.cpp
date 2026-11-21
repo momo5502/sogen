@@ -630,7 +630,7 @@ namespace sogen
 
             if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) { process_id = teb.ClientId.UniqueProcess; });
+                process_id = c.vcpu.active_thread->teb64->field<CLIENT_ID64>(offsetof(TEB64, ClientId)).read().UniqueProcess;
             }
 
             const auto image_name = u8_to_u16(c.win_emu.mod_manager.executable->name);
@@ -681,10 +681,9 @@ namespace sogen
             uint64_t active_tid = 0;
             if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) {
-                    process_id = teb.ClientId.UniqueProcess;
-                    active_tid = teb.ClientId.UniqueThread;
-                });
+                const auto client_id = c.vcpu.active_thread->teb64->field<CLIENT_ID64>(offsetof(TEB64, ClientId)).read();
+                process_id = client_id.UniqueProcess;
+                active_tid = client_id.UniqueThread;
             }
 
             std::vector<uint64_t> thread_ids;
@@ -694,9 +693,7 @@ namespace sogen
                 {
                     continue;
                 }
-                uint64_t tid = 0;
-                t.teb64->access([&](const TEB64& teb) { tid = teb.ClientId.UniqueThread; });
-                thread_ids.push_back(tid);
+                thread_ids.push_back(t.teb64->field<CLIENT_ID64>(offsetof(TEB64, ClientId)).read().UniqueThread);
             }
 
             if (thread_ids.empty())

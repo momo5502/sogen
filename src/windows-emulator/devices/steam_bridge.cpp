@@ -62,6 +62,11 @@ namespace sogen
         // steamclient64.dll connection, and the generated marshalling thunks.
         struct real_backend : steam_backend
         {
+            explicit real_backend(const bool app_tickets)
+                : grants_(app_tickets ? static_cast<uint32_t>(sogen_steam_grant_app_tickets) : 0u)
+            {
+            }
+
             uint64_t create_interface(std::string_view version) override
             {
                 const std::string v{version};
@@ -85,8 +90,9 @@ namespace sogen
                 }
                 uint32_t out_len = 0;
                 uint64_t r = 0;
-                const int status = sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
-                                                              static_cast<uint32_t>(args.size()), buffer.data(), out_cap, &out_len, &r);
+                const int status =
+                    sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
+                                               static_cast<uint32_t>(args.size()), buffer.data(), out_cap, &out_len, &r, this->grants_);
                 ret = r;
                 if (out_len > out_cap)
                 {
@@ -122,6 +128,9 @@ namespace sogen
                 out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
                 return status == 0;
             }
+
+          private:
+            uint32_t grants_{};
         };
 #endif
 
@@ -136,7 +145,7 @@ namespace sogen
             if (sogen_steam_backend_init())
             {
                 win_emu.log.info("[steam-bridge] connected to host Steam via steam-host-backend\n");
-                return std::make_unique<real_backend>();
+                return std::make_unique<real_backend>(win_emu.grants_steam_app_tickets());
             }
             win_emu.log.warn("[steam-bridge] host Steam unavailable; guest Steam calls will fail\n");
 #else

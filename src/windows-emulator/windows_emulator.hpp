@@ -152,6 +152,10 @@ namespace sogen
 
         network::network_mode network{network::network_mode::offline};
 
+        // Lets the guest obtain encrypted app tickets through the Steam bridge. They authenticate the host's Steam
+        // account to the game's publisher, which DRM such as Denuvo needs to activate. Requires live networking.
+        bool steam_app_tickets{false};
+
         // Report Vulkan features DXVK requires to games even where the host GPU lacks them (Mali, older Adreno), so
         // DXVK accepts the adapter. A game that really uses one of them renders incorrectly there.
         bool spoof_gpu_features{false};
@@ -634,6 +638,9 @@ namespace sogen
         }
 
         void wake_idle_vcpu();
+        // Completes the wait-any waits the signal satisfies right away, as KeSetEvent does, so that a reset following
+        // before the waiters run cannot take the wake back. Returns whether the event was signaled before.
+        bool signal_event(event& e);
         // Wakes an idle vCPU, or the next one to go idle, to look for threads that can run. For host threads that make a
         // parked guest thread runnable, such as one ending a GPU wait.
         void credit_idle_wakeup();
@@ -656,6 +663,11 @@ namespace sogen
         bool spoofs_gpu_features() const
         {
             return this->spoof_gpu_features_;
+        }
+
+        bool grants_steam_app_tickets() const
+        {
+            return this->steam_app_tickets_;
         }
 
         const std::optional<display_mode>& max_display_mode() const
@@ -849,6 +861,7 @@ namespace sogen
         bool intercept_kusd_{true};
         bool keep_guest_time_across_snapshots_{false};
         bool spoof_gpu_features_{false};
+        bool steam_app_tickets_{false};
         bool elevated_{false};
         std::optional<display_mode> max_display_mode_{};
         uint32_t vcpu_count_{1};

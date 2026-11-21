@@ -915,6 +915,7 @@ namespace sogen
           intercept_kusd_(settings.intercept_kusd),
           keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
+          steam_app_tickets_(settings.steam_app_tickets),
           elevated_(settings.elevated),
           max_display_mode_(settings.max_display_mode),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
@@ -1766,9 +1767,8 @@ namespace sogen
                 acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
                 acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-                // Return the IA32_TSC_AUX value in RCX (low 32 bits)
-                auto tsc_aux = 0; // Need to replace this with proper CPUID later
-                acting.reg(x86_register::rcx, tsc_aux);
+                // Windows keeps the processor number in IA32_TSC_AUX.
+                acting.reg(x86_register::rcx, static_cast<uint64_t>(vcpu.cpu.index()));
 
                 return instruction_hook_continuation::skip_instruction;
             });
@@ -1891,10 +1891,10 @@ namespace sogen
     void windows_emulator::attach_debugger()
     {
         this->debugger_.attach();
-        this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = TRUE; });
+        this->process.peb64.field<BOOLEAN>(offsetof(PEB64, BeingDebugged)).write(TRUE);
         if (this->process.peb32)
         {
-            this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = TRUE; });
+            this->process.peb32->field<BOOLEAN>(offsetof(PEB32, BeingDebugged)).write(TRUE);
         }
     }
 
@@ -1908,10 +1908,10 @@ namespace sogen
     void windows_emulator::detach_debugger()
     {
         this->debugger_.run_on_emulation_thread(*this, [this] {
-            this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = FALSE; });
+            this->process.peb64.field<BOOLEAN>(offsetof(PEB64, BeingDebugged)).write(FALSE);
             if (this->process.peb32)
             {
-                this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = FALSE; });
+                this->process.peb32->field<BOOLEAN>(offsetof(PEB32, BeingDebugged)).write(FALSE);
             }
         });
         this->debugger_.detach();
@@ -2946,7 +2946,7 @@ namespace sogen
                 continue;
             }
 
-            if (!entry->set_signaled(true))
+            if (!this->signal_event(*entry))
             {
                 if (--it->second == 0)
                 {
@@ -3002,6 +3002,30 @@ namespace sogen
                 vcpu.cpu.stop();
             }
         }
+    }
+
+    bool windows_emulator::signal_event(event& e)
+    {
+        const auto was_signaled = e.set_signaled(true);
+        for (auto& thread : this->process.threads | std::views::values)
+        {
+            // KeSetEvent ends wait-any waits (single-object waits included) right away. A wait-all waiter is only woken to
+            // check all its objects again when it runs, and the signal stays for that check.
+            if (!thread.await_any)
+            {
+                continue;
+            }
+
+            const auto waits_on_event = std::ranges::any_of(
+                thread.await_objects, [&](const object_reference& awaited) { return this->process.get_object(awaited) == &e; });
+            if (waits_on_event)
+            {
+                (void)thread.is_thread_ready(*this);
+            }
+        }
+
+        this->wake_idle_vcpu();
+        return was_signaled;
     }
 
     void windows_emulator::wake_idle_vcpu()

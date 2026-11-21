@@ -250,13 +250,11 @@ namespace sogen
 
     inline void set_guest_last_error(const syscall_context& c, uint32_t last_error)
     {
-        c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
-            teb.LastErrorValue = static_cast<ULONG>(last_error); //
-        });
+        c.vcpu.active_thread->teb64->field<ULONG>(offsetof(TEB64, LastErrorValue)).write(static_cast<ULONG>(last_error));
 
         if (const auto& teb32 = c.vcpu.active_thread->teb32)
         {
-            teb32->access([&](TEB32& teb) { teb.LastErrorValue = static_cast<ULONG>(last_error); });
+            teb32->field<ULONG>(offsetof(TEB32, LastErrorValue)).write(static_cast<ULONG>(last_error));
         }
     }
 

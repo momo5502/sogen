@@ -477,8 +477,7 @@ BLOCKED_METHODS = {
     "ISteamInput": {"SetInputActionManifestFilePath"},  # host reads/parses a guest-supplied absolute path
     # Credential minting: tickets/URLs that authenticate as the host's real Steam account to third parties.
     "ISteamUser": {
-        "GetAuthSessionTicket", "GetAuthTicketForWebApi", "RequestStoreAuthURL", "GetEncryptedAppTicket",
-        "RequestEncryptedAppTicket", "AdvertiseGame",
+        "GetAuthSessionTicket", "GetAuthTicketForWebApi", "RequestStoreAuthURL", "AdvertiseGame",
     },
     "ISteamGameServer": {"GetAuthSessionTicket"},
     # Memory safety, NOT the network policy above: every one of these takes SteamNetworkingConfigValue_t,
@@ -496,6 +495,17 @@ BLOCKED_METHODS = {
         "InviteUserToGame", "SendClanChatMessage", "ReplyToFriendMessage", "SetListenForFriendsMessages",
     },
 }
+
+
+# Encrypted app tickets prove the host account's ownership of the running app to the publisher's backend (DRM
+# such as Denuvo activates through them). They stay denied unless the host grants them (--steam-app-tickets).
+APP_TICKET_METHODS = {
+    "ISteamUser": {"RequestEncryptedAppTicket", "GetEncryptedAppTicket"},
+}
+
+
+def is_app_ticket_method(classname: str, methodname: str) -> bool:
+    return methodname in APP_TICKET_METHODS.get(classname, ())
 
 
 def is_blocked(classname: str, methodname: str) -> bool:
@@ -534,6 +544,19 @@ def size_hint(name: str) -> bool:
     if any(k in n for k in ("size", "count", "len", "num", "bytes")):
         return True
     return bool(re.match(r"^(cb|cub|cch|ce|cu)\w", name))
+
+
+# Non-const byte pointers that are inputs despite the convention below reading them as outputs.
+INPUT_BUFFERS = {
+    ("ISteamUser", "RequestEncryptedAppTicket"): {"pDataToInclude"},
+}
+
+
+def mark_input_buffers(classname: str, methodname: str, params: list[Param]) -> None:
+    names = INPUT_BUFFERS.get((classname, methodname), set())
+    for p in params:
+        if p.name in names and p.kind == "out_buffer":
+            p.kind = "in_buffer"
 
 
 def infer_conventional_buffers(types: Types, params: list[Param]) -> None:
@@ -710,6 +733,7 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
             params.append(classify_param(types, pt, pn, _param_attrs(p), param_names, ptr_params)
                           if pn else Param("", pt, "complex"))
         infer_conventional_buffers(types, params)
+        mark_input_buffers(m.semantic_parent.spelling if m.semantic_parent else "", m.spelling, params)
         rk = classify_return(types, m.result_type.spelling)
         # STEAM_PRIVATE_API methods parse as non-public; they can't be called through an external pointer
         # host-side, so they stub on both sides (the guest override keeps the vtable slot).
@@ -958,6 +982,9 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                 L.append(f'            blocked("{i.classname}", "{m.name}"); return steam_host_unsupported;')
                 L.append("        }")
                 continue
+            if is_app_ticket_method(i.classname, m.name):
+                L.append(f'            if (!app_tickets_granted()) {{ blocked("{i.classname}", "{m.name}"); '
+                         'return steam_host_unsupported; }')
             guard = struct_guard(m, "sogen::steam_host")
             if m.simple and guard:
                 L.append(f"            if constexpr ({guard}) {{")

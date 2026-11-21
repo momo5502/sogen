@@ -302,8 +302,7 @@ namespace sogen
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
             {
-                uint64_t table = 0;
-                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+                auto table = c.proc.peb64.field<std::uint64_t>(offsetof(PEB64, GdiSharedHandleTable)).read();
 
                 if (table != 0)
                 {
@@ -314,11 +313,11 @@ namespace sogen
                 shared.access([](GDI_SHARED_MEMORY64& mem) { mem = {}; });
                 table = shared.value();
 
-                c.proc.peb64.access([&](PEB64& peb) { peb.GdiSharedHandleTable = table; });
+                c.proc.peb64.field<std::uint64_t>(offsetof(PEB64, GdiSharedHandleTable)).write(table);
 
                 if (c.proc.peb32 && table <= std::numeric_limits<uint32_t>::max())
                 {
-                    c.proc.peb32->access([&](PEB32& peb32) { peb32.GdiSharedHandleTable = static_cast<uint32_t>(table); });
+                    c.proc.peb32->field<std::uint32_t>(offsetof(PEB32, GdiSharedHandleTable)).write(static_cast<uint32_t>(table));
                 }
 
                 return table;
@@ -326,24 +325,21 @@ namespace sogen
 
             uint64_t ensure_gdi_cookie(const syscall_context& c)
             {
-                uint64_t cookie = 0;
-                c.proc.peb64.access([&](PEB64& peb) {
-                    if (peb.GdiDCAttributeList == 0)
-                    {
-                        peb.GdiDCAttributeList = k_gdi_default_cookie;
-                    }
-
-                    cookie = peb.GdiDCAttributeList;
-                });
+                const auto cookie64 = c.proc.peb64.field<ULONG>(offsetof(PEB64, GdiDCAttributeList));
+                uint64_t cookie = cookie64.read();
+                if (cookie == 0)
+                {
+                    cookie = k_gdi_default_cookie;
+                    cookie64.write(static_cast<ULONG>(cookie));
+                }
 
                 if (c.proc.peb32)
                 {
-                    c.proc.peb32->access([&](PEB32& peb32) {
-                        if (peb32.GdiDCAttributeList == 0)
-                        {
-                            peb32.GdiDCAttributeList = static_cast<uint32_t>(cookie);
-                        }
-                    });
+                    const auto cookie32 = c.proc.peb32->field<ULONG>(offsetof(PEB32, GdiDCAttributeList));
+                    if (cookie32.read() == 0)
+                    {
+                        cookie32.write(static_cast<ULONG>(cookie));
+                    }
                 }
 
                 return cookie;
@@ -2880,23 +2876,19 @@ namespace sogen
             auto& thread = c.thread();
             if (thread.teb64)
             {
-                BOOL result = TRUE;
-                thread.teb64->access([&](TEB64& teb) {
-                    result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
-                    teb.GdiTebBatch = {};
-                    teb.GdiBatchCount = 0;
-                });
+                const auto batch = thread.teb64->field<GDI_TEB_BATCH64>(offsetof(TEB64, GdiTebBatch));
+                const BOOL result = flush_gdi_text_batch(c, batch.read()) ? TRUE : FALSE;
+                batch.write({});
+                thread.teb64->field<ULONG>(offsetof(TEB64, GdiBatchCount)).write(0);
                 return result;
             }
 
             if (thread.teb32)
             {
-                BOOL result = TRUE;
-                thread.teb32->access([&](TEB32& teb) {
-                    result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
-                    teb.GdiTebBatch = {};
-                    teb.GdiBatchCount = 0;
-                });
+                const auto batch = thread.teb32->field<GDI_TEB_BATCH32>(offsetof(TEB32, GdiTebBatch));
+                const BOOL result = flush_gdi_text_batch(c, batch.read()) ? TRUE : FALSE;
+                batch.write({});
+                thread.teb32->field<ULONG>(offsetof(TEB32, GdiBatchCount)).write(0);
                 return result;
             }
 
@@ -3015,8 +3007,7 @@ namespace sogen
 
         uint32_t count_process_gdi_objects(const syscall_context& c)
         {
-            uint64_t table = 0;
-            c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+            const auto table = c.proc.peb64.field<std::uint64_t>(offsetof(PEB64, GdiSharedHandleTable)).read();
             if (table == 0)
             {
                 return 0;
@@ -6147,7 +6138,7 @@ namespace sogen
             c.emu.try_write_memory(command_ptr + 4, &ack_length, sizeof(ack_length));
             if (auto* entry = c.proc.events.get(completion))
             {
-                entry->set_signaled(true);
+                c.win_emu.signal_event(*entry);
             }
         }
 
@@ -6866,7 +6857,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            entry->set_signaled(true);
+            c.win_emu.signal_event(*entry);
             return STATUS_SUCCESS;
         }
 

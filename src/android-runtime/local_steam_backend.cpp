@@ -45,8 +45,9 @@ namespace sogen::android
                     buffer.resize(out_cap);
                 }
                 uint32_t out_len = 0;
-                const int status = sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
-                                                              static_cast<uint32_t>(args.size()), buffer.data(), out_cap, &out_len, &ret);
+                const int status =
+                    sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
+                                               static_cast<uint32_t>(args.size()), buffer.data(), out_cap, &out_len, &ret, 0);
                 if (out_len > out_cap)
                 {
                     out.clear();

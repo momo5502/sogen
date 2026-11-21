@@ -400,12 +400,12 @@ namespace sogen
                         {
                             if (t.teb32.has_value())
                             {
-                                t.teb32->access([&](TEB32& teb32) { teb32.TlsSlots.arr[tls_cell] = 0; });
+                                t.teb32->field<std::uint32_t>(offsetof(TEB32, TlsSlots) + tls_cell * sizeof(std::uint32_t)).write(0);
                             }
                         }
                         else
                         {
-                            t.teb64->access([&](TEB64& teb64) { teb64.TlsSlots.arr[tls_cell] = 0; });
+                            t.teb64->field<std::uint64_t>(offsetof(TEB64, TlsSlots) + tls_cell * sizeof(std::uint64_t)).write(0);
                         }
                     }
                     else if (tls_cell < TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
@@ -414,22 +414,21 @@ namespace sogen
                         {
                             if (t.teb32.has_value())
                             {
-                                t.teb32->access([&](TEB32& teb32) {
-                                    if (teb32.TlsExpansionSlots)
-                                    {
-                                        c.emu.write_memory<uint32_t>(teb32.TlsExpansionSlots + (4 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
-                                    }
-                                });
+                                const auto expansion_slots = t.teb32->field<std::uint32_t>(offsetof(TEB32, TlsExpansionSlots)).read();
+                                if (expansion_slots)
+                                {
+                                    c.emu.write_memory<uint32_t>(expansion_slots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint32_t),
+                                                                 0);
+                                }
                             }
                         }
                         else
                         {
-                            t.teb64->access([&](TEB64& teb64) {
-                                if (teb64.TlsExpansionSlots)
-                                {
-                                    c.emu.write_memory<uint64_t>(teb64.TlsExpansionSlots + (8 * tls_cell) - TLS_MINIMUM_AVAILABLE, 0);
-                                }
-                            });
+                            const auto expansion_slots = t.teb64->field<std::uint64_t>(offsetof(TEB64, TlsExpansionSlots)).read();
+                            if (expansion_slots)
+                            {
+                                c.emu.write_memory<uint64_t>(expansion_slots + (tls_cell - TLS_MINIMUM_AVAILABLE) * sizeof(uint64_t), 0);
+                            }
                         }
                     }
                 }

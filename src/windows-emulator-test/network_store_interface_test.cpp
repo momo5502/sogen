@@ -189,6 +189,19 @@ namespace sogen::test
         EXPECT_EQ(STATUS_NOT_FOUND, this->send(ioctl_get_all_parameters, r, 0x68));
     }
 
+    TEST_F(NetworkStoreInterfaceTest, CallerIsInTheDefaultCompartment)
+    {
+        // GetIfTable2 asks NDIS object 8 for the caller's compartment and keeps only the interfaces in it. The read-write part
+        // is the compartment id and whether the caller sees all compartments.
+        auto r = this->request(ndis_module, 8);
+        put(r, 0x38, this->output_address());
+        put(r, 0x40, uint32_t{8});
+        ASSERT_EQ(STATUS_SUCCESS, this->send(ioctl_get_all_parameters, r, 0x68));
+
+        EXPECT_EQ(1u, this->emu.memory.read_memory<uint32_t>(this->output_address()));
+        EXPECT_EQ(0u, this->emu.memory.read_memory<uint32_t>(this->output_address() + 4));
+    }
+
     TEST_F(NetworkStoreInterfaceTest, EnumerationCountsThenFillsLoopbackAndEthernet)
     {
         auto r = this->request(ndis_module, 1);

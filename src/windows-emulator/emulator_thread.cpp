@@ -1858,10 +1858,7 @@ namespace sogen
 
                 if (this->teb64)
                 {
-                    this->teb64->access([&](TEB64& teb) {
-                        teb.Win32ClientInfo.arr[8] = active_handle;
-                        teb.Win32ClientInfo.arr[9] = active_window_ptr;
-                    });
+                    set_cached_window(*this->teb64, active_handle, active_window_ptr);
                 }
 
                 this->mark_as_ready(m->message != WM_QUIT ? TRUE : FALSE);

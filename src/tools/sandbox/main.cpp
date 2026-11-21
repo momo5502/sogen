@@ -144,9 +144,9 @@ namespace sogen::sandbox
                 const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
                 const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, const bool elevated, const std::optional<display_mode>& max_display_mode,
-                const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
-                managed_process_connection* managed_connection)
+                const bool steam_app_tickets, const bool spoof_gpu_features, const bool elevated,
+                const std::optional<display_mode>& max_display_mode, const std::filesystem::path& snapshot_directory,
+                const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
@@ -186,6 +186,7 @@ namespace sogen::sandbox
                 .intercept_kusd = intercept_kusd,
                 .registry_directory = registry_directory.empty() ? get_current_binary_dir() / "registry" : registry_directory,
                 .network = network_mode,
+                .steam_app_tickets = steam_app_tickets,
                 .spoof_gpu_features = spoof_gpu_features,
                 .elevated = elevated,
                 .max_display_mode = max_display_mode,
@@ -215,6 +216,10 @@ namespace sogen::sandbox
                                                        settings.registry_directory.string()};
                     arguments.emplace_back("--network");
                     arguments.emplace_back(network::to_string(network_mode));
+                    if (steam_app_tickets)
+                    {
+                        arguments.emplace_back("--steam-app-tickets");
+                    }
                     if (spoof_gpu_features)
                     {
                         arguments.emplace_back("--spoof-gpu-features");
@@ -445,6 +450,10 @@ namespace sogen::sandbox
             app.add_option("--network", network_name, "Guest network access: offline (no host network) or live")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"offline", "live"}));
+            bool steam_app_tickets{};
+            app.add_flag("--steam-app-tickets", steam_app_tickets,
+                         "Let the guest obtain encrypted app tickets from Steam. They authenticate your Steam account to the game's "
+                         "publisher, as DRM such as Denuvo needs. Requires --network live");
             bool spoof_gpu_features{};
             bool elevated = false;
             app.add_flag("--elevated", elevated,
@@ -533,9 +542,15 @@ namespace sogen::sandbox
                         document_mount::from_arguments(std::span(document_mount_values).subspan(i, document_mount::argument_count)));
                 }
 
+                const auto network_mode = network::parse_network_mode(network_name);
+                if (steam_app_tickets && network_mode != network::network_mode::live)
+                {
+                    throw std::runtime_error("--steam-app-tickets requires --network live");
+                }
+
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
-                           emulation_root, registry_directory, registry_files, environment, network::parse_network_mode(network_name),
+                           emulation_root, registry_directory, registry_files, environment, network_mode, steam_app_tickets,
                            spoof_gpu_features, elevated, parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
                            managed_process ? &*managed_process : nullptr);
             }
