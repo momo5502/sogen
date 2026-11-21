@@ -79,6 +79,9 @@ namespace sogen
         auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
 
+        // Like a scheduling decision, a system call lets the vCPU bring the KUSD's time up to date (perform_thread_switch).
+        context.kusd.refresh(context.current_timer_resolution());
+
         const auto address = emu.read_instruction_pointer();
         const auto& abi = win_emu.abi();
         const auto raw_syscall_id = abi.raw_syscall_id(emu);

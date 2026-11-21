@@ -246,13 +246,21 @@ namespace sogen
         return reference_time(tsc, this->reference_tsc_scale_) + static_cast<uint64_t>(this->reference_tsc_offset_) + bias;
     }
 
-    void kusd_mmio::refresh()
+    void kusd_mmio::refresh(const ULONG clock_interval)
     {
         if (this->intercept_ || !this->registered_)
         {
             return;
         }
 
+        const auto now = this->clock_->steady_now();
+        const std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>> interval{clock_interval};
+        if (now >= this->last_refresh_ && now - this->last_refresh_ < interval)
+        {
+            return;
+        }
+
+        this->last_refresh_ = now;
         const std::scoped_lock lock(this->mutex_);
         this->update();
         this->write_page();

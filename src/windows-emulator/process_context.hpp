@@ -494,6 +494,9 @@ namespace sogen
         size_t get_live_thread_count() const;
         // CPU cycles are not modeled; executed instructions are the closest measure.
         uint64_t get_accumulated_cycles() const;
+        // The clock interval in 100 ns units, which NtQueryTimerResolution reports: a request can only make it finer than the
+        // system's resolution without one, never coarser.
+        ULONG current_timer_resolution() const;
         void commit_thread_stacks_in_full() const;
 
         // WOW64 support flag - set during process setup based on executable architecture
