@@ -16,6 +16,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "steam_interface_handles.hpp"
+
 #include "steam_api.h"
 #include "steam_gameserver.h"
 #if __has_include("isteamappticket.h")
@@ -206,7 +208,17 @@ namespace sogen::steam_host
     // Defined in the backend TU; must be called with the backend lock held (as the thunks are).
     bool app_tickets_granted();
 
-    uint64_t register_returned_interface(const char* version, void* iface);
+    uint64_t register_returned_interface(const char* version, void* iface, interface_owner owner);
+
+    // Steam frees the interfaces of a released pipe or user, so their handles must stop reaching them.
+    void release_pipe_interfaces(int32_t pipe);
+    void release_user_interfaces(int32_t pipe, int32_t user);
+
+    // The pipe and user the backend opened for itself. Interfaces it obtains through them belong to them, and the
+    // guest may not release them: that would free objects behind handles the guest still holds.
+    interface_owner backend_interface_owner();
+    bool is_backend_pipe(int32_t pipe);
+    bool is_backend_user(int32_t pipe, int32_t user);
 
     // When a typed getter returns null (a modern host steamclient no longer vends a very old interface
     // version), obtain a newer version of the same family via GetISteamGenericInterface. Steam interfaces

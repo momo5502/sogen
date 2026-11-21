@@ -1096,6 +1096,21 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                         clamp_count(f"{v}_cap", p.count)
                         args.append(f"reinterpret_cast<{p.type}>({v}_vec.data())")
                         out_writes.append(f"            out.put_out({v}_vec.data(), {v}_cap);")
+                # The pipe and user an interface is obtained for: Steam frees it with them.
+                def local_of_type(type_name: str) -> str:
+                    for k, p in enumerate(m.params):
+                        if p.kind == "byval" and re.sub(r"\bconst\b", "", p.type).strip() == type_name:
+                            return f"a{k}"
+                    return "0"
+
+                owner_pipe = local_of_type("HSteamPipe")
+                owner_user = local_of_type("HSteamUser")
+                # The guest never holds the backend's own pipe or user; releasing them would free the objects behind
+                # handles it still holds.
+                if m.name == "BReleaseSteamPipe" and owner_pipe != "0":
+                    L.append(f"            if (is_backend_pipe({owner_pipe})) {{ out.put_ret_value(0); return steam_host_ok; }}")
+                elif m.name == "ReleaseUser" and owner_pipe != "0" and owner_user != "0":
+                    L.append(f"            if (is_backend_user({owner_pipe}, {owner_user})) return steam_host_ok;")
                 # Call exactly once (it fills the out locals), then serialize outputs in the guest's read order.
                 call = f"self->{m.name}({', '.join(args)})"
                 if m.ret_kind == "void":
@@ -1117,6 +1132,10 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                 else:  # csteamid / floating
                     L.append(f"            {m.ret} _r = {call};")
                 L.extend(out_writes)
+                if m.name == "BReleaseSteamPipe" and owner_pipe != "0":
+                    L.append(f"            if (_r) release_pipe_interfaces({owner_pipe});")
+                elif m.name == "ReleaseUser" and owner_pipe != "0" and owner_user != "0":
+                    L.append(f"            release_user_interfaces({owner_pipe}, {owner_user});")
                 if m.ret_kind == "cstr":
                     L.append("            out.put_cstr(_s);")
                 elif m.ret_kind == "csteamid":
@@ -1131,7 +1150,10 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     # registering under the requested version so the guest's exact old vtable is used.
                     L.append(f"            void* _ifb = _iface ? static_cast<void*>(_iface) "
                              f": host_resolve_fallback({local_of[m.iface_version]});")
-                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _ifb));")
+                    # The fallback obtains the interface through the backend's own pipe and user.
+                    L.append(f"            const interface_owner _owner = _iface ? interface_owner{{.pipe = {owner_pipe}, "
+                             f".user = {owner_user}}} : backend_interface_owner();")
+                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _ifb, _owner));")
                 elif m.ret_kind == "struct_return":
                     L.append("            out.put_out(&_sret, sizeof(_sret));")
                 elif m.ret_kind == "struct_ptr_return":
