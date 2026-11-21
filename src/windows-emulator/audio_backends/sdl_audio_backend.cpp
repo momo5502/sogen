@@ -30,62 +30,57 @@ namespace sogen
             }
         }
 
-        class sdl_audio_backend final : public audio_backend
+        // The host playback device. SDL mixes every stream bound to it, converting each from its own format.
+        class sdl_audio_device
         {
           public:
-            ~sdl_audio_backend() override
+            explicit sdl_audio_device(const SDL_AudioDeviceID id)
+                : id_(id)
             {
-                this->stop();
-                if (this->initialized_)
-                {
-                    SDL_QuitSubSystem(SDL_INIT_AUDIO);
-                }
             }
 
-            bool start(const audio_format& format) override
+            ~sdl_audio_device()
             {
-                const std::lock_guard lock{this->mutex_};
-
-                if (this->stream_ && this->format_ == format)
-                {
-                    return true;
-                }
-
-                this->close_stream();
-
-                const auto sdl_format = to_sdl_format(format);
-                if (sdl_format == SDL_AUDIO_UNKNOWN || format.channels == 0 || format.sample_rate == 0)
-                {
-                    return false;
-                }
-
-                if (!this->initialized_)
-                {
-                    this->initialized_ = SDL_InitSubSystem(SDL_INIT_AUDIO);
-                    if (!this->initialized_)
-                    {
-                        return false;
-                    }
-                }
-
-                const SDL_AudioSpec spec{
-                    .format = sdl_format, .channels = static_cast<int>(format.channels), .freq = static_cast<int>(format.sample_rate)};
-                this->stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-                if (!this->stream_)
-                {
-                    return false;
-                }
-
-                this->format_ = format;
-                SDL_ResumeAudioStreamDevice(this->stream_);
-                return true;
+                SDL_CloseAudioDevice(this->id_);
+                SDL_QuitSubSystem(SDL_INIT_AUDIO);
             }
+
+            sdl_audio_device(const sdl_audio_device&) = delete;
+            sdl_audio_device& operator=(const sdl_audio_device&) = delete;
+            sdl_audio_device(sdl_audio_device&&) = delete;
+            sdl_audio_device& operator=(sdl_audio_device&&) = delete;
+
+            SDL_AudioDeviceID id() const
+            {
+                return this->id_;
+            }
+
+          private:
+            SDL_AudioDeviceID id_{};
+        };
+
+        class sdl_audio_output final : public audio_output
+        {
+          public:
+            sdl_audio_output(std::shared_ptr<sdl_audio_device> device, SDL_AudioStream* stream)
+                : device_(std::move(device)),
+                  stream_(stream)
+            {
+            }
+
+            ~sdl_audio_output() override
+            {
+                SDL_DestroyAudioStream(this->stream_);
+            }
+
+            sdl_audio_output(const sdl_audio_output&) = delete;
+            sdl_audio_output& operator=(const sdl_audio_output&) = delete;
+            sdl_audio_output(sdl_audio_output&&) = delete;
+            sdl_audio_output& operator=(sdl_audio_output&&) = delete;
 
             void submit(const void* data, const size_t size) override
             {
-                const std::lock_guard lock{this->mutex_};
-
-                if (this->stream_ && data && size)
+                if (data && size)
                 {
                     SDL_PutAudioStreamData(this->stream_, data, static_cast<int>(size));
                 }
@@ -93,40 +88,78 @@ namespace sogen
 
             std::optional<uint64_t> queued_bytes() const override
             {
-                const std::lock_guard lock{this->mutex_};
-
-                if (!this->stream_)
-                {
-                    return std::nullopt;
-                }
-
                 const auto queued = SDL_GetAudioStreamQueued(this->stream_);
                 return queued < 0 ? std::nullopt : std::optional{static_cast<uint64_t>(queued)};
             }
 
-            void stop() override
+          private:
+            std::shared_ptr<sdl_audio_device> device_{};
+            SDL_AudioStream* stream_{};
+        };
+
+        class sdl_audio_backend final : public audio_backend
+        {
+          public:
+            std::unique_ptr<audio_output> open_output(const audio_format& format) override
             {
-                const std::lock_guard lock{this->mutex_};
-                this->close_stream();
+                const auto sdl_format = to_sdl_format(format);
+                if (sdl_format == SDL_AUDIO_UNKNOWN || format.channels == 0 || format.sample_rate == 0)
+                {
+                    return nullptr;
+                }
+
+                const auto device = this->device();
+                if (!device)
+                {
+                    return nullptr;
+                }
+
+                const SDL_AudioSpec spec{
+                    .format = sdl_format, .channels = static_cast<int>(format.channels), .freq = static_cast<int>(format.sample_rate)};
+                auto* stream = SDL_CreateAudioStream(&spec, nullptr);
+                if (!stream)
+                {
+                    return nullptr;
+                }
+
+                if (!SDL_BindAudioStream(device->id(), stream))
+                {
+                    SDL_DestroyAudioStream(stream);
+                    return nullptr;
+                }
+
+                return std::make_unique<sdl_audio_output>(device, stream);
             }
 
           private:
-            void close_stream()
+            // Opened on first use and kept while this backend or any of its outputs exist.
+            std::shared_ptr<sdl_audio_device> device()
             {
-                if (this->stream_)
+                const std::lock_guard lock{this->mutex_};
+                if (this->device_)
                 {
-                    SDL_DestroyAudioStream(this->stream_);
-                    this->stream_ = nullptr;
-                    this->format_ = {};
+                    return this->device_;
                 }
+
+                if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+                {
+                    return nullptr;
+                }
+
+                const auto id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+                if (id == 0)
+                {
+                    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+                    return nullptr;
+                }
+
+                SDL_ResumeAudioDevice(id);
+                this->device_ = std::make_shared<sdl_audio_device>(id);
+                return this->device_;
             }
 
-            // The audio render thread submits and polls the queue while the emulator thread may start or stop the
-            // sink (e.g. when the UI backend is swapped), so every entry point serializes on this.
-            mutable std::mutex mutex_{};
-            bool initialized_{false};
-            SDL_AudioStream* stream_{nullptr};
-            audio_format format_{};
+            std::mutex mutex_{};
+            std::shared_ptr<sdl_audio_device> device_{};
         };
     }
 

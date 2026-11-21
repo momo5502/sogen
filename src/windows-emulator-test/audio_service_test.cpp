@@ -24,16 +24,17 @@ namespace sogen::test
         constexpr uint16_t block_align = 8;
         constexpr uint64_t one_second_hns = 10000000;
 
-        std::array<uint8_t, 40> float_stereo_format()
+        std::array<uint8_t, 40> float_format(const uint16_t channels)
         {
+            const auto frame_bytes = static_cast<uint16_t>(channels * 4);
             std::array<uint8_t, 40> format{};
             const auto put16 = [&](const size_t offset, const uint16_t value) { std::memcpy(&format[offset], &value, sizeof(value)); };
             const auto put32 = [&](const size_t offset, const uint32_t value) { std::memcpy(&format[offset], &value, sizeof(value)); };
             put16(0, 0xFFFE);
-            put16(2, 2);
+            put16(2, channels);
             put32(4, sample_rate);
-            put32(8, sample_rate * block_align);
-            put16(12, block_align);
+            put32(8, sample_rate * frame_bytes);
+            put16(12, frame_bytes);
             put16(14, 32);
             put16(16, 22);
             put16(18, 32);
@@ -47,10 +48,10 @@ namespace sogen::test
         class AudioServiceTest : public RpcProtocolTest
         {
           protected:
-            static std::vector<uint8_t> request_with_format(const size_t format_offset, const size_t size)
+            static std::vector<uint8_t> request_with_format(const size_t format_offset, const size_t size, const uint16_t channels = 2)
             {
                 std::vector<uint8_t> data(size);
-                const auto format = float_stereo_format();
+                const auto format = float_format(channels);
                 std::memcpy(data.data() + format_offset, format.data(), format.size());
                 return data;
             }
@@ -60,9 +61,9 @@ namespace sogen::test
                 return read<uint32_t>(payload, payload.size() - sizeof(uint32_t));
             }
 
-            std::array<uint8_t, 20> open_stream(const size_t request_size)
+            std::array<uint8_t, 20> open_stream(const size_t request_size, const uint16_t channels = 2)
             {
-                const auto reply = this->call(4, request_with_format(152, request_size));
+                const auto reply = this->call(4, request_with_format(152, request_size, channels));
                 EXPECT_EQ(STATUS_SUCCESS, reply.status);
                 std::array<uint8_t, 20> context{};
                 if (!reply.payload)
@@ -108,10 +109,10 @@ namespace sogen::test
                 return render_section->backing_address;
             }
 
-            uint64_t create_render_buffer(const std::array<uint8_t, 16>& interface_id)
+            uint64_t create_render_buffer(const std::array<uint8_t, 16>& interface_id, const uint16_t channels = 2)
             {
                 this->bind(u"\\RPC Control\\AudioClientRpc", interface_id, 8);
-                return this->create_stream(this->open_stream(368));
+                return this->create_stream(this->open_stream(368, channels));
             }
 
             void expect_format_accepted(const std::array<uint8_t, 16>& interface_id, const size_t width, const size_t format_offset,
@@ -169,6 +170,127 @@ namespace sogen::test
                 }
                 return false;
             }
+        };
+
+        // Records every output the audio service opens, so a test can see which stream feeds which output.
+        struct recorded_output
+        {
+            audio_format format{};
+            std::atomic<uint64_t> submitted{};
+            std::atomic<bool> nonzero{};
+            std::atomic<bool> closed{};
+        };
+
+        class recording_audio_output final : public audio_output
+        {
+          public:
+            explicit recording_audio_output(std::shared_ptr<recorded_output> record)
+                : record_(std::move(record))
+            {
+            }
+
+            ~recording_audio_output() override
+            {
+                this->record_->closed = true;
+            }
+
+            recording_audio_output(const recording_audio_output&) = delete;
+            recording_audio_output& operator=(const recording_audio_output&) = delete;
+            recording_audio_output(recording_audio_output&&) = delete;
+            recording_audio_output& operator=(recording_audio_output&&) = delete;
+
+            void submit(const void* data, const size_t size) override
+            {
+                const auto* bytes = static_cast<const uint8_t*>(data);
+                if (std::any_of(bytes, bytes + size, [](const uint8_t b) { return b != 0; }))
+                {
+                    this->record_->nonzero = true;
+                }
+                this->record_->submitted += size;
+            }
+
+            std::optional<uint64_t> queued_bytes() const override
+            {
+                return 0;
+            }
+
+          private:
+            std::shared_ptr<recorded_output> record_{};
+        };
+
+        class recording_audio_backend final : public audio_backend
+        {
+          public:
+            std::unique_ptr<audio_output> open_output(const audio_format& format) override
+            {
+                auto record = std::make_shared<recorded_output>();
+                record->format = format;
+                {
+                    const std::lock_guard lock{this->mutex};
+                    this->outputs.push_back(record);
+                }
+                return std::make_unique<recording_audio_output>(std::move(record));
+            }
+
+            std::vector<std::shared_ptr<recorded_output>> opened() const
+            {
+                const std::lock_guard lock{this->mutex};
+                return this->outputs;
+            }
+
+          private:
+            mutable std::mutex mutex{};
+            std::vector<std::shared_ptr<recorded_output>> outputs{};
+        };
+
+        class AudioMixingTest : public AudioServiceTest
+        {
+          protected:
+            std::unique_ptr<audio_backend> create_audio_backend() override
+            {
+                auto recording = std::make_unique<recording_audio_backend>();
+                this->backend = recording.get();
+                return recording;
+            }
+
+            // The output a render buffer's stream opened once it started playing.
+            std::shared_ptr<recorded_output> wait_for_output(const size_t count) const
+            {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < deadline)
+                {
+                    if (const auto outputs = this->backend->opened(); outputs.size() >= count)
+                    {
+                        return outputs[count - 1];
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                return nullptr;
+            }
+
+            static bool reaches(const recorded_output& output, const uint64_t bytes)
+            {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < deadline)
+                {
+                    if (output.submitted >= bytes)
+                    {
+                        return true;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                return false;
+            }
+
+            // Server 2022 layout: the write cursor at 0x10, PCM from 0x400.
+            void play(const uint64_t header, const uint64_t write_cursor)
+            {
+                std::vector<uint8_t> pcm(static_cast<size_t>(write_cursor), 0x3c);
+                this->emu->memory.write_memory(header + 0x400, pcm.data(), pcm.size());
+                this->emu->memory.write_memory(header + 0x10, write_cursor);
+            }
+
+            recording_audio_backend* backend{};
         };
 
         // The default endpoint comes from the registry: this fixture loads the root's hives, marks every render endpoint
@@ -390,5 +512,40 @@ namespace sogen::test
 
         this->emu->memory.write_memory(header + 0x18, uint64_t{4096});
         EXPECT_TRUE(this->play_cursor_reaches(header + 0x20, 4096));
+    }
+
+    // The Windows audio engine mixes every stream of a process. Games such as Hogwarts Legacy keep a device watcher
+    // that opens and destroys a silent stream every few hundred milliseconds next to the one that plays.
+    TEST_F(AudioMixingTest, APlayingStreamKeepsItsOutputWhileOtherStreamsComeAndGo)
+    {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+        GTEST_SKIP() << "Requires host threads";
+#endif
+        const auto playing = this->create_render_buffer(audio_client_interface_20348);
+        ASSERT_NE(0u, playing);
+        this->play(playing, 4096);
+        const auto playing_output = this->wait_for_output(1);
+        ASSERT_NE(nullptr, playing_output);
+        ASSERT_TRUE(reaches(*playing_output, 4096));
+        auto playing_port = std::move(this->endpoint);
+
+        for (size_t watcher = 0; watcher < 3; ++watcher)
+        {
+            const auto silent = this->create_render_buffer(audio_client_interface_20348, 8);
+            ASSERT_NE(0u, silent);
+            this->emu->memory.write_memory(silent + 0x10, uint64_t{1024});
+            const auto silent_output = this->wait_for_output(2 + watcher);
+            ASSERT_NE(nullptr, silent_output);
+            EXPECT_EQ(8u, silent_output->format.channels);
+            this->endpoint.reset();
+            EXPECT_TRUE(silent_output->closed);
+        }
+
+        this->endpoint = std::move(playing_port);
+        this->play(playing, 8192);
+        EXPECT_TRUE(reaches(*playing_output, 8192));
+        EXPECT_TRUE(playing_output->nonzero);
+        EXPECT_FALSE(playing_output->closed);
+        EXPECT_EQ(2u, playing_output->format.channels);
     }
 }

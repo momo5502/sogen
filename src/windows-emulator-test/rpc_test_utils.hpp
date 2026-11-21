@@ -12,7 +12,7 @@ namespace sogen::test
         {
             emulator_interfaces interfaces{};
             interfaces.ui = std::make_unique<null_ui_backend>();
-            interfaces.audio = std::make_unique<null_audio_backend>();
+            interfaces.audio = this->create_audio_backend();
             interfaces.console = std::make_unique<null_console_backend>();
             this->emu = std::make_unique<windows_emulator>(
                 create_x86_64_emulator_from_environment(),
@@ -21,6 +21,11 @@ namespace sogen::test
             this->storage = this->emu->memory.allocate_memory(0x20000, memory_permission::read_write);
             constexpr std::array<uint8_t, 12> sid{1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
             this->emu->process.sid.assign(sid.begin(), sid.end());
+        }
+
+        virtual std::unique_ptr<audio_backend> create_audio_backend()
+        {
+            return std::make_unique<null_audio_backend>();
         }
 
         void bind(std::u16string_view name, const std::array<uint8_t, 16>& interface_id, size_t width)
