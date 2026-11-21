@@ -2486,6 +2486,15 @@ namespace sogen
             // How many of them are in use since the last reset: allocations go to the last one, or to this pool while none
             // is, so a pool that refused is not asked again.
             size_t overflow_in_use{};
+            // The ids of the sets allocated from this pool and not freed yet, so a reset or a destroy drops just these.
+            std::vector<uint64_t> sets{};
+            // Host sets the pool's last resets kept for its next deferred allocations, by layout and variable descriptor
+            // count; they still take room in the host pools.
+            std::map<std::pair<uint64_t, uint32_t>, std::vector<VkDescriptorSet>> kept_sets{};
+            size_t kept_set_count{};
+            // False once vkAllocateDescriptorSets' own call allocated from the pool: the guest takes the driver's answer as
+            // the pool's count, so its resets free its host sets from then on.
+            bool deferred_only{true};
         };
 
         // An overflow pool made like the guest's that holds at least these sets: each descriptor type and maxSets raised to
@@ -2612,6 +2621,8 @@ namespace sogen
             VkDescriptorSet handle{};
             uint64_t device_id{};
             uint64_t pool_id{};
+            // Where its id sits in its pool's list of sets, so a free takes it out without a search.
+            size_t pool_index{};
             uint64_t layout_id{};
             std::shared_ptr<const set_layout_params> layout_create{};
             std::optional<uint32_t> variable_descriptor_count{};
@@ -2834,14 +2845,17 @@ namespace sogen
             return result;
         }
 
-        // Keeps freshly allocated sets under the ids the guest knows them by.
+        // Keeps freshly allocated sets under the ids the guest knows them by, listed with their pool.
         void keep_descriptor_sets(const uint64_t device, const uint64_t pool, std::span<const uint64_t> set_layouts,
                                   std::span<const uint32_t> variable_descriptor_counts, std::span<const VkDescriptorSet> sets,
                                   std::span<const uint64_t> ids)
         {
+            auto& listed = this->descriptor_pools.at(pool).sets;
+            const auto first_index = listed.size();
+            listed.insert(listed.end(), ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(sets.size()));
             for (size_t i = 0; i < sets.size(); ++i)
             {
-                descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool};
+                descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool, .pool_index = first_index + i};
                 data.layout_id = set_layouts[i];
                 data.layout_create = this->descriptor_set_layouts.at(set_layouts[i]).create;
                 if (!variable_descriptor_counts.empty())
@@ -10854,9 +10868,34 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        int32_t result =
-            dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
-        for (const VkDescriptorPool extra : it->second.overflow)
+        // A pool only deferred allocations used keeps its host sets for its next ones instead of the driver's reset: the guest
+        // counts such a pool's sets itself, so a set it gets back is one the pool had room for. Kept sets of layouts the guest
+        // stopped asking for would pile up, so past twice maxSets the driver's reset frees them all.
+        auto& data = it->second;
+        if ((data.create.flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) == 0 && data.deferred_only)
+        {
+            for (const uint64_t id : data.sets)
+            {
+                const auto set = this->impl_->descriptor_sets.find(id);
+                if (set == this->impl_->descriptor_sets.end())
+                {
+                    continue;
+                }
+
+                data.kept_sets[{set->second.layout_id, set->second.variable_descriptor_count.value_or(0)}].push_back(set->second.handle);
+                ++data.kept_set_count;
+                this->impl_->descriptor_sets.erase(set);
+            }
+
+            data.sets.clear();
+            if (data.kept_set_count <= 2 * static_cast<size_t>(data.create.max_sets))
+            {
+                return VK_SUCCESS;
+            }
+        }
+
+        int32_t result = dev->second.reset_descriptor_pool(dev->second.handle, data.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
+        for (const VkDescriptorPool extra : data.overflow)
         {
             if (result == VK_SUCCESS)
             {
@@ -10865,9 +10904,16 @@ namespace sogen
         }
         if (result == VK_SUCCESS)
         {
-            // The reset implicitly frees every set allocated from this pool; drop their ids.
-            this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
-            it->second.overflow_in_use = 0;
+            // The reset frees every set allocated from this pool and its overflow pools, kept ones too; drop their ids.
+            for (const uint64_t id : data.sets)
+            {
+                this->impl_->descriptor_sets.erase(id);
+            }
+
+            data.sets.clear();
+            data.kept_sets.clear();
+            data.kept_set_count = 0;
+            data.overflow_in_use = 0;
         }
         return result;
     }
@@ -10888,8 +10934,11 @@ namespace sogen
                 dev->second.destroy_descriptor_pool(dev->second.handle, extra, nullptr);
             }
         }
-        // Sets allocated from this pool are freed implicitly; drop their ids.
-        this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+        // Sets allocated from this pool are freed implicitly, kept ones too; drop their ids.
+        for (const uint64_t id : it->second.sets)
+        {
+            this->impl_->descriptor_sets.erase(id);
+        }
         this->impl_->descriptor_pools.erase(it);
     }
 
@@ -10898,9 +10947,24 @@ namespace sogen
                                                   uint32_t& out_count)
     {
         out_count = 0;
+        const auto pool_it = this->impl_->descriptor_pools.find(pool);
+        if (pool_it != this->impl_->descriptor_pools.end())
+        {
+            pool_it->second.deferred_only = false;
+        }
+
         std::vector<VkDescriptorSet> sets;
-        const int32_t result =
-            this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, false, sets);
+        int32_t result = this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, false, sets);
+
+        // Sets the pool's last reset kept still take room in its host pool: what that refuses while it keeps some, and the
+        // guest's own count of the pool allows, comes from an overflow pool.
+        if ((result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) &&
+            pool_it != this->impl_->descriptor_pools.end() && pool_it->second.kept_set_count != 0 &&
+            pool_it->second.sets.size() + set_layouts.size() <= pool_it->second.create.max_sets)
+        {
+            result = this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, true, sets);
+        }
+
         if (result != VK_SUCCESS)
         {
             return result;
@@ -10931,21 +10995,76 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Only a pool that cannot free single sets spills into overflow pools, as the guest frees a set through the pool it
-        // came from. The shim defers only such pools' allocations; a snapshot restore of a freeable pool's sets gets what the
-        // driver gives, as a synchronous allocation does.
         const auto pool_it = this->impl_->descriptor_pools.find(pool);
-        const bool overflow = pool_it != this->impl_->descriptor_pools.end() &&
-                              (pool_it->second.create.flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) == 0;
-
-        std::vector<VkDescriptorSet> sets;
-        const int32_t result =
-            this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, overflow, sets);
-        if (result == VK_SUCCESS)
+        if (pool_it == this->impl_->descriptor_pools.end() || pool_it->second.device_id != device ||
+            (!variable_descriptor_counts.empty() && variable_descriptor_counts.size() != set_layouts.size()))
         {
-            this->impl_->keep_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, sets, ids);
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
-        return result;
+
+        // Sets the pool's last reset kept for the same layout and count stand in for new ones, and the driver allocates the
+        // rest. A kept set of a layout the guest has destroyed since is never handed out: it could not be updated.
+        auto& data = pool_it->second;
+        const auto kept_key = [&](const size_t i) {
+            return std::pair<uint64_t, uint32_t>{set_layouts[i], variable_descriptor_counts.empty() ? 0 : variable_descriptor_counts[i]};
+        };
+
+        std::vector<VkDescriptorSet> sets(set_layouts.size(), VK_NULL_HANDLE);
+        std::vector<size_t> missing{};
+        std::vector<uint64_t> missing_layouts{};
+        std::vector<uint32_t> missing_counts{};
+        for (size_t i = 0; i < set_layouts.size(); ++i)
+        {
+            const auto kept = data.kept_sets.find(kept_key(i));
+            const auto layout = this->impl_->descriptor_set_layouts.find(set_layouts[i]);
+            if (kept == data.kept_sets.end() || kept->second.empty() || layout == this->impl_->descriptor_set_layouts.end() ||
+                layout->second.device_id != device)
+            {
+                missing.push_back(i);
+                missing_layouts.push_back(set_layouts[i]);
+                if (!variable_descriptor_counts.empty())
+                {
+                    missing_counts.push_back(variable_descriptor_counts[i]);
+                }
+                continue;
+            }
+
+            sets[i] = kept->second.back();
+            kept->second.pop_back();
+            --data.kept_set_count;
+        }
+
+        if (!missing.empty())
+        {
+            // Only a pool that cannot free single sets spills into overflow pools, as the guest frees a set through the pool
+            // it came from. The shim defers only such pools' allocations; a snapshot restore of a freeable pool's sets gets
+            // what the driver gives, as a synchronous allocation does.
+            const bool overflow = (data.create.flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) == 0;
+            std::vector<VkDescriptorSet> fresh;
+            const int32_t result =
+                this->impl_->allocate_host_descriptor_sets(device, pool, missing_layouts, missing_counts, overflow, fresh);
+            if (result != VK_SUCCESS)
+            {
+                // The kept sets taken for this call wait for the next one.
+                for (size_t i = 0; i < sets.size(); ++i)
+                {
+                    if (sets[i] != VK_NULL_HANDLE)
+                    {
+                        data.kept_sets[kept_key(i)].push_back(sets[i]);
+                        ++data.kept_set_count;
+                    }
+                }
+                return result;
+            }
+
+            for (size_t n = 0; n < missing.size(); ++n)
+            {
+                sets[missing[n]] = fresh[n];
+            }
+        }
+
+        this->impl_->keep_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, sets, ids);
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets)
@@ -10974,9 +11093,21 @@ namespace sogen
                                                                  static_cast<uint32_t>(handles.size()), handles.data());
         if (result == VK_SUCCESS)
         {
+            // A freed set's place in its pool's list takes the list's last id, so a free costs the same whatever the pool holds.
+            auto& listed = pool_it->second.sets;
             for (const uint64_t id : sets)
             {
-                this->impl_->descriptor_sets.erase(id);
+                const auto set = this->impl_->descriptor_sets.find(id);
+                if (set == this->impl_->descriptor_sets.end())
+                {
+                    continue; // named twice in the call
+                }
+
+                const auto index = set->second.pool_index;
+                listed.at(index) = listed.back();
+                this->impl_->descriptor_sets.at(listed[index]).pool_index = index;
+                listed.pop_back();
+                this->impl_->descriptor_sets.erase(set);
             }
         }
         return result;
