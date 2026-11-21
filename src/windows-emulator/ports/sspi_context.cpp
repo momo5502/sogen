@@ -403,4 +403,52 @@ namespace sogen::sspi
         }
         return result;
     }
+
+    namespace
+    {
+        void append_u32(std::vector<uint8_t>& out, const uint32_t value)
+        {
+            const auto* bytes = reinterpret_cast<const uint8_t*>(&value);
+            out.insert(out.end(), bytes, bytes + sizeof(value));
+        }
+
+        // crypt32's serialized element: one property record (CERT_CERT_PROP_ID, X509_ASN_ENCODING) per certificate.
+        void append_serialized_certificate(std::vector<uint8_t>& out, const std::span<const uint8_t> der)
+        {
+            constexpr uint32_t cert_cert_prop_id = 0x20;
+            constexpr uint32_t x509_asn_encoding = 1;
+            append_u32(out, cert_cert_prop_id);
+            append_u32(out, x509_asn_encoding);
+            append_u32(out, static_cast<uint32_t>(der.size()));
+            out.insert(out.end(), der.begin(), der.end());
+        }
+    }
+
+    std::vector<uint8_t> serialize_certificate_context(const std::vector<std::vector<uint8_t>>& chain)
+    {
+        constexpr uint32_t serialized_store_magic = 0x54524543; // "CERT"
+        std::vector<uint8_t> store{};
+        append_u32(store, 0);
+        append_u32(store, serialized_store_magic);
+        for (const auto& certificate : chain)
+        {
+            append_serialized_certificate(store, certificate);
+        }
+        append_u32(store, 0);
+        append_u32(store, 0);
+        append_u32(store, 0);
+
+        std::vector<uint8_t> element{};
+        if (!chain.empty())
+        {
+            append_serialized_certificate(element, chain.front());
+        }
+
+        std::vector<uint8_t> result{};
+        append_u32(result, static_cast<uint32_t>(store.size()));
+        result.insert(result.end(), store.begin(), store.end());
+        append_u32(result, static_cast<uint32_t>(element.size()));
+        result.insert(result.end(), element.begin(), element.end());
+        return result;
+    }
 }

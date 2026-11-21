@@ -4,6 +4,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
 
 namespace sogen::sspi
 {
@@ -289,5 +290,26 @@ namespace sogen::sspi
     std::optional<provider_context_input> tls_client::take_handoff_state()
     {
         return state_ ? state_->extract_handoff() : std::nullopt;
+    }
+
+    std::vector<std::vector<uint8_t>> tls_client::peer_certificates() const
+    {
+        std::vector<std::vector<uint8_t>> chain{};
+        if (!state_)
+        {
+            return chain;
+        }
+        // During the handshake the certificate only lives in the session being negotiated.
+        const auto* session = state_->ssl.MBEDTLS_PRIVATE(session_negotiate) ? state_->ssl.MBEDTLS_PRIVATE(session_negotiate)
+                                                                             : state_->ssl.MBEDTLS_PRIVATE(session);
+        const auto* peer = session ? session->MBEDTLS_PRIVATE(peer_cert) : nullptr;
+        for (const auto* certificate = peer; certificate != nullptr; certificate = certificate->next)
+        {
+            if (certificate->raw.p != nullptr && certificate->raw.len != 0)
+            {
+                chain.emplace_back(certificate->raw.p, certificate->raw.p + certificate->raw.len);
+            }
+        }
+        return chain;
     }
 }

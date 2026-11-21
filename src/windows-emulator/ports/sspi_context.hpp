@@ -46,4 +46,8 @@ namespace sogen::sspi
     };
 
     std::optional<std::vector<uint8_t>> build_provider_context(const provider_context_input& input);
+
+    // The layout schannel's SerializeCertContext produces and its DownloadCertContextCallback reads: the size of a
+    // serialized certificate store holding the whole chain, the store, the size of the leaf's serialized element, the element.
+    std::vector<uint8_t> serialize_certificate_context(const std::vector<std::vector<uint8_t>>& chain);
 }
