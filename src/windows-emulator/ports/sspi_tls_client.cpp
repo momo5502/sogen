@@ -301,7 +301,7 @@ namespace sogen::sspi
         }
         // During the handshake the certificate only lives in the session being negotiated.
         const auto* session = state_->ssl.MBEDTLS_PRIVATE(session_negotiate) ? state_->ssl.MBEDTLS_PRIVATE(session_negotiate)
-                                                                               : state_->ssl.MBEDTLS_PRIVATE(session);
+                                                                             : state_->ssl.MBEDTLS_PRIVATE(session);
         const auto* peer = session ? session->MBEDTLS_PRIVATE(peer_cert) : nullptr;
         for (const auto* certificate = peer; certificate != nullptr; certificate = certificate->next)
         {
