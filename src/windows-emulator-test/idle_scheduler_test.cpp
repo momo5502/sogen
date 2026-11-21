@@ -58,6 +58,16 @@ namespace sogen::test
                 return this->emu->synchronize([this] { return this->thread->is_thread_ready(*this->emu); });
             }
 
+            bool check_parked(const std::chrono::steady_clock::time_point now)
+            {
+                return this->emu->synchronize([&] { return this->thread->is_parked(now, this->emu->process); });
+            }
+
+            bool check_parked()
+            {
+                return this->check_parked(this->emu->clock().steady_now());
+            }
+
             handle store_event(const bool signaled)
             {
                 event e{};
@@ -288,6 +298,95 @@ namespace sogen::test
         ASSERT_EQ(nullptr, threads.get(other));
         EXPECT_TRUE(this->check_ready());
         EXPECT_EQ(std::optional<NTSTATUS>{STATUS_WAIT_0}, this->thread->pending_status);
+    }
+
+    // The scheduler passes a parked thread by without checking it, so each cause that can end its wait unparks it, and the
+    // full check agrees that a parked thread is not ready.
+    TEST_F(IdleSchedulerTest, AlertWaitIsParkedUntilItsAlert)
+    {
+        this->create();
+        this->thread->waiting_for_alert = true;
+
+        EXPECT_TRUE(this->check_parked());
+        EXPECT_FALSE(this->check_ready());
+        this->thread->alerted = true;
+        EXPECT_FALSE(this->check_parked());
+        EXPECT_TRUE(this->check_ready());
+        EXPECT_EQ(std::optional<NTSTATUS>{STATUS_ALERTED}, this->thread->pending_status);
+    }
+
+    TEST_F(IdleSchedulerTest, DelayIsParkedUntilItIsDue)
+    {
+        this->create();
+        const auto now = this->emu->clock().steady_now();
+        this->thread->await_time = now + std::chrono::hours(1);
+
+        EXPECT_TRUE(this->check_parked(now));
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_FALSE(this->check_parked(now + std::chrono::hours(2)));
+    }
+
+    TEST_F(IdleSchedulerTest, AlertableDelayIsNotParkedOnceAnApcIsQueued)
+    {
+        this->create();
+        this->thread->await_time = std::chrono::steady_clock::time_point::min();
+        this->thread->apc_alertable = true;
+
+        EXPECT_TRUE(this->check_parked());
+        this->thread->pending_apcs.push_back({});
+        EXPECT_FALSE(this->check_parked());
+    }
+
+    TEST_F(IdleSchedulerTest, PortWaitIsParkedUntilAPacketOrAClosedPort)
+    {
+        this->create();
+        auto& ports = this->emu->process.io_completions;
+        const auto port = ports.store(io_completion{});
+        this->thread->await_io_completion = pending_io_completion_wait{.io_completion = this->emu->process.reference_of(port)};
+
+        // Until a check has found the port, the wait is not parked.
+        EXPECT_FALSE(this->check_parked());
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_TRUE(this->check_parked());
+
+        ports.get(port)->enqueue({});
+        EXPECT_FALSE(this->check_parked());
+        ports.get(port)->queue.clear();
+        EXPECT_TRUE(this->check_parked());
+
+        // Closing any port makes the next check look this one up again.
+        ports.erase(ports.store(io_completion{}));
+        EXPECT_FALSE(this->check_parked());
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_TRUE(this->check_parked());
+    }
+
+    TEST_F(IdleSchedulerTest, ObjectWaitIsNotParked)
+    {
+        this->create();
+        this->thread->await_objects = {this->emu->process.reference_of(this->store_event(false))};
+        this->thread->await_any = true;
+
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_FALSE(this->check_parked());
+    }
+
+    TEST_F(IdleSchedulerTest, AlertMakesParkedThreadRunnable)
+    {
+        this->create();
+        this->thread->waiting_for_alert = true;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        this->ui->on_pump = [this, deadline] {
+            this->thread->alerted = true;
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                this->emu->stop();
+            }
+        };
+
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_FALSE(this->thread->waiting_for_alert);
+        EXPECT_EQ(STATUS_ALERTED, this->emu->vcpu(0).x64_cpu().reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, ContextAccessWaitsForAnInFlightRegisterTransfer)

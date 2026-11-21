@@ -776,6 +776,9 @@ namespace sogen
         bool is_terminated() const;
 
         bool is_thread_ready(windows_emulator& win_emu);
+        // Whether the scheduler can pass this thread by without is_thread_ready: it waits for its alert, a delay or an I/O
+        // completion port, and at now nothing has come that could end the wait (alert, APC, packet, port closed, due time).
+        bool is_parked(std::chrono::steady_clock::time_point now, const process_context& process) const;
 
         void save(cpu_interface& emu)
         {
