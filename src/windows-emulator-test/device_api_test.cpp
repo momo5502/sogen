@@ -401,14 +401,14 @@ namespace sogen::test
                 return device.execute_ioctl(this->emu, this->context);
             }
 
-            NTSTATUS get_interface_alias(const std::u16string_view name, const std::array<uint8_t, 16>& interface_class)
+            NTSTATUS get_interface_alias(const std::u16string_view name, const std::array<uint8_t, 16>& interface_class_guid)
             {
                 const std::u16string terminated{name};
                 this->emu.memory.write_memory(this->storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
 
                 interface_alias_input input{};
                 input.size = sizeof(input);
-                input.interface_class = interface_class;
+                input.interface_class = interface_class_guid;
                 input.name = this->storage + 0x100;
                 input.name_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
                 this->emu.memory.write_memory(this->storage, &input, sizeof(input));

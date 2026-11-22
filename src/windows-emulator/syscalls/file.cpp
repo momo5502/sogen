@@ -827,7 +827,7 @@ namespace sogen
                 }
             });
 
-            const auto ret = [&](const NTSTATUS status, size_t size = 0) {
+            const auto ret = [&](const NTSTATUS status, uint64_t size = 0) {
                 block->Status = status;
                 block->Information = size;
                 return status;
