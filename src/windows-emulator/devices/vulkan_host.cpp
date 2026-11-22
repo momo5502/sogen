@@ -2567,7 +2567,9 @@ namespace sogen
         };
 
         // An overflow pool made like the guest's that holds at least these sets: each descriptor type and maxSets raised to
-        // what they take, so a fresh one has room for them.
+        // what they take, so a fresh one has room for them. A mutable descriptor only takes room from a pool entry whose
+        // type list contains its own, and Vulkan forbids entries whose lists partly overlap, so all mutable entries
+        // collapse into one listing every type of the guest's entries and the layouts.
         static descriptor_pool_params overflow_pool_params(const descriptor_pool_params& guest,
                                                            std::span<const set_layout_params* const> layouts)
         {
@@ -2596,24 +2598,53 @@ namespace sogen
                 }
             }
 
+            std::vector<vulkan_host::descriptor_pool_size> sizes{};
+            uint32_t mutable_count = 0;
+            for (size_t i = 0; i < guest.sizes.size(); ++i)
+            {
+                const auto& size = guest.sizes[i];
+                if (size.descriptor_type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
+                {
+                    mutable_count += size.descriptor_count;
+                    if (i < guest.mutable_types.size())
+                    {
+                        mutable_types.insert(guest.mutable_types[i].begin(), guest.mutable_types[i].end());
+                    }
+                }
+                else
+                {
+                    sizes.push_back(size);
+                }
+            }
+
             for (const auto& [type, count] : needed)
             {
-                const auto size = std::ranges::find(params.sizes, type, &vulkan_host::descriptor_pool_size::descriptor_type);
-                if (size != params.sizes.end())
+                if (type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
+                {
+                    continue;
+                }
+
+                const auto size = std::ranges::find(sizes, type, &vulkan_host::descriptor_pool_size::descriptor_type);
+                if (size != sizes.end())
                 {
                     size->descriptor_count = std::max(size->descriptor_count, count);
                 }
                 else if (count != 0)
                 {
-                    if (type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
-                    {
-                        params.mutable_types.resize(params.sizes.size());
-                        params.mutable_types.emplace_back(mutable_types.begin(), mutable_types.end());
-                    }
-                    params.sizes.push_back({.descriptor_type = type, .descriptor_count = count});
+                    sizes.push_back({.descriptor_type = type, .descriptor_count = count});
                 }
             }
 
+            params.mutable_types.clear();
+            mutable_count = std::max(mutable_count, needed[VK_DESCRIPTOR_TYPE_MUTABLE_EXT]);
+            if (mutable_count != 0)
+            {
+                params.mutable_types.resize(sizes.size());
+                params.mutable_types.emplace_back(mutable_types.begin(), mutable_types.end());
+                sizes.push_back({.descriptor_type = VK_DESCRIPTOR_TYPE_MUTABLE_EXT, .descriptor_count = mutable_count});
+            }
+
+            params.sizes = std::move(sizes);
             params.max_inline_uniform_block_bindings = std::max(params.max_inline_uniform_block_bindings, inline_uniform_blocks);
             return params;
         }

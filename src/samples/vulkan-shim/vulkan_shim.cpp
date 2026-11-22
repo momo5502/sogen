@@ -826,24 +826,16 @@ namespace
 
 namespace
 {
-    struct wire_dependency
+    size_t dependency_size(const size_t memory_barriers, const size_t buffer_barriers, const size_t image_barriers)
     {
-        VkDependencyFlags flags{};
-        std::vector<gb::barrier_masks> memory_barriers{};
-        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
-        std::vector<gb::image_memory_barrier> image_barriers{};
-    };
+        return sizeof(gb::dependency_info_header) + (memory_barriers * sizeof(gb::barrier_masks)) +
+               (buffer_barriers * sizeof(gb::buffer_memory_barrier)) + (image_barriers * sizeof(gb::image_memory_barrier));
+    }
 
-    void append_dependency(std::vector<uint8_t>& message, const wire_dependency& dependency)
+    template <typename T>
+    void append_value(std::vector<uint8_t>& message, const T& value)
     {
-        const gb::dependency_info_header header{.dependency_flags = dependency.flags,
-                                                .memory_barrier_count = static_cast<uint32_t>(dependency.memory_barriers.size()),
-                                                .buffer_barrier_count = static_cast<uint32_t>(dependency.buffer_barriers.size()),
-                                                .image_barrier_count = static_cast<uint32_t>(dependency.image_barriers.size())};
-        append_bytes(message, &header, sizeof(header));
-        append_bytes(message, dependency.memory_barriers.data(), std::span(dependency.memory_barriers).size_bytes());
-        append_bytes(message, dependency.buffer_barriers.data(), std::span(dependency.buffer_barriers).size_bytes());
-        append_bytes(message, dependency.image_barriers.data(), std::span(dependency.image_barriers).size_bytes());
+        append_bytes(message, &value, sizeof(value));
     }
 
     gb::buffer_memory_barrier to_wire_buffer_barrier(const gb::barrier_masks& masks, const uint32_t src_queue_family_index,
@@ -876,39 +868,71 @@ namespace
 
 namespace
 {
+    struct legacy_barriers
+    {
+        VkPipelineStageFlags src_stage_mask{};
+        VkPipelineStageFlags dst_stage_mask{};
+        VkDependencyFlags flags{};
+        std::span<const VkMemoryBarrier> memory_barriers{};
+        std::span<const VkBufferMemoryBarrier> buffer_barriers{};
+        std::span<const VkImageMemoryBarrier> image_barriers{};
+        // vkCmdPipelineBarrier still orders the source stages before the destination stages without any barrier.
+        bool orders_stages_alone{};
+
+        bool adds_stage_barrier() const
+        {
+            return this->orders_stages_alone && this->memory_barriers.empty() && this->buffer_barriers.empty() &&
+                   this->image_barriers.empty();
+        }
+
+        size_t size() const
+        {
+            return dependency_size(this->memory_barriers.size() + (this->adds_stage_barrier() ? 1 : 0), this->buffer_barriers.size(),
+                                   this->image_barriers.size());
+        }
+    };
+
     // vkCmdPipelineBarrier and vkCmdWaitEvents apply one pair of stage masks to all their barriers.
-    wire_dependency legacy_dependency(const VkPipelineStageFlags src_stage_mask, const VkPipelineStageFlags dst_stage_mask,
-                                      const VkDependencyFlags flags, const std::span<const VkMemoryBarrier> memory_barriers,
-                                      const std::span<const VkBufferMemoryBarrier> buffer_barriers,
-                                      const std::span<const VkImageMemoryBarrier> image_barriers)
+    void append_dependency(std::vector<uint8_t>& message, const legacy_barriers& barriers)
     {
         const auto masks = [&](const VkAccessFlags src_access, const VkAccessFlags dst_access) {
-            return gb::barrier_masks{.src_stage_mask = src_stage_mask,
+            return gb::barrier_masks{.src_stage_mask = barriers.src_stage_mask,
                                      .src_access_mask = src_access,
-                                     .dst_stage_mask = dst_stage_mask,
+                                     .dst_stage_mask = barriers.dst_stage_mask,
                                      .dst_access_mask = dst_access};
         };
 
-        wire_dependency dependency{.flags = flags};
-        for (const VkMemoryBarrier& b : memory_barriers)
+        append_value(message, gb::dependency_info_header{.dependency_flags = barriers.flags,
+                                                         .memory_barrier_count = static_cast<uint32_t>(
+                                                             barriers.memory_barriers.size() + (barriers.adds_stage_barrier() ? 1 : 0)),
+                                                         .buffer_barrier_count = static_cast<uint32_t>(barriers.buffer_barriers.size()),
+                                                         .image_barrier_count = static_cast<uint32_t>(barriers.image_barriers.size())});
+        if (barriers.adds_stage_barrier())
         {
-            dependency.memory_barriers.push_back(masks(b.srcAccessMask, b.dstAccessMask));
+            append_value(message, masks(0, 0));
         }
-        for (const VkBufferMemoryBarrier& b : buffer_barriers)
+        for (const VkMemoryBarrier& b : barriers.memory_barriers)
         {
-            dependency.buffer_barriers.push_back(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex,
-                                                                        b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+            append_value(message, masks(b.srcAccessMask, b.dstAccessMask));
         }
-        for (const VkImageMemoryBarrier& b : image_barriers)
+        for (const VkBufferMemoryBarrier& b : barriers.buffer_barriers)
         {
-            dependency.image_barriers.push_back(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout,
-                                                                      b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image,
-                                                                      b.subresourceRange));
+            append_value(message, to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex,
+                                                         b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
         }
-        return dependency;
+        for (const VkImageMemoryBarrier& b : barriers.image_barriers)
+        {
+            append_value(message, to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout,
+                                                        b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image, b.subresourceRange));
+        }
     }
 
-    wire_dependency to_wire_dependency(const VkDependencyInfo& info)
+    size_t dependency_size(const VkDependencyInfo& info)
+    {
+        return dependency_size(info.memoryBarrierCount, info.bufferMemoryBarrierCount, info.imageMemoryBarrierCount);
+    }
+
+    void append_dependency(std::vector<uint8_t>& message, const VkDependencyInfo& info)
     {
         const auto masks = [](const auto& b) {
             return gb::barrier_masks{.src_stage_mask = b.srcStageMask,
@@ -917,29 +941,33 @@ namespace
                                      .dst_access_mask = b.dstAccessMask};
         };
 
-        wire_dependency dependency{.flags = info.dependencyFlags};
+        append_value(message, gb::dependency_info_header{.dependency_flags = info.dependencyFlags,
+                                                         .memory_barrier_count = info.memoryBarrierCount,
+                                                         .buffer_barrier_count = info.bufferMemoryBarrierCount,
+                                                         .image_barrier_count = info.imageMemoryBarrierCount});
         for (const VkMemoryBarrier2& b : std::span(info.pMemoryBarriers, info.memoryBarrierCount))
         {
-            dependency.memory_barriers.push_back(masks(b));
+            append_value(message, masks(b));
         }
         for (const VkBufferMemoryBarrier2& b : std::span(info.pBufferMemoryBarriers, info.bufferMemoryBarrierCount))
         {
-            dependency.buffer_barriers.push_back(
-                to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+            append_value(message,
+                         to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
         }
         for (const VkImageMemoryBarrier2& b : std::span(info.pImageMemoryBarriers, info.imageMemoryBarrierCount))
         {
-            dependency.image_barriers.push_back(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex,
-                                                                      b.dstQueueFamilyIndex, b.image, b.subresourceRange));
+            append_value(message, to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex, b.dstQueueFamilyIndex,
+                                                        b.image, b.subresourceRange));
         }
-        return dependency;
     }
 
+    // The request, with room reserved for the payload_size bytes that follow it.
     template <typename Request>
-    std::vector<uint8_t> start_message(const Request& request)
+    std::vector<uint8_t> start_message(const Request& request, const size_t payload_size)
     {
         std::vector<uint8_t> message{};
-        append_bytes(message, &request, sizeof(request));
+        message.reserve(sizeof(request) + payload_size);
+        append_value(message, request);
         return message;
     }
 }
@@ -3294,19 +3322,16 @@ extern "C"
                          uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier* pBufferMemoryBarriers,
                          uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier* pImageMemoryBarriers)
     {
-        auto dependency = legacy_dependency(srcStageMask, dstStageMask, dependencyFlags, std::span(pMemoryBarriers, memoryBarrierCount),
-                                            std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
-                                            std::span(pImageMemoryBarriers, imageMemoryBarrierCount));
-        // Without barriers, the call still orders the source stages before the destination stages.
-        if (dependency.memory_barriers.empty() && dependency.buffer_barriers.empty() && dependency.image_barriers.empty())
-        {
-            dependency.memory_barriers.push_back(
-                {.src_stage_mask = srcStageMask, .src_access_mask = 0, .dst_stage_mask = dstStageMask, .dst_access_mask = 0});
-        }
-
+        const legacy_barriers barriers{.src_stage_mask = srcStageMask,
+                                       .dst_stage_mask = dstStageMask,
+                                       .flags = dependencyFlags,
+                                       .memory_barriers = std::span(pMemoryBarriers, memoryBarrierCount),
+                                       .buffer_barriers = std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
+                                       .image_barriers = std::span(pImageMemoryBarriers, imageMemoryBarrierCount),
+                                       .orders_stages_alone = true};
         const gb::object_id command_buffer = to_object_id(commandBuffer);
-        auto message = start_message(command_buffer);
-        append_dependency(message, dependency);
+        auto message = start_message(command_buffer, barriers.size());
+        append_dependency(message, barriers);
         record_command(command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
     }
 
@@ -3314,8 +3339,8 @@ extern "C"
                                                                            const VkDependencyInfo* pDependencyInfo)
     {
         const gb::object_id command_buffer = to_object_id(commandBuffer);
-        auto message = start_message(command_buffer);
-        append_dependency(message, to_wire_dependency(*pDependencyInfo));
+        auto message = start_message(command_buffer, dependency_size(*pDependencyInfo));
+        append_dependency(message, *pDependencyInfo);
         record_command(command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
     }
 
@@ -3338,8 +3363,8 @@ extern "C"
                                                 .legacy = 0,
                                                 .reserved = 0,
                                                 .legacy_stage_mask = 0};
-        auto message = start_message(request);
-        append_dependency(message, to_wire_dependency(*pDependencyInfo));
+        auto message = start_message(request, dependency_size(*pDependencyInfo));
+        append_dependency(message, *pDependencyInfo);
         record_command(request.command_buffer, gb::command::cmd_set_event, message.data(), message.size());
     }
 
@@ -3376,15 +3401,17 @@ extern "C"
                                                   .legacy = 1,
                                                   .legacy_src_stage_mask = srcStageMask,
                                                   .legacy_dst_stage_mask = dstStageMask};
-        auto message = start_message(request);
+        const legacy_barriers barriers{.src_stage_mask = srcStageMask,
+                                       .dst_stage_mask = dstStageMask,
+                                       .memory_barriers = std::span(pMemoryBarriers, memoryBarrierCount),
+                                       .buffer_barriers = std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
+                                       .image_barriers = std::span(pImageMemoryBarriers, imageMemoryBarrierCount)};
+        auto message = start_message(request, (eventCount * sizeof(gb::object_id)) + barriers.size());
         for (const VkEvent event : std::span(pEvents, eventCount))
         {
-            const gb::object_id id = to_object_id(event);
-            append_bytes(message, &id, sizeof(id));
+            append_value(message, to_object_id(event));
         }
-        append_dependency(message, legacy_dependency(srcStageMask, dstStageMask, 0, std::span(pMemoryBarriers, memoryBarrierCount),
-                                                     std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
-                                                     std::span(pImageMemoryBarriers, imageMemoryBarrierCount)));
+        append_dependency(message, barriers);
         record_command(request.command_buffer, gb::command::cmd_wait_events, message.data(), message.size());
     }
 
@@ -3396,15 +3423,19 @@ extern "C"
                                                   .legacy = 0,
                                                   .legacy_src_stage_mask = 0,
                                                   .legacy_dst_stage_mask = 0};
-        auto message = start_message(request);
+        size_t payload_size = eventCount * sizeof(gb::object_id);
+        for (const VkDependencyInfo& dependency : std::span(pDependencyInfos, eventCount))
+        {
+            payload_size += dependency_size(dependency);
+        }
+        auto message = start_message(request, payload_size);
         for (const VkEvent event : std::span(pEvents, eventCount))
         {
-            const gb::object_id id = to_object_id(event);
-            append_bytes(message, &id, sizeof(id));
+            append_value(message, to_object_id(event));
         }
         for (const VkDependencyInfo& dependency : std::span(pDependencyInfos, eventCount))
         {
-            append_dependency(message, to_wire_dependency(dependency));
+            append_dependency(message, dependency);
         }
         record_command(request.command_buffer, gb::command::cmd_wait_events, message.data(), message.size());
     }
