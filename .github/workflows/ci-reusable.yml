@@ -1485,29 +1485,36 @@ jobs:
       # resolve only through the Gradle Plugin Portal, whose Maven Central proxy intermittently answers 404. Gradle does
       # not retry a 404, so resolve from Maven Central first in every build, included builds too. Maven Central itself
       # sometimes reports artifacts missing; Google's mirror of it is tried first, with Central and the Portal behind it.
-      # The same applies to the ordinary dependencies of every project, whose own repositories are Google's Android
-      # repository and Maven Central, so the mirror is put in front of those too.
+      # The same applies to ordinary dependencies, whose repositories are Google's Android repository and Maven Central:
+      # the mirror goes in front of a build's settings repositories, and in front of its project repositories unless the
+      # build forbids those (Flutter's included build does).
       - name: Resolve Gradle Plugins From Maven Central
         run: |
           mkdir -p ~/.gradle/init.d
           cat > ~/.gradle/init.d/plugin-repositories.gradle << 'EOF'
           // Gradle caches that a module was missing; a retried build must ask the repositories again.
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+
           if (System.getenv("SOGEN_GRADLE_REFRESH_DEPENDENCIES") == "1") {
               gradle.startParameter.refreshDependencies = true
           }
+          def centralMirror = "https://maven-central.storage-download.googleapis.com/maven2/"
           beforeSettings { settings ->
               settings.pluginManagement.repositories {
-                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+                  maven { url = uri(centralMirror) }
                   mavenCentral()
                   gradlePluginPortal()
               }
-          }
-          allprojects {
-              buildscript.repositories {
-                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+              settings.dependencyResolutionManagement.repositories {
+                  maven { url = uri(centralMirror) }
               }
-              repositories {
-                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+          }
+          settingsEvaluated { settings ->
+              if (settings.dependencyResolutionManagement.repositoriesMode.get() != RepositoriesMode.FAIL_ON_PROJECT_REPOS) {
+                  settings.gradle.allprojects {
+                      buildscript.repositories { maven { url = uri(centralMirror) } }
+                      repositories { maven { url = uri(centralMirror) } }
+                  }
               }
           }
           EOF
