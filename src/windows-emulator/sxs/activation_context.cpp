@@ -16,6 +16,7 @@ namespace sogen::sxs
         constexpr uint32_t hash_string_algorithm_x65599 = 1;
         constexpr uint32_t activation_context_section_assembly_information = 1;
         constexpr uint32_t activation_context_section_dll_redirection = 2;
+        constexpr uint32_t activation_context_section_window_class_redirection = 3;
         constexpr uint32_t activation_context_section_format_string_table = 1;
         constexpr uint32_t string_section_case_insensitive = 1;
         constexpr uint32_t string_section_entries_in_pseudokey_order = 2;
@@ -163,6 +164,16 @@ namespace sogen::sxs
             uint32_t path_segment_offset;
         };
 
+        struct window_class_redirection
+        {
+            uint32_t size;
+            uint32_t flags;
+            uint32_t name_length;
+            uint32_t name_offset;
+            uint32_t module_length;
+            uint32_t module_offset;
+        };
+
         static_assert(sizeof(activation_context_data) == 32);
         static_assert(sizeof(activation_context_toc_header) == 16);
         static_assert(sizeof(activation_context_toc_entry) == 16);
@@ -173,6 +184,7 @@ namespace sogen::sxs
         static_assert(sizeof(assembly_global_information) == 56);
         static_assert(sizeof(assembly_information) == 108);
         static_assert(sizeof(dll_redirection) == 20);
+        static_assert(sizeof(window_class_redirection) == 24);
 
         struct version
         {
@@ -221,17 +233,26 @@ namespace sogen::sxs
             bool optional{};
         };
 
+        struct manifest_window_class
+        {
+            std::u16string name{};
+            std::u16string file{};
+            bool versioned{};
+        };
+
         struct manifest_document
         {
             std::optional<assembly_identity> identity{};
             std::vector<assembly_dependency> dependencies{};
             std::vector<std::u16string> files{};
+            std::vector<manifest_window_class> window_classes{};
         };
 
         struct xml_element
         {
             std::string name{};
             std::unordered_map<std::string, std::string> attributes{};
+            std::string text{};
             std::vector<size_t> children{};
         };
 
@@ -254,6 +275,7 @@ namespace sogen::sxs
             std::u16string policy_path{};
             std::u16string directory_name{};
             std::vector<std::u16string> files{};
+            std::vector<manifest_window_class> window_classes{};
             std::vector<assembly_dependency> dependencies{};
             uint32_t flags{};
             uint32_t pseudokey{};
@@ -447,6 +469,19 @@ namespace sogen::sxs
             return attributes;
         }
 
+        std::string read_element_text(const std::string_view xml, const size_t start)
+        {
+            const auto end = std::min(xml.find('<', start), xml.size());
+            auto first = start;
+            skip_xml_whitespace(xml, first);
+            auto last = end;
+            while (last > first && std::isspace(static_cast<unsigned char>(xml[last - 1])) != 0)
+            {
+                --last;
+            }
+            return decode_xml_entity(std::string(xml.substr(first, last - first)));
+        }
+
         xml_document parse_xml(const std::string_view xml)
         {
             xml_document document{};
@@ -507,6 +542,7 @@ namespace sogen::sxs
                 xml_element element{};
                 element.name = local_xml_name(xml.substr(name_start, position - name_start));
                 element.attributes = parse_attributes(xml.substr(0, end), position);
+                element.text = read_element_text(xml, end + 1);
                 const auto index = document.elements.size();
                 document.elements.push_back(std::move(element));
                 if (stack.empty())
@@ -736,9 +772,23 @@ namespace sogen::sxs
 
             for (const auto* file : find_xml_children(document, *assembly, "file"))
             {
-                if (const auto name = file->attributes.find("name"); name != file->attributes.end())
+                const auto name = file->attributes.find("name");
+                if (name == file->attributes.end())
                 {
-                    manifest.files.push_back(u8_to_u16(name->second));
+                    continue;
+                }
+                manifest.files.push_back(u8_to_u16(name->second));
+                for (const auto* window_class_element : find_xml_children(document, *file, "windowclass"))
+                {
+                    if (window_class_element->text.empty())
+                    {
+                        continue;
+                    }
+                    const auto versioned = window_class_element->attributes.find("versioned");
+                    manifest.window_classes.push_back(
+                        {.name = u8_to_u16(window_class_element->text),
+                         .file = u8_to_u16(name->second),
+                         .versioned = versioned == window_class_element->attributes.end() || !equal_insensitive(versioned->second, "no")});
                 }
             }
             return manifest;
@@ -1174,6 +1224,7 @@ namespace sogen::sxs
                 result.manifest_path = (application_directory / entry.relative_path).u16string();
                 result.directory_name = entry.directory_name;
                 result.files = std::move(manifest.files);
+                result.window_classes = std::move(manifest.window_classes);
                 result.dependencies = std::move(manifest.dependencies);
                 result.flags = assembly_information_private;
                 return result;
@@ -1250,6 +1301,7 @@ namespace sogen::sxs
                 result.manifest_path = (manifests_path / windows_path(entry.name)).u16string();
                 result.directory_name = stem;
                 result.files = std::move(manifest.files);
+                result.window_classes = std::move(manifest.window_classes);
                 result.dependencies = std::move(manifest.dependencies);
                 if (identity_matches(result.identity, identity, true))
                 {
@@ -1276,16 +1328,76 @@ namespace sogen::sxs
             return compatible;
         }
 
-        uint32_t hash_string(const std::u16string_view value)
+        class case_table
+        {
+          public:
+            case_table() = default;
+
+            explicit case_table(std::vector<uint16_t> words)
+                : words_(std::move(words))
+            {
+                constexpr size_t block_size = 16;
+                if (this->words_.size() < header_words + 256)
+                {
+                    throw std::runtime_error("Invalid l_intl.nls case table");
+                }
+                const auto in_range = [&](const size_t offset) { return offset + block_size <= this->words_.size() - header_words; };
+                for (size_t high = 0; high < 256; ++high)
+                {
+                    if (!in_range(this->level(high)))
+                    {
+                        throw std::runtime_error("Invalid l_intl.nls case table");
+                    }
+                    for (size_t middle = 0; middle < block_size; ++middle)
+                    {
+                        if (!in_range(this->level(this->level(high) + middle)))
+                        {
+                            throw std::runtime_error("Invalid l_intl.nls case table");
+                        }
+                    }
+                }
+            }
+
+            char16_t upcase(const char16_t character) const
+            {
+                if (this->words_.empty())
+                {
+                    return character >= u'a' && character <= u'z' ? static_cast<char16_t>(character - (u'a' - u'A')) : character;
+                }
+
+                const auto middle = this->level(character >> 8) + ((character >> 4) & 0xf);
+                return static_cast<char16_t>(character + this->level(this->level(middle) + (character & 0xf)));
+            }
+
+          private:
+            static constexpr size_t header_words = 2;
+
+            size_t level(const size_t index) const
+            {
+                return this->words_[header_words + index];
+            }
+
+            std::vector<uint16_t> words_{};
+        };
+
+        case_table read_case_table(const file_system& file_system, const windows_path& system_root)
+        {
+            std::vector<std::byte> data{};
+            if (!file_system.read_file(system_root / windows_path(u"System32") / windows_path(u"l_intl.nls"), &data))
+            {
+                return {};
+            }
+            std::vector<uint16_t> words(data.size() / sizeof(uint16_t));
+            std::memcpy(words.data(), data.data(), words.size() * sizeof(uint16_t));
+            return case_table{std::move(words)};
+        }
+
+        uint32_t hash_string(const std::u16string_view value, const case_table& casing)
         {
             uint32_t hash = 0;
-            for (auto character : value)
+            for (const auto character : value)
             {
-                if (character >= u'a' && character <= u'z')
-                {
-                    character -= u'a' - u'A';
-                }
-                hash = hash * 65599 + character;
+                hash = hash * 65599 + casing.upcase(character);
             }
             return hash;
         }
@@ -1462,6 +1574,40 @@ namespace sogen::sxs
             return {.data = section.release(), .entries = std::move(entries)};
         }
 
+        struct hashed_entry
+        {
+            uint32_t pseudokey{};
+            uint32_t entry_offset{};
+        };
+
+        size_t append_hash_table(byte_buffer& section, const std::vector<hashed_entry>& entries)
+        {
+            const auto hash_table_offset = section.append<string_section_hash_table>();
+            const auto buckets_offset = section.append_array<string_section_hash_bucket>(entries.size());
+            std::vector<std::vector<uint32_t>> chains(entries.size());
+            for (const auto& entry : entries)
+            {
+                chains[entry.pseudokey % entries.size()].push_back(entry.entry_offset);
+            }
+            for (size_t index = 0; index < chains.size(); ++index)
+            {
+                string_section_hash_bucket bucket{};
+                bucket.chain_count = checked_u32(chains[index].size());
+                if (!chains[index].empty())
+                {
+                    bucket.chain_offset = checked_u32(section.size());
+                    for (const auto entry_offset : chains[index])
+                    {
+                        section.append(entry_offset);
+                    }
+                }
+                section.write(buckets_offset + index * sizeof(bucket), bucket);
+            }
+            section.write(hash_table_offset, string_section_hash_table{.bucket_table_entry_count = checked_u32(entries.size()),
+                                                                       .bucket_table_offset = checked_u32(buckets_offset)});
+            return hash_table_offset;
+        }
+
         struct dll_entry
         {
             std::u16string name{};
@@ -1470,7 +1616,7 @@ namespace sogen::sxs
             uint32_t entry_offset{};
         };
 
-        std::vector<std::byte> build_dll_section(const std::vector<resolved_assembly>& assemblies)
+        std::vector<std::byte> build_dll_section(const std::vector<resolved_assembly>& assemblies, const case_table& casing)
         {
             std::vector<dll_entry> dlls{};
             for (size_t index = 0; index < assemblies.size(); ++index)
@@ -1480,7 +1626,7 @@ namespace sogen::sxs
                     dll_entry dll{};
                     dll.name = file;
                     dll.roster_index = checked_u32(index + 1);
-                    dll.hash = hash_string(file);
+                    dll.hash = hash_string(file, casing);
                     dlls.push_back(std::move(dll));
                 }
             }
@@ -1510,29 +1656,13 @@ namespace sogen::sxs
                 section.write(dll.entry_offset, entry);
             }
 
-            const auto hash_table_offset = section.append<string_section_hash_table>();
-            const auto buckets_offset = section.append_array<string_section_hash_bucket>(dlls.size());
-            std::vector<std::vector<uint32_t>> chains(dlls.size());
+            std::vector<hashed_entry> hashed{};
+            hashed.reserve(dlls.size());
             for (const auto& dll : dlls)
             {
-                chains[dll.hash % dlls.size()].push_back(dll.entry_offset);
+                hashed.push_back({.pseudokey = dll.hash, .entry_offset = dll.entry_offset});
             }
-            for (size_t index = 0; index < chains.size(); ++index)
-            {
-                string_section_hash_bucket bucket{};
-                bucket.chain_count = checked_u32(chains[index].size());
-                if (!chains[index].empty())
-                {
-                    bucket.chain_offset = checked_u32(section.size());
-                    for (const auto entry_offset : chains[index])
-                    {
-                        section.append(entry_offset);
-                    }
-                }
-                section.write(buckets_offset + index * sizeof(bucket), bucket);
-            }
-            section.write(hash_table_offset, string_section_hash_table{.bucket_table_entry_count = checked_u32(dlls.size()),
-                                                                       .bucket_table_offset = checked_u32(buckets_offset)});
+            const auto hash_table_offset = append_hash_table(section, hashed);
 
             string_section_header header{};
             header.magic = string_section_magic;
@@ -1548,17 +1678,100 @@ namespace sogen::sxs
             return section.release();
         }
 
-        std::vector<std::byte> build_blob(const std::vector<resolved_assembly>& assemblies, const std::u16string_view application_directory)
+        std::u16string format_assembly_version(const version& value)
+        {
+            std::string text{};
+            for (size_t index = 0; index < value.parts.size(); ++index)
+            {
+                text += (index == 0 ? "" : ".") + std::to_string(value.parts[index]);
+            }
+            return u8_to_u16(text);
+        }
+
+        std::vector<std::byte> build_window_class_section(const std::vector<resolved_assembly>& assemblies, const case_table& casing)
+        {
+            struct class_source
+            {
+                const manifest_window_class* window_class{};
+                uint32_t roster_index{};
+                std::u16string version{};
+            };
+
+            std::vector<class_source> classes{};
+            for (size_t index = 0; index < assemblies.size(); ++index)
+            {
+                const auto version = format_assembly_version(assemblies[index].identity.assembly_version);
+                for (const auto& window_class : assemblies[index].window_classes)
+                {
+                    classes.push_back({.window_class = &window_class, .roster_index = checked_u32(index + 1), .version = version});
+                }
+            }
+            if (classes.empty())
+            {
+                return {};
+            }
+
+            byte_buffer section{};
+            const auto header_offset = section.append<string_section_header>();
+            const auto entries_offset = section.append_array<string_section_entry>(classes.size());
+            std::vector<hashed_entry> hashed{};
+            hashed.reserve(classes.size());
+            for (size_t index = 0; index < classes.size(); ++index)
+            {
+                const auto& source = classes[index];
+                const auto& window_class = *source.window_class;
+                string_section_entry entry{};
+                entry.pseudokey = hash_string(window_class.name, casing);
+                entry.key_offset = checked_u32(section.append_string(window_class.name));
+                entry.key_length = byte_length(window_class.name);
+                entry.assembly_roster_index = source.roster_index;
+                section.align(4);
+
+                const auto name = window_class.versioned ? source.version + u"!" + window_class.name : window_class.name;
+                window_class_redirection redirection{};
+                redirection.size = sizeof(redirection);
+                redirection.name_length = byte_length(name);
+                redirection.name_offset = sizeof(redirection);
+                redirection.module_length = byte_length(window_class.file);
+                entry.offset = checked_u32(section.append(redirection));
+                section.append_string(name);
+                redirection.module_offset = checked_u32(section.append_string(window_class.file));
+                section.write(entry.offset, redirection);
+                entry.length = checked_u32(section.size() - entry.offset);
+                section.align(4);
+
+                const auto entry_offset = checked_u32(entries_offset + index * sizeof(entry));
+                section.write(entry_offset, entry);
+                hashed.push_back({.pseudokey = entry.pseudokey, .entry_offset = entry_offset});
+            }
+
+            string_section_header header{};
+            header.magic = string_section_magic;
+            header.header_size = sizeof(header);
+            header.format_version = 1;
+            header.data_format_version = 1;
+            header.flags = string_section_case_insensitive;
+            header.element_count = checked_u32(classes.size());
+            header.element_list_offset = checked_u32(entries_offset);
+            header.hash_algorithm = hash_string_algorithm_x65599;
+            header.search_structure_offset = checked_u32(append_hash_table(section, hashed));
+            section.write(header_offset, header);
+            return section.release();
+        }
+
+        std::vector<std::byte> build_blob(const std::vector<resolved_assembly>& assemblies, const std::u16string_view application_directory,
+                                          const case_table& casing)
         {
             auto assembly_section = build_assembly_section(assemblies, application_directory);
-            auto dll_section = build_dll_section(assemblies);
+            auto dll_section = build_dll_section(assemblies, casing);
+            auto window_class_section = build_window_class_section(assemblies, casing);
 
             byte_buffer result{};
             const auto header_offset = result.append<activation_context_data>();
             const auto roster_header_offset = result.append<assembly_roster_header>();
             const auto roster_entries_offset = result.append_array<assembly_roster_entry>(assemblies.size() + 1);
             const auto toc_header_offset = result.append<activation_context_toc_header>();
-            const auto toc_entry_count = dll_section.empty() ? 1u : 2u;
+            const auto toc_entry_count = 1u + (dll_section.empty() ? 0u : 1u) + (window_class_section.empty() ? 0u : 1u);
             const auto toc_entries_offset = result.append_array<activation_context_toc_entry>(toc_entry_count);
             result.align(4);
 
@@ -1566,6 +1779,8 @@ namespace sogen::sxs
             result.append(assembly_section.data);
             const auto dll_section_offset = result.size();
             result.append(dll_section);
+            const auto window_class_section_offset = result.size();
+            result.append(window_class_section);
 
             assembly_roster_entry invalid_roster_entry{};
             invalid_roster_entry.flags = roster_entry_invalid;
@@ -1597,14 +1812,20 @@ namespace sogen::sxs
                                                                           .offset = checked_u32(assembly_section_offset),
                                                                           .length = checked_u32(assembly_section.data.size()),
                                                                           .format = activation_context_section_format_string_table});
-            if (!dll_section.empty())
-            {
-                result.write(toc_entries_offset + sizeof(activation_context_toc_entry),
-                             activation_context_toc_entry{.id = activation_context_section_dll_redirection,
-                                                          .offset = checked_u32(dll_section_offset),
-                                                          .length = checked_u32(dll_section.size()),
+            size_t next_toc_entry = 1;
+            const auto write_toc_entry = [&](const uint32_t id, const size_t offset, const std::vector<std::byte>& section) {
+                if (section.empty())
+                {
+                    return;
+                }
+                result.write(toc_entries_offset + next_toc_entry++ * sizeof(activation_context_toc_entry),
+                             activation_context_toc_entry{.id = id,
+                                                          .offset = checked_u32(offset),
+                                                          .length = checked_u32(section.size()),
                                                           .format = activation_context_section_format_string_table});
-            }
+            };
+            write_toc_entry(activation_context_section_dll_redirection, dll_section_offset, dll_section);
+            write_toc_entry(activation_context_section_window_class_redirection, window_class_section_offset, window_class_section);
             activation_context_data header{};
             header.magic = activation_context_magic;
             header.header_size = sizeof(header);
@@ -1625,6 +1846,7 @@ namespace sogen::sxs
             auto manifest = parse_manifest(manifest_source.contents);
             const auto winsxs_path = system_root / windows_path(u"WinSxS");
             const auto manifests_path = winsxs_path / windows_path(u"Manifests");
+            const auto casing = read_case_table(file_system, system_root);
             manifest_directory manifests{};
 
             resolved_assembly root{};
@@ -1638,6 +1860,7 @@ namespace sogen::sxs
                 root.policy_path = config->path;
             }
             root.files = std::move(manifest.files);
+            root.window_classes = std::move(manifest.window_classes);
             root.flags = assembly_information_root | assembly_information_private;
 
             std::vector<resolved_assembly> assemblies{};
@@ -1688,7 +1911,7 @@ namespace sogen::sxs
                 {
                     pending_dependencies.push_back(std::move(nested_dependency));
                 }
-                resolved->pseudokey = hash_string(u8_to_u16(resolved->identity.name));
+                resolved->pseudokey = hash_string(u8_to_u16(resolved->identity.name), casing);
                 assemblies.push_back(std::move(*resolved));
             }
 
@@ -1702,7 +1925,7 @@ namespace sogen::sxs
             {
                 application_directory.push_back(u'\\');
             }
-            return build_blob(assemblies, application_directory);
+            return build_blob(assemblies, application_directory, casing);
         }
     }
 

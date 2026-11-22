@@ -45,6 +45,93 @@ namespace sogen::test
                 return !std::ranges::search(blob, std::as_bytes(std::span{value})).empty();
             }
 
+            static uint32_t read_u32(const std::vector<std::byte>& blob, const size_t offset)
+            {
+                uint32_t value{};
+                std::memcpy(&value, blob.data() + offset, sizeof(value));
+                return value;
+            }
+
+            static std::u16string read_string(const std::vector<std::byte>& blob, const size_t offset, const size_t byte_length)
+            {
+                std::u16string value(byte_length / sizeof(char16_t), u'\0');
+                std::memcpy(value.data(), blob.data() + offset, byte_length);
+                return value;
+            }
+
+            struct window_class_entry
+            {
+                std::u16string key{};
+                uint32_t pseudokey{};
+                uint32_t key_offset{};
+                uint32_t key_length{};
+                uint32_t data_offset{};
+                uint32_t data_length{};
+                uint32_t roster_index{};
+                std::u16string name{};
+                uint32_t name_offset{};
+                std::u16string module{};
+                uint32_t module_offset{};
+                bool reachable_through_hash_table{};
+            };
+
+            struct window_class_section
+            {
+                size_t header_size{};
+                uint32_t flags{};
+                std::vector<window_class_entry> entries{};
+            };
+
+            static std::optional<window_class_section> read_window_class_section(const std::vector<std::byte>& blob)
+            {
+                constexpr uint32_t window_class_section_id = 3;
+                const auto toc_offset = read_u32(blob, 16);
+                const auto toc_count = read_u32(blob, toc_offset + 4);
+                const auto toc_entries = read_u32(blob, toc_offset + 8);
+                for (uint32_t index = 0; index < toc_count; ++index)
+                {
+                    const size_t toc_entry = toc_entries + index * 16;
+                    if (read_u32(blob, toc_entry) != window_class_section_id)
+                    {
+                        continue;
+                    }
+
+                    const size_t section = read_u32(blob, toc_entry + 4);
+                    window_class_section result{.header_size = read_u32(blob, section + 4), .flags = read_u32(blob, section + 16)};
+                    const auto count = read_u32(blob, section + 20);
+                    const size_t entries = section + read_u32(blob, section + 24);
+                    const size_t hash_table = section + read_u32(blob, section + 32);
+                    const auto bucket_count = read_u32(blob, hash_table);
+                    const size_t buckets = section + read_u32(blob, hash_table + 4);
+                    for (uint32_t entry_index = 0; entry_index < count; ++entry_index)
+                    {
+                        const size_t entry = entries + entry_index * 24;
+                        window_class_entry parsed{.pseudokey = read_u32(blob, entry),
+                                                  .key_offset = read_u32(blob, entry + 4),
+                                                  .key_length = read_u32(blob, entry + 8),
+                                                  .data_offset = read_u32(blob, entry + 12),
+                                                  .data_length = read_u32(blob, entry + 16),
+                                                  .roster_index = read_u32(blob, entry + 20)};
+                        parsed.key = read_string(blob, section + parsed.key_offset, parsed.key_length);
+                        const size_t data = section + parsed.data_offset;
+                        parsed.name_offset = read_u32(blob, data + 12);
+                        parsed.name = read_string(blob, data + parsed.name_offset, read_u32(blob, data + 8));
+                        parsed.module_offset = read_u32(blob, data + 20);
+                        parsed.module = read_string(blob, section + parsed.module_offset, read_u32(blob, data + 16));
+
+                        const size_t bucket = buckets + (parsed.pseudokey % bucket_count) * 8;
+                        const size_t chain = section + read_u32(blob, bucket + 4);
+                        for (uint32_t chain_index = 0; chain_index < read_u32(blob, bucket); ++chain_index)
+                        {
+                            parsed.reachable_through_hash_table |= read_u32(blob, chain + chain_index * 4) == entry - section;
+                        }
+                        result.entries.push_back(std::move(parsed));
+                    }
+                    return result;
+                }
+                return std::nullopt;
+            }
+
             std::filesystem::path root{};
         };
     }
@@ -99,5 +186,106 @@ namespace sogen::test
         const auto blob = this->build(file_system{this->root}, manifest);
         EXPECT_TRUE(contains_string(blob, u"first.dll"));
         EXPECT_TRUE(contains_string(blob, u"second.dll"));
+    }
+
+    TEST_F(ActivationContextTest, EmitsWindowClassRedirectionSectionLikeWindows)
+    {
+        constexpr std::string_view manifest =
+            R"(<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">)"
+            R"(<assemblyIdentity type="win32" name="SogenProbe.WndClass" version="1.0.0.0" processorArchitecture="amd64"/>)"
+            R"(<file name="probe_wc_a.dll"><windowClass>ProbeDefault</windowClass>)"
+            R"(<windowClass versioned="yes">ProbeVersionedYes</windowClass>)"
+            R"(<windowClass versioned="no">ProbeVersionedNo</windowClass>)"
+            R"(<windowClass versioned="yes">ProbeMixedCase</windowClass></file>)"
+            R"(<file name="probe_wc_b.dll"><windowClass versioned="no">ProbeSecondDll</windowClass></file>)"
+            R"(<file name="probe_wc_c.dll"><windowClass versioned="no">Button</windowClass></file></assembly>)";
+
+        struct expected_entry
+        {
+            std::u16string_view key;
+            uint32_t pseudokey;
+            uint32_t key_offset;
+            uint32_t key_length;
+            uint32_t data_offset;
+            uint32_t data_length;
+            std::u16string_view name;
+            std::u16string_view module;
+            uint32_t module_offset;
+        };
+
+        constexpr std::array expected{
+            expected_entry{u"ProbeDefault", 0x7a1f4911, 0xbc, 24, 0xd8, 96, u"1.0.0.0!ProbeDefault", u"probe_wc_a.dll", 0x11a},
+            expected_entry{u"ProbeVersionedYes", 0x305ee6e0, 0x138, 34, 0x15c, 106, u"1.0.0.0!ProbeVersionedYes", u"probe_wc_a.dll", 0x1a8},
+            expected_entry{u"ProbeVersionedNo", 0xc532a388, 0x1c8, 32, 0x1ec, 88, u"ProbeVersionedNo", u"probe_wc_a.dll", 0x226},
+            expected_entry{u"ProbeMixedCase", 0x86d6d7fb, 0x244, 28, 0x264, 100, u"1.0.0.0!ProbeMixedCase", u"probe_wc_a.dll", 0x2aa},
+            expected_entry{u"ProbeSecondDll", 0x10967480, 0x2c8, 28, 0x2e8, 84, u"ProbeSecondDll", u"probe_wc_b.dll", 0x31e},
+            expected_entry{u"Button", 0xb2d54652, 0x33c, 12, 0x34c, 68, u"Button", u"probe_wc_c.dll", 0x372},
+        };
+
+        const auto section = read_window_class_section(this->build(file_system{this->root}, manifest));
+        ASSERT_TRUE(section);
+        EXPECT_EQ(section->header_size, 44u);
+        EXPECT_EQ(section->flags, 1u);
+        ASSERT_EQ(section->entries.size(), expected.size());
+        for (size_t index = 0; index < expected.size(); ++index)
+        {
+            const auto& actual = section->entries[index];
+            const auto& wanted = expected[index];
+            EXPECT_EQ(actual.key, wanted.key);
+            EXPECT_EQ(actual.pseudokey, wanted.pseudokey);
+            EXPECT_EQ(actual.key_offset, wanted.key_offset);
+            EXPECT_EQ(actual.key_length, wanted.key_length);
+            EXPECT_EQ(actual.data_offset, wanted.data_offset);
+            EXPECT_EQ(actual.data_length, wanted.data_length);
+            EXPECT_EQ(actual.roster_index, 1u);
+            EXPECT_EQ(actual.name_offset, 0x18u);
+            EXPECT_EQ(actual.name, wanted.name);
+            EXPECT_EQ(actual.module, wanted.module);
+            EXPECT_EQ(actual.module_offset, wanted.module_offset);
+            EXPECT_TRUE(actual.reachable_through_hash_table);
+        }
+
+        constexpr std::string_view dependent_manifest =
+            R"(<assembly><assemblyIdentity name="Sogen.App" version="1.0.0.0" processorArchitecture="amd64"/>)"
+            R"(<dependency><dependentAssembly><assemblyIdentity name="Microsoft.Windows.Common-Controls" )"
+            R"(version="6.0.0.0" processorArchitecture="amd64" publicKeyToken="6595b64144ccf1df" language="*"/>)"
+            R"(</dependentAssembly></dependency></assembly>)";
+        this->install("amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.9818_none_aaa",
+                      R"(<assembly><assemblyIdentity name="Microsoft.Windows.Common-Controls" version="6.0.26100.9818" )"
+                      R"(processorArchitecture="amd64" publicKeyToken="6595b64144ccf1df"/>)"
+                      R"(<file name="comctl32.dll"><windowClass>msctls_statusbar32</windowClass></file></assembly>)");
+
+        const auto dependent_section = read_window_class_section(this->build(file_system{this->root}, dependent_manifest));
+        ASSERT_TRUE(dependent_section);
+        ASSERT_EQ(dependent_section->entries.size(), 1u);
+        const auto& entry = dependent_section->entries.front();
+        EXPECT_EQ(entry.key, u"msctls_statusbar32");
+        EXPECT_EQ(entry.pseudokey, 0x2a615cffu);
+        EXPECT_EQ(entry.roster_index, 2u);
+        EXPECT_EQ(entry.name, u"6.0.26100.9818!msctls_statusbar32");
+        EXPECT_EQ(entry.module, u"comctl32.dll");
+        EXPECT_EQ(entry.data_length, 118u);
+        EXPECT_TRUE(entry.reachable_through_hash_table);
+    }
+
+    TEST_F(ActivationContextTest, HashesWindowClassNamesWithTheNlsUpcaseTable)
+    {
+        const file_system files{get_emulator_root() / "filesys"};
+        const auto pseudokeys = [&](const std::string& class_names) {
+            const auto section = read_window_class_section(
+                this->build(files, R"(<assembly><assemblyIdentity name="Sogen.Unicode" version="1.0.0.0" processorArchitecture="amd64"/>)"
+                                   R"(<file name="unicode.dll">)" +
+                                       class_names + "</file></assembly>"));
+            std::vector<uint32_t> result{};
+            for (const auto& entry : section->entries)
+            {
+                result.push_back(entry.pseudokey);
+            }
+            return result;
+        };
+
+        EXPECT_EQ(pseudokeys("<windowClass>Fen\xC3\xAAtre</windowClass><windowClass>\xC3\xBF</windowClass>"),
+                  (std::vector<uint32_t>{0x1bc8410c, 0x178}));
+        EXPECT_EQ(pseudokeys("<windowClass>\xC5\xB8</windowClass>"), (std::vector<uint32_t>{0x178}));
     }
 }
