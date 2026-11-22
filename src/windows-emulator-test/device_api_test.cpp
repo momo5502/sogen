@@ -663,6 +663,40 @@ namespace sogen::test
         EXPECT_EQ(expected_link, this->property_or_alias_string(reply.data_bytes));
     }
 
+    TEST_F(DeviceApiTest, InterfaceAliasHonorsMandatoryDeviceFilters)
+    {
+        constexpr std::u16string_view source_guid = u"{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";
+        constexpr std::u16string_view target_guid = u"{AABBCCDD-1234-5678-8899-AABBCCDDEEFF}";
+        constexpr std::u16string_view device_instance = uR"(ROOT\SOGEN\0000)";
+        constexpr std::array<uint8_t, 16> target_class{0xdd, 0xcc, 0xbb, 0xaa, 0x34, 0x12, 0x78, 0x56,
+                                                       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+
+        this->emu.process.sid = {0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x01, 0x00,
+                                 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xE9, 0x03, 0x00, 0x00};
+        add_device(this->emu, {.id = std::u16string{device_instance}, .session = token_session_id + 1});
+        add_interface_registration(this->emu, source_guid, u"Ref", device_instance);
+        add_interface_registration(this->emu, target_guid, u"Ref", device_instance);
+
+        const auto source_link = registered_interface_link(source_guid, u"Ref");
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, target_class));
+        auto reply = this->property_or_alias_result();
+        EXPECT_EQ(STATUS_ACCESS_DENIED, reply.status);
+        EXPECT_EQ(0u, reply.data_bytes);
+
+        const auto device_path = std::u16string{enum_path} + std::u16string{device_instance};
+        constexpr uint32_t current_session = token_session_id;
+        set_property(this->emu, device_path + std::u16string{session_id_property}, devprop_type_uint32,
+                     std::as_bytes(std::span{&current_session, 1}));
+        const auto restricted_descriptor = descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, 0, enumerate_device_access, administrators_sid);
+        set_property(this->emu, device_path + std::u16string{restricted_sd_property}, devprop_type_security_descriptor,
+                     restricted_descriptor);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, target_class));
+        reply = this->property_or_alias_result();
+        EXPECT_EQ(STATUS_ACCESS_DENIED, reply.status);
+        EXPECT_EQ(0u, reply.data_bytes);
+    }
+
     TEST_F(DeviceApiTest, InterfaceObjectPropertiesUseRegistrationData)
     {
         constexpr std::u16string_view class_guid = u"{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";

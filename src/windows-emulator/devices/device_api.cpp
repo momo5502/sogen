@@ -1359,6 +1359,12 @@ namespace sogen
                     // queries, which this lookup also handles.
                     const auto value = win_emu.registry.get_value(*source, "DeviceInstance");
                     const auto instance = value ? value->as_string() : std::nullopt;
+                    if (instance && !instance->empty() &&
+                        !is_enumerable_for_caller(win_emu, property_object_key(win_emu, 1, *instance), caller_token(c)))
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_ACCESS_DENIED, request.result_size);
+                    }
+
                     const auto target_class =
                         win_emu.registry.get_key({sub_key_path(interface_classes_key, device_class_key_name(request.interface_class))});
                     if (instance && !instance->empty() && target_class)
