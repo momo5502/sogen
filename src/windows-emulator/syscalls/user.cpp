@@ -8839,6 +8839,7 @@ namespace sogen
         {
             constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;
             constexpr uint32_t k_spi_get_nonclientmetrics = 0x29;
+            constexpr uint32_t k_spi_get_workarea = 0x30;
             constexpr uint32_t k_default_dpi = 96;
 
             // The metrics and logfonts a Windows 11 desktop reports at 96 DPI.
@@ -8848,6 +8849,23 @@ namespace sogen
                 font.lfWeight = FW_NORMAL;
                 font.lfCharSet = DEFAULT_CHARSET;
                 std::ranges::copy(u"Segoe UI", font.lfFaceName);
+            }
+
+            BOOL get_primary_work_area(const syscall_context& c, const emulator_pointer value)
+            {
+                const emulator_object<USER_MONITOR> monitor(c.emu, c.proc.user_handles.get_display_info().read().pPrimaryMonitor);
+                if (value == 0 || !monitor)
+                {
+                    return FALSE;
+                }
+
+                const auto work_area = monitor.read().rcWork;
+                if (!is_writable_range(c.win_emu, value, sizeof(work_area)))
+                {
+                    return FALSE;
+                }
+
+                return c.win_emu.memory.try_write_memory(value, &work_area, sizeof(work_area)) ? TRUE : FALSE;
             }
         }
 
@@ -8909,6 +8927,11 @@ namespace sogen
         BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
                                                const emulator_pointer value, const uint32_t win_ini)
         {
+            if (action == k_spi_get_workarea)
+            {
+                return get_primary_work_area(c, value);
+            }
+
             return handle_NtUserSystemParametersInfoForDpi(c, action, param, value, win_ini, k_default_dpi);
         }
 
