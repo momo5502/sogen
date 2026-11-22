@@ -312,6 +312,37 @@ namespace sogen
         MaxWorkerFactoryInfoClass
     };
 
+    template <typename Traits>
+    struct WORKER_FACTORY_BASIC_INFORMATION
+    {
+        LARGE_INTEGER Timeout;
+        LARGE_INTEGER RetryTimeout;
+        LARGE_INTEGER IdleTimeout;
+        BOOLEAN Paused;
+        BOOLEAN TimerSet;
+        BOOLEAN QueuedToExWorker;
+        BOOLEAN MayCreate;
+        BOOLEAN CreateInProgress;
+        BOOLEAN InsertedIntoQueue;
+        BOOLEAN Shutdown;
+        ULONG BindingCount;
+        ULONG ThreadMinimum;
+        ULONG ThreadMaximum;
+        ULONG PendingWorkerCount;
+        ULONG WaitingWorkerCount;
+        ULONG TotalWorkerCount;
+        ULONG ReleaseCount;
+        LONGLONG InfiniteWaitGoal;
+        Traits::PVOID StartRoutine;
+        Traits::PVOID StartParameter;
+        Traits::HANDLE ProcessId;
+        Traits::SIZE_T StackReserve;
+        Traits::SIZE_T StackCommit;
+        NTSTATUS LastThreadCreationStatus;
+    };
+
+    static_assert(sizeof(WORKER_FACTORY_BASIC_INFORMATION<EmulatorTraits<Emu64>>) == 120);
+
     constexpr auto WORKER_FACTORY_FLAG_LOADER_POOL = 0x1; // real name is unknown
 
     constexpr auto MAXIMUM_HARDERROR_PARAMETERS = 5;

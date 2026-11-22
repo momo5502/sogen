@@ -34,8 +34,15 @@ namespace sogen
             return true;
         }
 
-        void on_io_completion_message_dequeued(windows_emulator& win_emu, const io_completion_message& message)
+        void on_io_completion_message_dequeued(windows_emulator& win_emu, const io_completion_message& message,
+                                               const object_reference& waiting_worker_factory)
         {
+            if (message.worker_factory_shutdown)
+            {
+                continue_shutdown_wake(win_emu, message.worker_factory, waiting_worker_factory == message.worker_factory);
+                return;
+            }
+
             if (!message.worker_factory_release || !message.worker_factory)
             {
                 return;
@@ -89,12 +96,57 @@ namespace sogen
                 return read_unicode_string(c.emu, attributes.ObjectName);
             }
 
+            // The factory's counts are the ready workers (the worker list without the ones still starting) less the workers
+            // that called class 9 type 3, and of those the active ones, which type 2 takes workers out of and type 0 puts back.
+            // The pending count is the factory's own: a starting worker that exits keeps it raised until the factory is shut down.
+            size_t count_total_workers(const worker_factory& factory)
+            {
+                const auto size = factory.worker_threads.size();
+                const auto ready = size - std::min<size_t>(size, factory.starting_workers.size());
+                return ready - std::min<size_t>(ready, factory.removed_worker_count);
+            }
+
+            size_t count_active_workers(const worker_factory& factory)
+            {
+                const auto total = count_total_workers(factory);
+                return total - std::min<size_t>(total, factory.inactive_worker_count);
+            }
+
+            size_t count_active_and_starting_workers(const worker_factory& factory)
+            {
+                return count_active_workers(factory) + factory.pending_worker_count;
+            }
+
+            // A worker that set type 3 is out of the count for good: only its own departure gives the removal back.
+            void forget_departed_workers(worker_factory& factory, const std::vector<handle>& departed)
+            {
+                for (const auto thread_handle : departed)
+                {
+                    std::erase(factory.starting_workers, thread_handle);
+                    if (std::erase(factory.removed_workers, thread_handle) != 0 && factory.removed_worker_count != 0)
+                    {
+                        --factory.removed_worker_count;
+                    }
+                }
+
+                factory.inactive_worker_count =
+                    static_cast<uint32_t>(std::min<size_t>(factory.inactive_worker_count, count_total_workers(factory)));
+            }
+
             void prune_worker_factory_threads(windows_emulator& win_emu, worker_factory& factory)
             {
+                std::vector<handle> departed{};
                 std::erase_if(factory.worker_threads, [&](const handle thread_handle) {
                     const auto* thread = win_emu.process.threads.get(thread_handle);
-                    return thread == nullptr || thread->is_terminated();
+                    const auto gone = thread == nullptr || thread->is_terminated();
+                    if (gone)
+                    {
+                        departed.push_back(thread_handle);
+                    }
+
+                    return gone;
                 });
+                forget_departed_workers(factory, departed);
             }
 
             bool create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
@@ -111,6 +163,8 @@ namespace sogen
                     return false;
                 }
                 factory.worker_threads.push_back(thread_handle);
+                factory.starting_workers.push_back(thread_handle);
+                factory.worker_created = true;
 
                 // Like ExpWorkerFactoryCreateThread: the new worker stays pending until it calls NtWorkerFactoryWorkerReady.
                 ++factory.pending_worker_count;
@@ -120,7 +174,7 @@ namespace sogen
 
             NTSTATUS ensure_worker_factory_threads(const syscall_context& c, worker_factory& factory)
             {
-                if (factory.shutdown || factory.paused != 0 || factory.start_routine == 0)
+                if (factory.shutdown || factory.start_routine == 0)
                 {
                     return STATUS_SUCCESS;
                 }
@@ -129,7 +183,7 @@ namespace sogen
 
                 // Only a raised thread minimum starts workers at once, and the maximum rises with it; bindings start
                 // none by themselves (try_enter_away_mode).
-                while (factory.worker_threads.size() < factory.thread_minimum)
+                while (count_active_and_starting_workers(factory) < factory.thread_minimum)
                 {
                     if (!create_worker_factory_thread(c.win_emu, factory))
                     {
@@ -139,12 +193,28 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            bool has_waiting_worker(windows_emulator& win_emu, const worker_factory& factory)
+            // The kernel's waiting count is raised by every NtWaitForWorkViaWorkerFactory wait on the factory, whoever the caller is, and
+            // not by a plain removal from the same port.
+            size_t count_factory_waits(windows_emulator& win_emu, const object_reference& worker_factory)
             {
-                return std::ranges::any_of(factory.worker_threads, [&](const handle thread_handle) {
+                return static_cast<size_t>(std::ranges::count_if(win_emu.process.threads, [&](const auto& entry) {
+                    const auto& thread = entry.second;
+                    return !thread.is_terminated() && thread.await_io_completion &&
+                           thread.await_io_completion->worker_factory == worker_factory;
+                }));
+            }
+
+            size_t count_waiting_workers(windows_emulator& win_emu, const worker_factory& factory)
+            {
+                return static_cast<size_t>(std::ranges::count_if(factory.worker_threads, [&](const handle thread_handle) {
                     const auto* thread = win_emu.process.threads.get(thread_handle);
                     return thread && thread->await_io_completion && thread->await_io_completion->io_completion == factory.io_completion;
-                });
+                }));
+            }
+
+            bool has_waiting_worker(windows_emulator& win_emu, const worker_factory& factory)
+            {
+                return count_waiting_workers(win_emu, factory) != 0;
             }
 
             // ExpLeaveWorkerFactoryAwayMode
@@ -160,7 +230,7 @@ namespace sogen
             bool try_enter_away_mode(windows_emulator& win_emu, worker_factory& factory)
             {
                 prune_worker_factory_threads(win_emu, factory);
-                if (factory.worker_threads.size() >= factory.thread_maximum || has_waiting_worker(win_emu, factory))
+                if (count_active_and_starting_workers(factory) >= factory.thread_maximum || has_waiting_worker(win_emu, factory))
                 {
                     return false;
                 }
@@ -189,13 +259,13 @@ namespace sogen
             // thread churn, above the soft maximum); add a deferred-create timer if a guest ever depends on that pacing.
             void check_create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
             {
-                if (factory.shutdown || factory.paused != 0 || factory.start_routine == 0 || factory.pending_worker_count != 0)
+                if (factory.shutdown || factory.start_routine == 0 || factory.pending_worker_count != 0)
                 {
                     return;
                 }
 
                 prune_worker_factory_threads(win_emu, factory);
-                if (factory.worker_threads.size() >= factory.thread_maximum)
+                if (count_active_and_starting_workers(factory) >= factory.thread_maximum)
                 {
                     return;
                 }
@@ -221,6 +291,151 @@ namespace sogen
                 idle.QuadPart = factory.idle_timeout;
                 wait.timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), idle);
                 wait.timeout_absolute = utils::is_absolute_due_time(idle);
+            }
+
+            // Class 9 moves the count of active workers for a worker's callback: type 0 counts a worker active again, 1 asks
+            // for one more worker, 2 takes a worker out of the active count and 3 also out of the factory's total.
+            NTSTATUS adjust_active_workers(const syscall_context& c, worker_factory& factory, const ULONG callback_type)
+            {
+                constexpr ULONG count_active_again = 0;
+                constexpr ULONG add_worker = 1;
+                constexpr ULONG leave_active = 2;
+                constexpr ULONG leave_factory = 3;
+
+                prune_worker_factory_threads(c.win_emu, factory);
+                auto active = count_active_workers(factory);
+
+                switch (callback_type)
+                {
+                case count_active_again:
+                    if (factory.inactive_worker_count == 0)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+
+                    --factory.inactive_worker_count;
+                    return STATUS_SUCCESS;
+
+                case add_worker:
+                    if (factory.shutdown)
+                    {
+                        return STATUS_ABANDONED;
+                    }
+
+                    if (active >= factory.thread_maximum)
+                    {
+                        return STATUS_TOO_MANY_THREADS;
+                    }
+
+                    break;
+
+                case leave_active:
+                case leave_factory:
+                    // A factory without an active worker answers this on 26300.
+                    if (active == 0)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+
+                    if (callback_type == leave_active)
+                    {
+                        ++factory.inactive_worker_count;
+                    }
+                    else
+                    {
+                        ++factory.removed_worker_count;
+                        const auto caller = c.proc.threads.find_handle(c.vcpu.active_thread);
+                        const auto has = [&](const std::vector<handle>& threads) {
+                            return std::ranges::find(threads, caller) != threads.end();
+                        };
+                        if (has(factory.worker_threads) && !has(factory.removed_workers))
+                        {
+                            factory.removed_workers.push_back(caller);
+                        }
+                    }
+
+                    --active;
+                    if (active != 0)
+                    {
+                        return STATUS_SUCCESS;
+                    }
+                    break;
+
+                default:
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (factory.shutdown)
+                {
+                    return STATUS_ABANDONED;
+                }
+
+                if (factory.pending_worker_count != 0 || active + factory.pending_worker_count >= factory.thread_maximum)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                leave_away_mode(factory);
+                return create_worker_factory_thread(c.win_emu, factory) ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+            }
+
+            // NtSetInformationWorkerFactory checks the class, the length and the buffer before it looks at the handle.
+            NTSTATUS validate_set_information(windows_emulator& win_emu, const WORKERFACTORYINFOCLASS info_class,
+                                              const emulator_pointer information, const ULONG length)
+            {
+                // The class 15 length is capped at one page of ids.
+                constexpr ULONG cpu_sets_limit = 0x100;
+
+                size_t required_length{};
+                switch (static_cast<ULONG>(info_class))
+                {
+                case WorkerFactoryTimeout:
+                case WorkerFactoryRetryTimeout:
+                case WorkerFactoryBasicInformation:
+                    return STATUS_INVALID_INFO_CLASS;
+
+                case WorkerFactoryPaused:
+                    return STATUS_NOT_IMPLEMENTED;
+
+                case WorkerFactoryIdleTimeout:
+                    required_length = sizeof(LARGE_INTEGER);
+                    break;
+
+                case WorkerFactoryStackInformation:
+                    required_length = 2 * sizeof(uint64_t);
+                    break;
+
+                case WorkerFactoryBindingCount:
+                case WorkerFactoryThreadMinimum:
+                case WorkerFactoryThreadMaximum:
+                case WorkerFactoryAdjustThreadGoal:
+                case WorkerFactoryCallbackType:
+                case WorkerFactoryThreadBasePriority:
+                case WorkerFactoryTimeoutWaiters:
+                case WorkerFactoryFlags:
+                case WorkerFactoryThreadSoftMaximum:
+                    required_length = sizeof(ULONG);
+                    break;
+
+                case WorkerFactoryThreadCpuSets:
+                    if (length % sizeof(uint64_t) != 0 || (length >= cpu_sets_limit && length != cpu_sets_limit))
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    required_length = length;
+                    break;
+
+                default:
+                    return STATUS_INVALID_INFO_CLASS;
+                }
+
+                if (length != required_length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                return required_length == 0 ? STATUS_SUCCESS : probe_range(win_emu, information, required_length, memory_permission::read);
             }
 
             // The end of NtWaitForWorkViaWorkerFactory once its worker took work.
@@ -310,6 +525,18 @@ namespace sogen
             }
 
             --factory->pending_worker_count;
+
+            const auto caller = c.proc.threads.find_handle(c.vcpu.active_thread);
+            const auto reporting = std::ranges::find(factory->starting_workers, caller);
+            if (reporting != factory->starting_workers.end())
+            {
+                factory->starting_workers.erase(reporting);
+            }
+            else if (!factory->starting_workers.empty())
+            {
+                factory->starting_workers.erase(factory->starting_workers.begin());
+            }
+
             return STATUS_SUCCESS;
         }
 
@@ -318,29 +545,22 @@ namespace sogen
                                                       const emulator_pointer worker_factory_information,
                                                       const ULONG worker_factory_information_length)
         {
+            if (const auto status =
+                    validate_set_information(c.win_emu, info_class, worker_factory_information, worker_factory_information_length);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             auto* factory = c.proc.worker_factories.get(worker_factory_handle);
             if (!factory)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (info_class >= MaxWorkerFactoryInfoClass)
-            {
-                return STATUS_INVALID_INFO_CLASS;
-            }
-
-            if (worker_factory_information == 0 && worker_factory_information_length != 0)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
             factory->last_info_class = static_cast<ULONG>(info_class);
             factory->last_info_length = worker_factory_information_length;
             factory->last_info_value = 0;
-
-            const emulator_object<LARGE_INTEGER> value_i64{c.emu, worker_factory_information};
-            const emulator_object<ULONG> value_u32{c.emu, worker_factory_information};
-            const emulator_object<uint64_t> value_u64{c.emu, worker_factory_information};
 
             switch (info_class)
             {
@@ -351,59 +571,26 @@ namespace sogen
                     uint64_t commit;
                 };
 
-                if (worker_factory_information_length != sizeof(stack_information))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-
-                stack_information information{};
-                if (!c.emu.try_read_memory(worker_factory_information, &information, sizeof(information)))
-                {
-                    return STATUS_ACCESS_VIOLATION;
-                }
+                const auto information = emulator_object<stack_information>{c.emu, worker_factory_information}.read();
                 factory->stack_reserve = information.reserve;
                 factory->stack_commit = information.commit;
                 return STATUS_SUCCESS;
             }
 
-            case WorkerFactoryTimeout:
-            case WorkerFactoryRetryTimeout:
             case WorkerFactoryIdleTimeout: {
-                if (worker_factory_information_length != sizeof(LARGE_INTEGER))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-
-                const auto value = value_i64.read().QuadPart;
-                if (info_class == WorkerFactoryIdleTimeout && value >= 0)
+                const auto value = emulator_object<LARGE_INTEGER>{c.emu, worker_factory_information}.read();
+                if (value.QuadPart >= 0)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                factory->last_info_value = static_cast<uint64_t>(value);
-
-                if (info_class == WorkerFactoryTimeout)
-                {
-                    factory->timeout = value;
-                }
-                else if (info_class == WorkerFactoryRetryTimeout)
-                {
-                    factory->retry_timeout = value;
-                }
-                else
-                {
-                    factory->idle_timeout = std::min(value, minimum_worker_idle_timeout);
-                }
+                factory->last_info_value = static_cast<uint64_t>(value.QuadPart);
+                factory->idle_timeout = std::min(value.QuadPart, minimum_worker_idle_timeout);
                 return STATUS_SUCCESS;
             }
 
             case WorkerFactoryBindingCount: {
-                if (worker_factory_information_length != sizeof(ULONG))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-
-                const auto raw_value = value_u32.read();
+                const auto raw_value = emulator_object<ULONG>{c.emu, worker_factory_information}.read();
                 const auto delta = static_cast<LONG>(raw_value);
                 factory->last_info_value = raw_value;
                 const auto previous = factory->binding_count;
@@ -441,19 +628,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case WorkerFactoryCallbackType:
+                return adjust_active_workers(c, *factory, emulator_object<ULONG>{c.emu, worker_factory_information}.read());
+
             case WorkerFactoryThreadMinimum:
             case WorkerFactoryThreadMaximum:
-            case WorkerFactoryPaused:
+            case WorkerFactoryAdjustThreadGoal:
             case WorkerFactoryThreadBasePriority:
             case WorkerFactoryTimeoutWaiters:
             case WorkerFactoryFlags:
             case WorkerFactoryThreadSoftMaximum: {
-                if (worker_factory_information_length != sizeof(ULONG))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-
-                const auto value = value_u32.read();
+                const auto value = emulator_object<ULONG>{c.emu, worker_factory_information}.read();
                 factory->last_info_value = value;
 
                 switch (info_class)
@@ -491,14 +676,14 @@ namespace sogen
                     factory->thread_maximum = value;
                     factory->thread_minimum = std::min<uint32_t>(factory->thread_minimum, value);
 
-                    if (value == 0 || !work_queued || factory->paused != 0 || factory->start_routine == 0)
+                    if (value == 0 || !work_queued || factory->start_routine == 0)
                     {
                         break;
                     }
 
                     // A maximum with room for it starts one worker for that work, unless one is still starting.
                     prune_worker_factory_threads(c.win_emu, *factory);
-                    if (factory->pending_worker_count == 0 && factory->worker_threads.size() < factory->thread_maximum)
+                    if (factory->pending_worker_count == 0 && count_active_and_starting_workers(*factory) < factory->thread_maximum)
                     {
                         leave_away_mode(*factory);
                         // Windows 10 19041 accepts the maximum even when worker creation fails.
@@ -506,9 +691,6 @@ namespace sogen
                     }
                     break;
                 }
-                case WorkerFactoryPaused:
-                    factory->paused = value;
-                    break;
                 case WorkerFactoryThreadBasePriority:
                     factory->thread_base_priority = value;
                     break;
@@ -528,32 +710,120 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            default: {
-                if (worker_factory_information_length == 0)
+            case WorkerFactoryThreadCpuSets: {
+                // Each 8-byte value is the processor mask of one group (KiValidateCpuSetMasks, ntoskrnl 26100). Once the factory
+                // has created its first worker the call fails for good with the state transition status.
+                if (factory->shutdown)
                 {
-                    return STATUS_SUCCESS;
+                    return STATUS_ABANDONED;
                 }
 
-                if (worker_factory_information_length == sizeof(ULONG))
+                if (factory->worker_created)
                 {
-                    factory->last_info_value = value_u32.read();
-                    return STATUS_SUCCESS;
+                    return STATUS_INVALID_STATE_TRANSITION;
                 }
 
-                if (worker_factory_information_length == sizeof(uint64_t))
+                const auto masks = worker_factory_information_length / sizeof(uint64_t);
+                if (masks > 1)
                 {
-                    factory->last_info_value = value_u64.read();
-                    return STATUS_SUCCESS;
+                    return STATUS_CPU_SET_INVALID;
                 }
 
-                return STATUS_NOT_SUPPORTED;
+                if (masks == 1)
+                {
+                    const auto processors = std::min<uint32_t>(
+                        c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }), 64);
+                    const auto active_processors = processors >= 64 ? ~uint64_t{0} : (uint64_t{1} << processors) - 1;
+                    if ((emulator_object<uint64_t>{c.emu, worker_factory_information}.read() & ~active_processors) != 0)
+                    {
+                        return STATUS_CPU_SET_INVALID;
+                    }
+                }
+
+                return STATUS_SUCCESS;
             }
+
+            default:
+                return STATUS_INVALID_INFO_CLASS;
             }
+        }
+
+        NTSTATUS handle_NtQueryInformationWorkerFactory(const syscall_context& c, const handle worker_factory_handle,
+                                                        const WORKERFACTORYINFOCLASS info_class,
+                                                        const emulator_pointer worker_factory_information,
+                                                        const ULONG worker_factory_information_length,
+                                                        const emulator_object<ULONG> return_length)
+        {
+            if (info_class != WorkerFactoryBasicInformation)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            using basic_information = WORKER_FACTORY_BASIC_INFORMATION<EmulatorTraits<Emu64>>;
+            if (worker_factory_information % sizeof(ULONG) != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
+            if (const auto status = probe_range(c.win_emu, worker_factory_information, sizeof(basic_information), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (return_length)
+            {
+                if (const auto status = probe_range(c.win_emu, return_length.value(), sizeof(ULONG), memory_permission::write);
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                return_length.write(sizeof(basic_information));
+            }
+
+            if (worker_factory_information_length != sizeof(basic_information))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            auto* factory = c.proc.worker_factories.get(worker_factory_handle);
+            if (!factory)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            prune_worker_factory_threads(c.win_emu, *factory);
+
+            basic_information information{};
+            information.IdleTimeout.QuadPart = factory->idle_timeout;
+            information.Shutdown = factory->shutdown;
+            information.BindingCount = factory->binding_count;
+            information.ThreadMinimum = factory->thread_minimum;
+            information.ThreadMaximum = factory->thread_maximum;
+            information.PendingWorkerCount = factory->pending_worker_count;
+            information.WaitingWorkerCount = static_cast<ULONG>(
+                count_factory_waits(c.win_emu, c.proc.worker_factories.reference_of(worker_factory_handle).value_or(object_reference{})));
+            information.TotalWorkerCount = static_cast<ULONG>(count_total_workers(*factory));
+            information.ReleaseCount = factory->pending_release_count;
+            information.StartRoutine = factory->start_routine;
+            information.StartParameter = factory->start_parameter;
+            information.ProcessId = c.proc.process_id;
+            information.StackReserve = factory->stack_reserve;
+            information.StackCommit = factory->stack_commit;
+
+            emulator_object<basic_information>{c.emu, worker_factory_information}.write(information);
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtShutdownWorkerFactory(const syscall_context& c, const handle worker_factory_handle,
                                                 const emulator_object<LONG> pending_worker_count)
         {
+            if (pending_worker_count.value() % sizeof(LONG) != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
             auto* factory = c.proc.worker_factories.get(worker_factory_handle);
             if (!factory)
             {
@@ -562,8 +832,31 @@ namespace sogen
 
             factory->shutdown = true;
             leave_away_mode(*factory);
-            factory->worker_threads.clear();
-            pending_worker_count.write_if_valid(0);
+            factory->thread_minimum = 0;
+            factory->thread_maximum = 0;
+
+            // Every worker that waits wakes with one empty packet; the waits after that are abandoned.
+            if (const auto reference = c.proc.worker_factories.reference_of(worker_factory_handle))
+            {
+                worker_factory_support::request_shutdown_wake(c.win_emu, *reference);
+            }
+
+            // The starting workers are added to the caller's count (a locked add that wraps) before the factory drops them: when the
+            // count cannot be reached the call fails with the starting workers still counted. Workers that reported ready stay.
+            if (probe_range(c.win_emu, pending_worker_count.value(), sizeof(uint32_t), memory_permission::write) != STATUS_SUCCESS)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            const emulator_object<uint32_t> reported{c.emu, pending_worker_count.value()};
+            reported.write(reported.read() + factory->pending_worker_count);
+
+            std::erase_if(factory->worker_threads, [&](const handle thread_handle) {
+                return std::ranges::find(factory->starting_workers, thread_handle) != factory->starting_workers.end();
+            });
+            factory->starting_workers.clear();
+            factory->pending_worker_count = 0;
+
             return STATUS_SUCCESS;
         }
 
@@ -630,6 +923,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (factory->shutdown)
+            {
+                return STATUS_ABANDONED;
+            }
+
             auto* completion = c.proc.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
             {
@@ -643,7 +941,9 @@ namespace sogen
             // after the call.
             c.thread().associated_io_completion = factory->io_completion;
 
-            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion, count);
+            const auto messages = io_completion_wait::dequeue_io_completion_entries(
+                c.win_emu, factory->io_completion, count,
+                c.proc.worker_factories.reference_of(worker_factory_handle).value_or(object_reference{}));
             if (!messages.empty())
             {
                 // A worker taking work makes sure another one is coming for whatever is still queued, or for what comes next.
@@ -670,24 +970,7 @@ namespace sogen
             wait.entries_removed_ptr = packets_returned.value();
             wait.max_entries = count;
 
-            if (factory->timeout != 0)
-            {
-                LARGE_INTEGER timeout{};
-                timeout.QuadPart = factory->timeout;
-                wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout);
-                wait.timeout_absolute = utils::is_absolute_due_time(timeout);
-
-                constexpr auto infinite = std::chrono::steady_clock::time_point::min();
-                if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())
-                {
-                    t.await_io_completion = {};
-                    return STATUS_TIMEOUT;
-                }
-            }
-            else
-            {
-                arm_idle_deadline(c.win_emu, *factory, wait);
-            }
+            arm_idle_deadline(c.win_emu, *factory, wait);
 
             io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, false);
@@ -713,11 +996,6 @@ namespace sogen
                 return true;
             }
 
-            if (factory->timeout != 0)
-            {
-                return true;
-            }
-
             syscalls::prune_worker_factory_threads(win_emu, *factory);
             const auto is_worker = [&](const handle thread_handle) { return win_emu.process.threads.get(thread_handle) == &worker; };
 
@@ -728,9 +1006,69 @@ namespace sogen
                 return false;
             }
 
-            std::erase_if(factory->worker_threads, is_worker);
+            std::vector<handle> departed{};
+            std::erase_if(factory->worker_threads, [&](const handle thread_handle) {
+                const auto leaves = is_worker(thread_handle);
+                if (leaves)
+                {
+                    departed.push_back(thread_handle);
+                }
+
+                return leaves;
+            });
+            syscalls::forget_departed_workers(*factory, departed);
             syscalls::check_for_more_work(win_emu, *factory);
             return true;
+        }
+
+        namespace
+        {
+            void post_shutdown_packet(windows_emulator& win_emu, const object_reference& worker_factory)
+            {
+                auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(worker_factory);
+                auto* completion = factory ? win_emu.process.get_object_as<io_completion>(factory->io_completion) : nullptr;
+                if (!completion)
+                {
+                    return;
+                }
+
+                io_completion_message packet{};
+                packet.io_status_block.Pointer = 0;
+                packet.worker_factory = worker_factory;
+                packet.worker_factory_shutdown = true;
+                io_completion_wait::insert(win_emu, factory->io_completion, *completion, packet);
+            }
+        }
+
+        void continue_shutdown_wake(windows_emulator& win_emu, const object_reference& worker_factory, const bool removed_by_waiting_worker)
+        {
+            auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(worker_factory);
+            if (!factory)
+            {
+                return;
+            }
+
+            // The worker that took the packet is counted until its wait returns.
+            const auto waiting = syscalls::count_factory_waits(win_emu, worker_factory) + (removed_by_waiting_worker ? 1 : 0);
+            if (!factory->shutdown || waiting == 0)
+            {
+                factory->shutdown_wake_posted = false;
+                return;
+            }
+
+            post_shutdown_packet(win_emu, worker_factory);
+        }
+
+        void request_shutdown_wake(windows_emulator& win_emu, const object_reference& worker_factory)
+        {
+            auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(worker_factory);
+            if (!factory || factory->shutdown_wake_posted || syscalls::count_factory_waits(win_emu, worker_factory) == 0)
+            {
+                return;
+            }
+
+            factory->shutdown_wake_posted = true;
+            post_shutdown_packet(win_emu, worker_factory);
         }
 
         void on_io_completion_queued(windows_emulator& win_emu, const io_completion& completion)

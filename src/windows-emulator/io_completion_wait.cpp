@@ -263,7 +263,7 @@ namespace sogen
                         ? write_message(win_emu.memory, &thread, wait.key_context_ptr, wait.apc_context_ptr, wait.io_status_block_ptr,
                                         message)
                         : write_entries(win_emu.memory, &thread, wait.completion_entries_ptr, wait.entries_removed_ptr, {&message, 1}));
-                worker_factory_support::on_io_completion_message_dequeued(win_emu, message);
+                worker_factory_support::on_io_completion_message_dequeued(win_emu, message, wait.worker_factory);
 
                 // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
                 // does not go back through that syscall.
@@ -570,7 +570,7 @@ namespace sogen
         }
 
         bool dequeue_io_completion_message(windows_emulator& win_emu, const object_reference& io_completion,
-                                           io_completion_message& out_message)
+                                           io_completion_message& out_message, const object_reference& waiting_worker_factory)
         {
             auto& process = win_emu.process;
             auto* completion = process.get_object_as<sogen::io_completion>(io_completion);
@@ -586,7 +586,7 @@ namespace sogen
                 return false;
             }
 
-            worker_factory_support::on_io_completion_message_dequeued(win_emu, out_message);
+            worker_factory_support::on_io_completion_message_dequeued(win_emu, out_message, waiting_worker_factory);
             clear_wait_packet_completion_state(process, out_message.wait_packet_reference);
             return true;
         }
@@ -598,7 +598,8 @@ namespace sogen
         }
 
         std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, const object_reference& io_completion,
-                                                                         const ULONG max_count)
+                                                                         const ULONG max_count,
+                                                                         const object_reference& waiting_worker_factory)
         {
             auto& process = win_emu.process;
             std::vector<io_completion_message> messages{};
@@ -613,9 +614,15 @@ namespace sogen
             io_completion_message message{};
             while (messages.size() < max_count && completion->dequeue(message))
             {
-                worker_factory_support::on_io_completion_message_dequeued(win_emu, message);
-                clear_wait_packet_completion_state(process, message.wait_packet_reference);
                 messages.push_back(message);
+            }
+
+            // KeRemoveQueueEx takes the whole batch first; the packets are freed after it, so what that posts again waits for the next
+            // call.
+            for (const auto& taken : messages)
+            {
+                worker_factory_support::on_io_completion_message_dequeued(win_emu, taken, waiting_worker_factory);
+                clear_wait_packet_completion_state(process, taken.wait_packet_reference);
             }
 
             return messages;

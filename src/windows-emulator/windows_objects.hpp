@@ -1527,6 +1527,8 @@ namespace sogen
         // reference here would cycle port -> packet -> factory -> port and keep all three alive after the last handle closes.
         object_reference worker_factory{};
         bool worker_factory_release{};
+        // The packet a shut down factory posts for its waiting workers; whoever removes it, it is posted again while workers wait.
+        bool worker_factory_shutdown{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -1536,6 +1538,7 @@ namespace sogen
             buffer.write(this->wait_packet_reference);
             buffer.write(this->worker_factory);
             buffer.write(this->worker_factory_release);
+            buffer.write(this->worker_factory_shutdown);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -1546,6 +1549,7 @@ namespace sogen
             buffer.read(this->wait_packet_reference);
             buffer.read(this->worker_factory);
             buffer.read(this->worker_factory_release);
+            buffer.read(this->worker_factory_shutdown);
         }
     };
 
@@ -1662,13 +1666,10 @@ namespace sogen
         uint64_t stack_commit{};
         bool shutdown{};
 
-        int64_t timeout{};
-        int64_t retry_timeout{};
         int64_t idle_timeout{};
         uint32_t binding_count{};
         uint32_t thread_minimum{};
         uint32_t thread_maximum{};
-        uint32_t paused{};
         uint32_t thread_base_priority{};
         uint32_t timeout_waiters{};
         uint32_t flags{};
@@ -1681,10 +1682,16 @@ namespace sogen
         bool release_pending{};
         std::vector<handle> worker_threads{};
         uint32_t pending_worker_count{};
+        uint32_t inactive_worker_count{};
+        uint32_t removed_worker_count{};
+        std::vector<handle> removed_workers{};
+        std::vector<handle> starting_workers{};
         // ExpTryEnterWorkerFactoryAwayMode: a factory with bindings and no worker waiting on its port is away, and while
         // the port has nothing queued it waits for the port's next packet to start a worker (the queue notification).
         bool away_mode{};
         bool away_notification{};
+        bool worker_created{};
+        bool shutdown_wake_posted{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1696,13 +1703,10 @@ namespace sogen
             buffer.write(this->stack_reserve);
             buffer.write(this->stack_commit);
             buffer.write(this->shutdown);
-            buffer.write(this->timeout);
-            buffer.write(this->retry_timeout);
             buffer.write(this->idle_timeout);
             buffer.write(this->binding_count);
             buffer.write(this->thread_minimum);
             buffer.write(this->thread_maximum);
-            buffer.write(this->paused);
             buffer.write(this->thread_base_priority);
             buffer.write(this->timeout_waiters);
             buffer.write(this->flags);
@@ -1714,8 +1718,14 @@ namespace sogen
             buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
             buffer.write(this->pending_worker_count);
+            buffer.write(this->inactive_worker_count);
+            buffer.write(this->removed_worker_count);
+            buffer.write_vector(this->removed_workers);
+            buffer.write_vector(this->starting_workers);
             buffer.write(this->away_mode);
             buffer.write(this->away_notification);
+            buffer.write(this->worker_created);
+            buffer.write(this->shutdown_wake_posted);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1728,13 +1738,10 @@ namespace sogen
             buffer.read(this->stack_reserve);
             buffer.read(this->stack_commit);
             buffer.read(this->shutdown);
-            buffer.read(this->timeout);
-            buffer.read(this->retry_timeout);
             buffer.read(this->idle_timeout);
             buffer.read(this->binding_count);
             buffer.read(this->thread_minimum);
             buffer.read(this->thread_maximum);
-            buffer.read(this->paused);
             buffer.read(this->thread_base_priority);
             buffer.read(this->timeout_waiters);
             buffer.read(this->flags);
@@ -1746,8 +1753,14 @@ namespace sogen
             buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
             buffer.read(this->pending_worker_count);
+            buffer.read(this->inactive_worker_count);
+            buffer.read(this->removed_worker_count);
+            buffer.read_vector(this->removed_workers);
+            buffer.read_vector(this->starting_workers);
             buffer.read(this->away_mode);
             buffer.read(this->away_notification);
+            buffer.read(this->worker_created);
+            buffer.read(this->shutdown_wake_posted);
         }
     };
 

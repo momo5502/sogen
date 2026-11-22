@@ -1131,6 +1131,9 @@ namespace sogen
         NTSTATUS handle_NtSetInformationWorkerFactory(const syscall_context& c, handle worker_factory_handle,
                                                       WORKERFACTORYINFOCLASS info_class, emulator_pointer worker_factory_information,
                                                       ULONG worker_factory_information_length);
+        NTSTATUS handle_NtQueryInformationWorkerFactory(const syscall_context& c, handle worker_factory_handle,
+                                                        WORKERFACTORYINFOCLASS info_class, emulator_pointer worker_factory_information,
+                                                        ULONG worker_factory_information_length, emulator_object<ULONG> return_length);
         NTSTATUS handle_NtShutdownWorkerFactory(const syscall_context& c, handle worker_factory_handle,
                                                 emulator_object<LONG> pending_worker_count);
         NTSTATUS handle_NtReleaseWorkerFactoryWorker(const syscall_context& c, handle worker_factory_handle);
@@ -1847,6 +1850,7 @@ namespace sogen
         add_handler(NtCreateWorkerFactory);
         add_handler(NtWorkerFactoryWorkerReady);
         add_handler(NtSetInformationWorkerFactory);
+        add_handler(NtQueryInformationWorkerFactory);
         add_handler(NtShutdownWorkerFactory);
         add_handler(NtWaitForWorkViaWorkerFactory);
         add_handler(NtManageHotPatch);
