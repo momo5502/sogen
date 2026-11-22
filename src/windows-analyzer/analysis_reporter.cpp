@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace sogen
 {
@@ -208,12 +209,23 @@ namespace sogen
 
             void report(const analysis_event& event) override
             {
+                if (std::holds_alternative<symbols::symbol_event>(event))
+                {
+                    return;
+                }
+
                 std::string line{};
                 line.reserve(768);
 
                 {
                     json_object_builder object{line};
-                    std::visit(make_overloaded([&](const auto& e) { write_record(object, e); }), event);
+                    std::visit(make_overloaded([&](const auto& e) {
+                                   if constexpr (!std::is_same_v<std::decay_t<decltype(e)>, symbols::symbol_event>)
+                                   {
+                                       write_record(object, e);
+                                   }
+                               }),
+                               event);
                 }
 
                 this->file_ << line << '\n';
@@ -261,8 +273,10 @@ namespace sogen
                     object.field("vcpu", event.execution.vcpu);
                     object.hex_field("rip", event.execution.rip);
                     object.field("mod", event.execution.rip_module);
+                    object.optional_string_field("fnAtRip", event.execution.rip_function);
                     object.optional_hex_field("prev", event.execution.previous_ip);
                     object.optional_string_field("prevMod", event.execution.previous_ip_module);
+                    object.optional_string_field("prevFn", event.execution.previous_ip_function);
                 }
 
                 write_fields(object, event);
@@ -568,6 +582,7 @@ namespace sogen
                 object.field("name", event.syscall_name);
                 object.optional_hex_field("callerRip", event.caller_rip);
                 object.optional_string_field("callerMod", event.caller_module);
+                object.optional_string_field("callerFn", event.caller_function);
             }
 
             static void write_fields(json_object_builder& object, const foreign_module_read_event& event)

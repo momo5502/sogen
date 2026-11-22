@@ -7,7 +7,7 @@
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
 #include <utils/string.hpp>
-#include <platform/win_pefile.hpp>
+#include <platform/win_pefile_debug.hpp>
 
 #if defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
@@ -75,6 +75,42 @@ namespace sogen
             }
 
             return true;
+        }
+
+        template <typename T>
+        void collect_pe_sections(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte>& buffer,
+                                 const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
+        {
+            binary.pe_sections.clear();
+
+            const auto section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
+            const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));
+            binary.pe_sections.reserve(nt_headers.FileHeader.NumberOfSections);
+
+            for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
+            {
+                const auto section = sections.get(i);
+                binary.pe_sections.emplace_back(pe_section_symbol_mapping{
+                    .virtual_address = section.VirtualAddress,
+                    .virtual_size = section.Misc.VirtualSize,
+                    .raw_size = section.SizeOfRawData,
+                });
+            }
+        }
+
+        template <typename T>
+        void collect_pdb_signature(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte>& buffer,
+                                   const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset, const bool mapped_image)
+        {
+            try
+            {
+                const auto layout = mapped_image ? winpe::image_layout::mapped : winpe::image_layout::file;
+                binary.pdb = winpe::read_pdb_signature(buffer, nt_headers, nt_headers_offset, layout);
+            }
+            catch (...)
+            {
+                binary.pdb.reset();
+            }
         }
 
         template <typename T>
@@ -658,6 +694,8 @@ namespace sogen
             binary.imports.clear();
             binary.imported_modules.clear();
             binary.address_names.clear();
+            binary.pdb.reset();
+            binary.pe_sections.clear();
 
             const auto image_size = static_cast<size_t>(binary.size_of_image);
             if (optional_header.SizeOfHeaders > image_size)
@@ -718,6 +756,8 @@ namespace sogen
                 binary.imports.clear();
                 binary.imported_modules.clear();
                 binary.address_names.clear();
+                binary.pdb.reset();
+                binary.pe_sections.clear();
                 throw;
             }
 
@@ -788,6 +828,8 @@ namespace sogen
         binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
         binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
+        collect_pe_sections(binary, buffer, nt_headers, nt_headers_offset);
+        collect_pdb_signature(binary, buffer, nt_headers, nt_headers_offset, false);
 
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
@@ -866,6 +908,9 @@ namespace sogen
             }
         }
 
+        collect_pe_sections(binary, buffer, nt_headers, nt_headers_offset);
+        collect_pdb_signature(binary, buffer, nt_headers, nt_headers_offset, false);
+
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
         if (status)
         {
@@ -909,6 +954,8 @@ namespace sogen
             binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
             binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
             binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
+            collect_pe_sections(binary, buffer, nt_headers, nt_headers_offset);
+            collect_pdb_signature(binary, buffer, nt_headers, nt_headers_offset, true);
 
             const auto section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
             const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));

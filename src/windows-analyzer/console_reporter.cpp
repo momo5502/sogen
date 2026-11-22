@@ -5,6 +5,7 @@
 
 #include <cinttypes>
 #include <logger.hpp>
+#include <utils/string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -108,6 +109,231 @@ namespace sogen
                 return "[" + std::to_string(call_count) + "] ";
             }
 
+            static std::string format_symbol_location(const std::optional<std::string>& function, const std::string& module,
+                                                      const std::optional<uint64_t> raw_address = std::nullopt)
+            {
+                if (!function || function->empty())
+                {
+                    if (raw_address)
+                    {
+                        return "0x" + utils::string::to_hex_number(*raw_address) + " (" + module + ")";
+                    }
+
+                    return module;
+                }
+
+                std::string formatted = *function + " (" + module + ")";
+                if (raw_address)
+                {
+                    formatted += " (0x" + utils::string::to_hex_number(*raw_address) + ")";
+                }
+                return formatted;
+            }
+
+            void report_symbol(const symbols::symbol_event& event)
+            {
+                using namespace symbols; // NOLINT(google-build-using-namespace)
+
+                auto log = [this](color level, const char* format, auto... args) { this->log_.print(level, format, args...); };
+                std::visit(
+                    make_overloaded(
+                        [&](const map_load_event& e) {
+                            switch (e.status)
+                            {
+                            case map_load_status::started:
+                                log(color::cyan, "Loading MSVC MAP symbols for %s from %s\n", e.module.c_str(), e.path.string().c_str());
+                                break;
+                            case map_load_status::loaded:
+                                log(color::cyan, "Loaded MSVC MAP symbols for %s from %s\n", e.module.c_str(), e.path.string().c_str());
+                                break;
+                            case map_load_status::failed:
+                                log(color::yellow, "Failed to load MAP symbols for %s: %s\n", e.module.c_str(), e.error.c_str());
+                                break;
+                            }
+                        },
+                        [&](const pdb_lookup_event& e) {
+                            switch (e.status)
+                            {
+                            case pdb_lookup_result::candidate_validation_failed: {
+                                const auto& name = e.module;
+                                log(color::yellow, "Failed to validate sibling PDB for %s at %s: %s\n", name.c_str(),
+                                    e.path.string().c_str(), e.error.c_str());
+                                break;
+                            }
+                            case pdb_lookup_result::not_found: {
+                                const auto& name = e.module;
+                                log(color::yellow, "No usable PDB found for %s in symbol caches or symbol servers\n", name.c_str());
+                                break;
+                            }
+                            case pdb_lookup_result::no_reference: {
+                                const auto& name = e.module;
+                                log(color::cyan, "Skipping automatic PDB lookup for %s: no RSDS reference\n", name.c_str());
+                                break;
+                            }
+                            case pdb_lookup_result::no_candidates:
+                                log(color::cyan, "No PDB candidates for %s\n", e.module.c_str());
+                                break;
+                            case pdb_lookup_result::found:
+                                break;
+                            case pdb_lookup_result::invalid_filename: {
+                                const auto& name = e.module;
+                                log(color::yellow, "Skipping symbol server lookup for %s: invalid PDB filename in debug signature\n",
+                                    name.c_str());
+                                break;
+                            }
+                            }
+                        },
+                        [&](const pdb_load_event& e) {
+                            switch (e.status)
+                            {
+                            case pdb_load_status::started: {
+                                const char* source = "PDB";
+                                switch (e.origin)
+                                {
+                                case pdb_origin::explicit_path:
+                                    source = "disk explicit PDB";
+                                    break;
+                                case pdb_origin::sibling_path:
+                                    source = "disk sibling PDB";
+                                    break;
+                                case pdb_origin::cache:
+                                    source = "disk symbol cache";
+                                    break;
+                                case pdb_origin::symbol_store:
+                                    source = "disk symbol store";
+                                    break;
+                                case pdb_origin::download:
+                                    source = "downloaded PDB";
+                                    break;
+                                }
+                                log(color::cyan, "Loading PDB symbols for %s from %s: %s\n", e.module.c_str(), source,
+                                    e.path.string().c_str());
+                                break;
+                            }
+                            case pdb_load_status::loaded:
+                                log(color::cyan, "Loaded PDB symbols for %s from %s\n", e.module.c_str(), e.path.string().c_str());
+                                break;
+                            case pdb_load_status::parse_failed:
+                                log(color::yellow, "Failed to parse PDB %s: %s\n", e.path.string().c_str(), e.error.c_str());
+                                break;
+                            case pdb_load_status::mismatch:
+                                log(color::cyan, "Skipping PDB %s for %s: signature mismatch\n", e.path.string().c_str(), e.module.c_str());
+                                break;
+                            case pdb_load_status::source_failed:
+                                log(color::yellow, "Failed to load PDB symbols for %s: %s\n", e.module.c_str(), e.error.c_str());
+                                break;
+                            }
+                        },
+                        [&](const cache_validation_event& e) {
+                            const auto& name = e.module;
+                            const auto file = e.path.string();
+                            const auto& reason = e.error;
+                            log(color::yellow, "Failed to validate cached PDB for %s at %s: %s\n", name.c_str(), file.c_str(),
+                                reason.c_str());
+                        },
+                        [&](const cache_maintenance_event& e) {
+                            switch (e.status)
+                            {
+                            case cache_status::cleanup_failed: {
+                                const auto& reason = e.error;
+                                log(color::yellow, "PDB cache cleanup encountered an error: %s\n", reason.c_str());
+                                break;
+                            }
+                            case cache_status::removing: {
+                                const auto& name = e.module;
+                                const auto file = e.path.string();
+                                log(color::yellow, "Removing unusable cached PDB for %s: %s\n", name.c_str(), file.c_str());
+                                break;
+                            }
+                            case cache_status::removal_failed: {
+                                const auto& name = e.module;
+                                const auto file = e.path.string();
+                                const auto& reason = e.error;
+                                log(color::yellow, "Failed to remove unusable cached PDB for %s at %s: %s\n", name.c_str(), file.c_str(),
+                                    reason.c_str());
+                                break;
+                            }
+                            }
+                        },
+                        [&](const symbol_download_event& e) {
+                            switch (e.status)
+                            {
+                            case download_status::started: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                log(color::cyan, "Downloading PDB symbols for %s from %s\n", name.c_str(), host.c_str());
+                                break;
+                            }
+                            case download_status::not_found: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                log(color::cyan, "PDB symbols for %s were not found on %s\n", name.c_str(), host.c_str());
+                                break;
+                            }
+                            case download_status::failed: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
+                                log(color::yellow, "Failed to download PDB symbols for %s from %s: %s\n", name.c_str(), host.c_str(),
+                                    reason.c_str());
+                                break;
+                            }
+                            }
+                        },
+                        [&](const artifact_processing_event& e) {
+                            switch (e.status)
+                            {
+                            case artifact_error::mismatch: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                log(color::yellow, "Downloaded PDB for %s from %s did not match expected GUID and age\n", name.c_str(),
+                                    host.c_str());
+                                break;
+                            }
+                            case artifact_error::invalid: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
+                                log(color::yellow, "Downloaded symbol artifact for %s from %s was not a usable PDB: %s\n", name.c_str(),
+                                    host.c_str(), reason.c_str());
+                                break;
+                            }
+                            case artifact_error::cache_failed: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
+                                log(color::yellow, "Failed to cache downloaded PDB for %s from %s: %s\n", name.c_str(), host.c_str(),
+                                    reason.c_str());
+                                break;
+                            }
+                            case artifact_error::create_file_failed: {
+                                const auto& name = e.module;
+                                const auto& reason = e.error;
+                                log(color::yellow, "Failed to create a PDB download file for %s: %s\n", name.c_str(), reason.c_str());
+                                break;
+                            }
+                            case artifact_error::decompression_failed: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
+                                log(color::yellow,
+                                    "Failed to decompress PDB for %s from %s, falling back to the uncompressed artifact: %s\n",
+                                    name.c_str(), host.c_str(), reason.c_str());
+                                break;
+                            }
+                            case artifact_error::store_validation_failed: {
+                                const auto& name = e.module;
+                                const auto& host = e.server;
+                                const auto& reason = e.error;
+                                log(color::yellow, "Failed to validate PDB for %s in symbol store %s: %s\n", name.c_str(), host.c_str(),
+                                    reason.c_str());
+                                break;
+                            }
+                            }
+                        }),
+                    event);
+            }
+
             void report_regular(const analysis_event& event)
             {
                 std::visit(
@@ -168,8 +394,10 @@ namespace sogen
                         },
                         [&](const memory_violation_event& e) {
                             const auto* label = e.violation_type == "protection" ? "Protection violation" : "Mapping violation";
-                            this->log_.print(color::gray, "%s: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", label, e.address,
-                                             e.size, e.operation.c_str(), e.execution.rip, e.execution.rip_module.c_str());
+                            const auto fault_location =
+                                format_symbol_location(e.execution.rip_function, e.execution.rip_module, e.execution.rip);
+                            this->log_.print(color::gray, "%s: 0x%" PRIx64 " (%" PRIx64 ") - %s at %s\n", label, e.address, e.size,
+                                             e.operation.c_str(), fault_location.c_str());
                         },
                         [&](const io_control_event& e) {
                             this->log_.print(color::dark_gray, "--> %s: 0x%X\n", e.device_name.c_str(), e.code);
@@ -225,10 +453,13 @@ namespace sogen
                         },
                         [&](const function_execution_event& e) {
                             const auto prefix = this->make_call_prefix(e.call_count);
-                            this->log_.print(e.interesting ? color::yellow : color::dark_gray,
-                                             "%sExecuting function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
-                                             e.function_name.c_str(), e.execution.rip_module.c_str(), e.execution.rip,
-                                             e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                            const auto current_function =
+                                format_symbol_location(std::optional{e.function_name}, e.execution.rip_module, e.execution.rip);
+                            const auto parent_function =
+                                format_symbol_location(e.execution.previous_ip_function, e.execution.previous_ip_module.value_or("<N/A>"),
+                                                       e.execution.previous_ip);
+                            this->log_.print(e.interesting ? color::yellow : color::dark_gray, "%sExecuting function: %s via %s\n",
+                                             prefix.c_str(), current_function.c_str(), parent_function.c_str());
                             for (const auto& detail : e.details)
                             {
                                 if (detail.label.empty())
@@ -246,10 +477,13 @@ namespace sogen
                                              e.execution.rip_module.c_str(), e.execution.rip);
                         },
                         [&](const foreign_code_transition_event& e) {
+                            const auto parent_function =
+                                format_symbol_location(e.execution.previous_ip_function, e.execution.previous_ip_module.value_or("<N/A>"),
+                                                       e.execution.previous_ip);
                             this->log_.print(e.interesting ? color::yellow : color::dark_gray,
-                                             "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n",
+                                             "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via %s\n",
                                              e.function_name.c_str(), e.function_offset, e.execution.rip_module.c_str(), e.execution.rip,
-                                             e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                                             parent_function.c_str());
                         },
                         [&](const section_first_execute_event& e) {
                             this->log_.print(
@@ -279,27 +513,41 @@ namespace sogen
                                                  prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
                                                  e.execution.rip_module.c_str(), e.execution.thread_id, e.execution.vcpu);
                                 break;
-                            case syscall_classification::crafted_out_of_line:
+                            case syscall_classification::crafted_out_of_line: {
+                                const auto caller =
+                                    format_symbol_location(e.caller_function, e.caller_module.value_or("<N/A>"), e.caller_rip);
                                 this->log_.print(color::blue,
-                                                 "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
-                                                 " (%s) (tid: %" PRIu32 ", vCPU: %" PRIu32 ")\n",
+                                                 "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via %s (tid: %" PRIu32
+                                                 ", vCPU: %" PRIu32 ")\n",
                                                  prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
-                                                 e.execution.rip_module.c_str(), e.execution.previous_ip.value_or(0),
-                                                 e.execution.previous_ip_module.value_or("<N/A>").c_str(), e.execution.thread_id,
-                                                 e.execution.vcpu);
+                                                 e.execution.rip_module.c_str(), caller.c_str(), e.execution.thread_id, e.execution.vcpu);
                                 break;
+                            }
                             case syscall_classification::regular:
                             default: {
-                                syscall_line line{.has_call_count = this->settings_.prepend_call_count,
-                                                  .call_count = e.call_count,
-                                                  .syscall_id = e.syscall_id,
-                                                  .thread_id = e.execution.thread_id,
-                                                  .vcpu = e.execution.vcpu,
-                                                  .rip = e.execution.rip,
-                                                  .caller_rip = e.caller_rip.value_or(0)};
-                                copy_truncated(line.syscall_name, e.syscall_name);
-                                copy_truncated(line.caller_module, e.caller_module.value_or("<N/A>"));
-                                this->log_.print_deferred<format_syscall_line>(color::dark_gray, line);
+                                if (e.caller_function && !e.caller_function->empty())
+                                {
+                                    const auto caller =
+                                        format_symbol_location(e.caller_function, e.caller_module.value_or("<N/A>"), e.caller_rip);
+                                    this->log_.print(color::dark_gray,
+                                                     "%sExecuting syscall: %s (0x%X) at 0x%" PRIx64 " via %s (tid: %" PRIu32
+                                                     ", vCPU: %" PRIu32 ")\n",
+                                                     prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip, caller.c_str(),
+                                                     e.execution.thread_id, e.execution.vcpu);
+                                }
+                                else
+                                {
+                                    syscall_line line{.has_call_count = this->settings_.prepend_call_count,
+                                                      .call_count = e.call_count,
+                                                      .syscall_id = e.syscall_id,
+                                                      .thread_id = e.execution.thread_id,
+                                                      .vcpu = e.execution.vcpu,
+                                                      .rip = e.execution.rip,
+                                                      .caller_rip = e.caller_rip.value_or(0)};
+                                    copy_truncated(line.syscall_name, e.syscall_name);
+                                    copy_truncated(line.caller_module, e.caller_module.value_or("<N/A>"));
+                                    this->log_.print_deferred<format_syscall_line>(color::dark_gray, line);
+                                }
                                 break;
                             }
                             }
@@ -321,6 +569,7 @@ namespace sogen
                                              e.size, e.value, e.section_name.c_str(), e.address, e.execution.rip,
                                              e.execution.rip_module.c_str());
                         },
+                        [&](const symbols::symbol_event& e) { this->report_symbol(e); },
                         [&](const fast_fail_event& e) {
                             this->log_.print(color::red, "Process requested fast fail with code %d\n", e.fail_code);
                         }),

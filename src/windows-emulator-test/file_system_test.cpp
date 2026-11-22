@@ -6,7 +6,12 @@ namespace sogen
     {
         static std::filesystem::path translate(const file_system& fs, const windows_path& path)
         {
-            return fs.translate(path);
+            if (!path.is_absolute())
+            {
+                throw std::runtime_error("Only absolute paths can be translated: " + path.string());
+            }
+
+            return fs.translate(path).value_or(std::filesystem::path{});
         }
     };
 } // namespace sogen

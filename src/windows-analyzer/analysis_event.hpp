@@ -1,5 +1,7 @@
 #pragma once
 
+#include <windows-symbols/symbol_events.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -29,8 +31,10 @@ namespace sogen
         uint32_t vcpu{};
         uint64_t rip{};
         std::string rip_module{"<N/A>"};
+        std::optional<std::string> rip_function{};
         std::optional<uint64_t> previous_ip{};
         std::optional<std::string> previous_ip_module{};
+        std::optional<std::string> previous_ip_function{};
     };
 
     struct observation_event
@@ -264,6 +268,7 @@ namespace sogen
         std::string syscall_name{};
         std::optional<uint64_t> caller_rip{};
         std::optional<std::string> caller_module{};
+        std::optional<std::string> caller_function{};
     };
 
     struct foreign_module_read_event : observation_event
@@ -302,6 +307,6 @@ namespace sogen
                      module_unload_event, import_read_event, import_write_event, object_access_event, environment_access_event,
                      function_execution_event, entry_point_execution_event, foreign_code_transition_event, section_first_execute_event,
                      rdtsc_event, rdtscp_event, cpuid_event, syscall_event, foreign_module_read_event, executable_read_event,
-                     executable_write_event, fast_fail_event>;
+                     executable_write_event, fast_fail_event, symbols::symbol_event>;
 
 } // namespace sogen

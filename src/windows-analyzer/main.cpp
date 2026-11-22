@@ -17,12 +17,14 @@
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
+#include <windows-symbols/symbol_loader.hpp>
 #include "tenet_tracer.hpp"
 #include <subprocess_process_manager.hpp>
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 #include <utils/executable_path.hpp>
+#include <utils/string.hpp>
 
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <event_handler.hpp>
@@ -36,6 +38,8 @@ namespace sogen
 {
     namespace
     {
+        using namespace symbols; // NOLINT(google-build-using-namespace)
+
         std::filesystem::path get_current_binary_dir()
         {
             return utils::get_current_executable_path().parent_path();
@@ -113,6 +117,7 @@ namespace sogen
             filesystem_mode root_mode{default_root_mode};
             std::vector<mount_spec> mounts{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
+            symbol_options symbols{};
         };
 
 #ifndef OS_EMSCRIPTEN
@@ -970,6 +975,7 @@ namespace sogen
             });
 #endif
             context.win_emu = win_emu.get();
+            context.has_report_output = !options.report_path.empty();
 
             std::vector<std::unique_ptr<analysis_reporter>> reporters{};
             reporters.emplace_back(create_console_reporter(win_emu->log, console_reporter_settings{
@@ -1037,6 +1043,19 @@ namespace sogen
 
             register_analysis_callbacks(context);
             watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
+
+#if SOGEN_ENABLE_SYMBOLS
+            std::optional<symbol_loader> symbols{};
+            if (options.symbols.enabled())
+            {
+                auto symbol_options = options.symbols;
+                symbol_options.verbose_logging = options.verbose_logging;
+                symbol_options.interesting_modules = options.modules;
+                symbols.emplace(*win_emu, std::move(symbol_options),
+                                [&context](const symbol_event& event) { context.emit_event(analysis_event{event}); });
+                context.symbols = &*symbols;
+            }
+#endif
 
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
@@ -1310,6 +1329,28 @@ namespace sogen
             app.add_option("--whp-exec-hook", options.whp_execution_hook_mode, "WHP memory execution hook mode")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
+
+#if SOGEN_ENABLE_SYMBOLS
+            std::string symbol_use_value{"callers"};
+            app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
+                ->expected(0, 1)
+                ->default_val("callers")
+                ->check(CLI::IsMember({"trace", "callers", "all"}));
+
+            std::vector<std::string> symbol_sources{};
+            app.add_option("--symbol-source", symbol_sources, "Add a symbol source: [MODULE=]pdb, [MODULE=]pdb:PATH, or [MODULE=]map:PATH")
+                ->expected(1, -1)
+                ->allow_extra_args(false);
+
+            std::vector<std::string> symbol_servers{};
+            app.add_option("--symbol-server", symbol_servers, "Add a symbol server searched before Microsoft's public server")
+                ->expected(1, -1)
+                ->allow_extra_args(false);
+
+            std::string symbol_cache{};
+            app.add_option("--symbol-cache", symbol_cache, "Set Sogen's download cache for PDB symbol files");
+#endif
+
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
 #ifndef OS_EMSCRIPTEN
             app.add_option("--registry-state", options.registry_state, "Load registry overlay state and save it after the guest exits");
@@ -1383,6 +1424,63 @@ namespace sogen
                 {
                     options.backend = get_backend_names().at(backend_name);
                 }
+
+#if SOGEN_ENABLE_SYMBOLS
+                if (symbol_use_value == "trace")
+                {
+                    options.symbols.use_mode = symbol_use_mode::trace;
+                }
+                else if (symbol_use_value == "all")
+                {
+                    options.symbols.use_mode = symbol_use_mode::all;
+                }
+
+                for (const auto& source : symbol_sources)
+                {
+                    if (source == "pdb")
+                    {
+                        options.symbols.pdb.auto_lookup = true;
+                    }
+                    else if (source.ends_with("=pdb") && source.size() > 4)
+                    {
+                        options.symbols.pdb.inputs.emplace_back(pdb_symbol_input{.module = source.substr(0, source.size() - 4)});
+                    }
+                    else if (source.starts_with("pdb:") && source.size() > 4)
+                    {
+                        options.symbols.pdb.inputs.emplace_back(pdb_symbol_input{.path = source.substr(4)});
+                    }
+                    else if (const auto pdb_separator = source.find("=pdb:");
+                             pdb_separator != std::string::npos && pdb_separator > 0 && pdb_separator + 5 < source.size())
+                    {
+                        options.symbols.pdb.inputs.emplace_back(
+                            pdb_symbol_input{.module = source.substr(0, pdb_separator), .path = source.substr(pdb_separator + 5)});
+                    }
+                    else if (source.starts_with("map:") && source.size() > 4)
+                    {
+                        options.symbols.maps.emplace_back(map_symbol_input{.path = source.substr(4)});
+                    }
+                    else if (const auto separator = source.find("=map:");
+                             separator != std::string::npos && separator > 0 && separator + 5 < source.size())
+                    {
+                        options.symbols.maps.emplace_back(
+                            map_symbol_input{.module = source.substr(0, separator), .path = source.substr(separator + 5)});
+                    }
+                    else
+                    {
+                        throw std::runtime_error("Invalid --symbol-source: expected [MODULE=]pdb, [MODULE=]pdb:PATH, or [MODULE=]map:PATH");
+                    }
+                }
+
+                for (auto& symbol_server : symbol_servers)
+                {
+                    options.symbols.pdb.symbol_servers.emplace_back(std::move(symbol_server));
+                }
+
+                if (!symbol_cache.empty())
+                {
+                    options.symbols.pdb.symbol_cache = std::filesystem::path(symbol_cache);
+                }
+#endif
 
                 for (auto& module_name : tracked_modules)
                 {
