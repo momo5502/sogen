@@ -127,6 +127,7 @@ namespace sogen
             buffer.write(mod.machine);
             buffer.write(mod.characteristics);
             buffer.write(mod.dll_characteristics);
+            buffer.write(mod.subsystem_major_version);
             buffer.write(mod.size_of_stack_reserve);
             buffer.write(mod.size_of_stack_commit);
             buffer.write(mod.size_of_heap_reserve);
@@ -158,6 +159,7 @@ namespace sogen
             buffer.read(mod.machine);
             buffer.read(mod.characteristics);
             buffer.read(mod.dll_characteristics);
+            buffer.read(mod.subsystem_major_version);
             buffer.read(mod.size_of_stack_reserve);
             buffer.read(mod.size_of_stack_commit);
             buffer.read(mod.size_of_heap_reserve);
