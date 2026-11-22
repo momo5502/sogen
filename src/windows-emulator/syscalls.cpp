@@ -154,7 +154,7 @@ namespace sogen
         NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/, emulator_object<LCID> default_locale_id);
         NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data,
                                            emulator_pointer /*context_data*/, emulator_object<uint64_t> section_pointer,
-                                           emulator_object<ULONG> section_size);
+                                           emulator_object<uint64_t> section_size);
         NTSTATUS handle_NtGetMUIRegistryInfo();
         NTSTATUS handle_NtIsUILanguageComitted();
         uint64_t handle_NtUserActivateKeyboardLayout(const syscall_context& c, uint64_t keyboard_layout, uint32_t flags);
