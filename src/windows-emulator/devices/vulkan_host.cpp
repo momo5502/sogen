@@ -520,7 +520,10 @@ namespace sogen
           private:
             std::vector<std::vector<VkDescriptorType>> types_{};
             std::vector<VkMutableDescriptorTypeListEXT> lists_{};
-            VkMutableDescriptorTypeCreateInfoEXT info_{.sType = VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT};
+            VkMutableDescriptorTypeCreateInfoEXT info_{.sType = VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT,
+                                                       .pNext = nullptr,
+                                                       .mutableDescriptorTypeListCount = 0,
+                                                       .pMutableDescriptorTypeLists = nullptr};
         };
     }
 
@@ -2660,6 +2663,7 @@ namespace sogen
             VkDependencyInfo info() const
             {
                 return {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                        .pNext = nullptr,
                         .dependencyFlags = this->flags,
                         .memoryBarrierCount = static_cast<uint32_t>(this->memory_barriers.size()),
                         .pMemoryBarriers = this->memory_barriers.data(),
@@ -2682,6 +2686,7 @@ namespace sogen
         static VkMemoryBarrier to_legacy(const VkMemoryBarrier2& barrier)
         {
             return {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
                     .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                     .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
         }
@@ -2689,6 +2694,7 @@ namespace sogen
         static VkBufferMemoryBarrier to_legacy(const VkBufferMemoryBarrier2& barrier)
         {
             return {.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .pNext = nullptr,
                     .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                     .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
                     .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
@@ -2701,6 +2707,7 @@ namespace sogen
         static VkImageMemoryBarrier to_legacy(const VkImageMemoryBarrier2& barrier)
         {
             return {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .pNext = nullptr,
                     .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
                     .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
                     .oldLayout = barrier.oldLayout,
@@ -2755,6 +2762,7 @@ namespace sogen
             for (const vulkan_host::barrier_masks& masks : dependency.memory_barriers)
             {
                 native.memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                                  .pNext = nullptr,
                                                   .srcStageMask = masks.src_stage_mask,
                                                   .srcAccessMask = masks.src_access_mask,
                                                   .dstStageMask = masks.dst_stage_mask,
@@ -2770,6 +2778,7 @@ namespace sogen
                     return std::nullopt;
                 }
                 native.buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                                  .pNext = nullptr,
                                                   .srcStageMask = barrier.masks.src_stage_mask,
                                                   .srcAccessMask = barrier.masks.src_access_mask,
                                                   .dstStageMask = barrier.masks.dst_stage_mask,
@@ -2790,6 +2799,7 @@ namespace sogen
                     return std::nullopt;
                 }
                 native.image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                 .pNext = nullptr,
                                                  .srcStageMask = barrier.masks.src_stage_mask,
                                                  .srcAccessMask = barrier.masks.src_access_mask,
                                                  .dstStageMask = barrier.masks.dst_stage_mask,
