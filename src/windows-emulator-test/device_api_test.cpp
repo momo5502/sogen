@@ -434,14 +434,14 @@ namespace sogen::test
                 return this->emu.memory.read_memory<buffer_result>(this->storage + 0x400);
             }
 
-            std::vector<uint8_t> property_or_alias_data(const uint32_t size)
+            std::vector<uint8_t> property_or_alias_data(const uint32_t size) const
             {
                 std::vector<uint8_t> data(size);
                 this->emu.memory.read_memory(this->storage + 0x410, data.data(), data.size());
                 return data;
             }
 
-            std::u16string property_or_alias_string(const uint32_t size)
+            std::u16string property_or_alias_string(const uint32_t size) const
             {
                 std::u16string data(size / sizeof(char16_t), u'\0');
                 this->emu.memory.read_memory(this->storage + 0x410, data.data(), size);

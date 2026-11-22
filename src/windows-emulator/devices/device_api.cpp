@@ -965,10 +965,20 @@ namespace sogen
                     for (size_t index = start; index < start + length; ++index)
                     {
                         const auto character = name[index];
-                        const auto digit = character >= u'0' && character <= u'9'   ? character - u'0'
-                                           : character >= u'a' && character <= u'f' ? character - u'a' + 10
-                                                                                    : character - u'A' + 10;
-                        value = value * 16 + static_cast<uint32_t>(digit);
+                        uint32_t digit = 0;
+                        if (character >= u'0' && character <= u'9')
+                        {
+                            digit = static_cast<uint32_t>(character - u'0');
+                        }
+                        else if (character >= u'a' && character <= u'f')
+                        {
+                            digit = static_cast<uint32_t>(character - u'a' + 10);
+                        }
+                        else
+                        {
+                            digit = static_cast<uint32_t>(character - u'A' + 10);
+                        }
+                        value = value * 16 + digit;
                     }
                     return value;
                 };
@@ -1005,12 +1015,12 @@ namespace sogen
                 }
 
                 const auto separator = link.find(u'\\', 4);
-                const auto base = link.substr(4, separator == link.npos ? link.npos : separator - 4);
-                const auto reference = separator == link.npos ? std::u16string_view{} : link.substr(separator + 1);
+                const auto base = link.substr(4, separator == std::u16string_view::npos ? std::u16string_view::npos : separator - 4);
+                const auto reference = separator == std::u16string_view::npos ? std::u16string_view{} : link.substr(separator + 1);
                 constexpr size_t guid_length = 38;
                 if (base.size() <= guid_length || base[base.size() - guid_length - 1] != u'#' ||
-                    !is_guid_string(base.substr(base.size() - guid_length)) || base.find(u'/') != base.npos ||
-                    reference.find_first_of(u"\\/") != reference.npos)
+                    !is_guid_string(base.substr(base.size() - guid_length)) || base.find(u'/') != std::u16string_view::npos ||
+                    reference.find_first_of(u"\\/") != std::u16string_view::npos)
                 {
                     return std::nullopt;
                 }
@@ -1024,7 +1034,8 @@ namespace sogen
                 auto path = sub_key_path(interface_classes_key, base.substr(base.size() - guid_length));
                 path += u"\\##?#";
                 path += base;
-                return interface_registration{std::move(path), u"#" + std::u16string{reference}, *class_guid};
+                return interface_registration{
+                    .key = std::move(path), .reference_key = u"#" + std::u16string{reference}, .class_guid = *class_guid};
             }
 
             static NTSTATUS return_property_or_alias(windows_emulator& win_emu, const io_device_context& c, NTSTATUS status,
@@ -1061,10 +1072,10 @@ namespace sogen
                 {
                 case 1: {
                     const auto first = name.find(u'\\');
-                    const auto second = first == name.npos ? name.npos : name.find(u'\\', first + 1);
-                    if (second == name.npos || !is_device_id_part(name.substr(0, first)) ||
+                    const auto second = first == std::u16string_view::npos ? std::u16string_view::npos : name.find(u'\\', first + 1);
+                    if (second == std::u16string_view::npos || !is_device_id_part(name.substr(0, first)) ||
                         !is_device_id_part(name.substr(first + 1, second - first - 1)) || !is_device_id_part(name.substr(second + 1)) ||
-                        name.find(u'/') != name.npos)
+                        name.find(u'/') != std::u16string_view::npos)
                     {
                         return std::nullopt;
                     }
@@ -1163,7 +1174,7 @@ namespace sogen
             {
                 value.push_back(u'\0');
                 const auto bytes = std::as_bytes(std::span{value});
-                return std::vector<std::byte>(bytes.begin(), bytes.end());
+                return {bytes.begin(), bytes.end()};
             }
 
             static std::optional<builtin_interface_property_result> builtin_interface_property(windows_emulator& win_emu,
@@ -1180,14 +1191,14 @@ namespace sogen
                 if (format == interface_format && property_id == 4)
                 {
                     const auto bytes = std::as_bytes(std::span{registration.class_guid});
-                    return builtin_interface_property_result{STATUS_SUCCESS, devprop_type_guid,
-                                                             std::vector<std::byte>(bytes.begin(), bytes.end())};
+                    return builtin_interface_property_result{
+                        .status = STATUS_SUCCESS, .type = devprop_type_guid, .data = {bytes.begin(), bytes.end()}};
                 }
 
                 if (format == interface_format && property_id == 3)
                 {
                     // Windows queries the live PnP state through ZwPlugPlayControl; the emulator has no equivalent state source.
-                    return builtin_interface_property_result{STATUS_NOT_FOUND};
+                    return builtin_interface_property_result{.status = STATUS_NOT_FOUND, .type = 0, .data = {}};
                 }
 
                 if (format == device_format && property_id == 256)
@@ -1196,31 +1207,33 @@ namespace sogen
                     const auto instance = parent_key ? win_emu.registry.get_value(*parent_key, "DeviceInstance") : std::nullopt;
                     if (!instance)
                     {
-                        return builtin_interface_property_result{STATUS_OBJECT_NAME_NOT_FOUND};
+                        return builtin_interface_property_result{.status = STATUS_OBJECT_NAME_NOT_FOUND, .type = 0, .data = {}};
                     }
 
                     auto value = registry_utils::decode_registry_string(*instance);
                     if (!value)
                     {
-                        return builtin_interface_property_result{STATUS_OBJECT_TYPE_MISMATCH};
+                        return builtin_interface_property_result{.status = STATUS_OBJECT_TYPE_MISMATCH, .type = 0, .data = {}};
                     }
-                    if (const auto terminator = value->find(u'\0'); terminator != value->npos)
+                    if (const auto terminator = value->find(u'\0'); terminator != std::u16string::npos)
                     {
                         value->resize(terminator);
                     }
 
-                    return builtin_interface_property_result{STATUS_SUCCESS, devprop_type_string, string_property_data(*value)};
+                    return builtin_interface_property_result{
+                        .status = STATUS_SUCCESS, .type = devprop_type_string, .data = string_property_data(*value)};
                 }
 
                 if (format == interface_format && property_id == 5)
                 {
                     const auto separator = name.find(u'\\', 4);
-                    if (separator == name.npos)
+                    if (separator == std::u16string_view::npos)
                     {
-                        return builtin_interface_property_result{STATUS_NOT_FOUND};
+                        return builtin_interface_property_result{.status = STATUS_NOT_FOUND, .type = 0, .data = {}};
                     }
-                    return builtin_interface_property_result{STATUS_SUCCESS, devprop_type_string,
-                                                             string_property_data(std::u16string{name.substr(separator + 1)})};
+                    return builtin_interface_property_result{.status = STATUS_SUCCESS,
+                                                             .type = devprop_type_string,
+                                                             .data = string_property_data(std::u16string{name.substr(separator + 1)})};
                 }
 
                 return std::nullopt;
