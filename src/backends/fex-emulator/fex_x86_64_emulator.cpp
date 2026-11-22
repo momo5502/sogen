@@ -4438,6 +4438,20 @@ namespace sogen::fex
             return callbacks;
         }
 
+        std::vector<instruction_hook_callback> copy_instruction_hooks(const x86_hookable_instructions type) const
+        {
+            const shared_tables_lock lock(this->tables_mutex_);
+            std::vector<instruction_hook_callback> callbacks{};
+            for (const auto& [_, hook] : this->instruction_hooks_)
+            {
+                if (hook.type == type && hook.callback)
+                {
+                    callbacks.push_back(hook.callback);
+                }
+            }
+            return callbacks;
+        }
+
         // Called only from run(), in normal call context, right after ExecuteThread returns. The
         // return value tells run()'s loop whether ExecuteThread came back because a hook was deferred
         // or because of a genuine stop.
@@ -4455,7 +4469,8 @@ namespace sogen::fex
                 }
                 return true;
             case pending_fault_kind::interrupt:
-                if (dispatch.vector == invalid_opcode_vector && (this->run_trapped_instruction() || this->run_invalid_instruction_hooks()))
+                if (dispatch.vector == invalid_opcode_vector &&
+                    (this->run_trapped_instruction(vcpu) || this->run_invalid_instruction_hooks(vcpu)))
                 {
                     return true;
                 }
@@ -4626,9 +4641,9 @@ namespace sogen::fex
 
         // A trapped RDTSC, RDTSCP or CPUID: its hooks run, and unless one skips it, its native result is produced
         // here, since the compiled code no longer computes it.
-        bool run_trapped_instruction()
+        bool run_trapped_instruction(fex_vcpu& vcpu)
         {
-            const auto rip = this->reg(x86_register::rip);
+            const auto rip = vcpu.reg(x86_register::rip);
             std::array<uint8_t, 3> code{};
             if (!this->try_read_memory(rip, code.data(), code.size()) || code[0] != 0x0F)
             {
@@ -4656,9 +4671,9 @@ namespace sogen::fex
             }
 
             bool skip = false;
-            for (auto& [_, hook] : this->instruction_hooks_)
+            for (const auto& hook : this->copy_instruction_hooks(type))
             {
-                if (hook.type == type && hook.callback && hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
+                if (hook(vcpu, 0) == instruction_hook_continuation::skip_instruction)
                 {
                     skip = true;
                 }
@@ -4666,54 +4681,53 @@ namespace sogen::fex
 
             if (!skip)
             {
-                this->run_native_instruction(type);
+                this->run_native_instruction(vcpu, type);
             }
 
-            this->reg(x86_register::rip, this->reg(x86_register::rip) + length);
+            vcpu.reg(x86_register::rip, vcpu.reg(x86_register::rip) + length);
             return true;
         }
 
-        bool run_invalid_instruction_hooks()
+        bool run_invalid_instruction_hooks(fex_vcpu& vcpu)
         {
-            const auto rip = this->reg(x86_register::rip);
+            const auto rip = vcpu.reg(x86_register::rip);
             bool consumed = false;
-            for (auto& [_, hook] : this->instruction_hooks_)
+            for (const auto& hook : this->copy_instruction_hooks(x86_hookable_instructions::invalid))
             {
-                if (hook.type == x86_hookable_instructions::invalid && hook.callback &&
-                    hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
+                if (hook(vcpu, 0) == instruction_hook_continuation::skip_instruction)
                 {
                     consumed = true;
                 }
             }
 
-            if (consumed && this->reg(x86_register::rip) == rip)
+            if (consumed && vcpu.reg(x86_register::rip) == rip)
             {
-                this->reg(x86_register::rip, rip + 2);
+                vcpu.reg(x86_register::rip, rip + 2);
             }
 
             return consumed;
         }
 
-        void run_native_instruction(const x86_hookable_instructions type)
+        void run_native_instruction(fex_vcpu& vcpu, const x86_hookable_instructions type)
         {
             if (type == x86_hookable_instructions::cpuid)
             {
                 const auto result =
-                    this->context_->RunCPUIDFunction(this->reg<uint32_t>(x86_register::eax), this->reg<uint32_t>(x86_register::ecx));
-                this->reg(x86_register::rax, uint64_t{result.eax});
-                this->reg(x86_register::rbx, uint64_t{result.ebx});
-                this->reg(x86_register::rcx, uint64_t{result.ecx});
-                this->reg(x86_register::rdx, uint64_t{result.edx});
+                    this->context_->RunCPUIDFunction(vcpu.reg<uint32_t>(x86_register::eax), vcpu.reg<uint32_t>(x86_register::ecx));
+                vcpu.reg(x86_register::rax, uint64_t{result.eax});
+                vcpu.reg(x86_register::rbx, uint64_t{result.ebx});
+                vcpu.reg(x86_register::rcx, uint64_t{result.ecx});
+                vcpu.reg(x86_register::rdx, uint64_t{result.edx});
                 return;
             }
 
             const auto ticks = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-            this->reg(x86_register::rax, ticks & 0xFFFFFFFF);
-            this->reg(x86_register::rdx, ticks >> 32);
+            vcpu.reg(x86_register::rax, ticks & 0xFFFFFFFF);
+            vcpu.reg(x86_register::rdx, ticks >> 32);
             if (type == x86_hookable_instructions::rdtscp)
             {
-                this->reg(x86_register::rcx, uint64_t{0});
+                vcpu.reg(x86_register::rcx, uint64_t{0});
             }
         }
 
