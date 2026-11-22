@@ -676,6 +676,30 @@ namespace
         message.insert(message.end(), bytes, bytes + size);
     }
 
+    gb::mutable_descriptor_type_lists append_mutable_descriptor_types(std::vector<uint8_t>& message, const void* chain)
+    {
+        const auto* info =
+            find_in_chain<VkMutableDescriptorTypeCreateInfoEXT>(chain, VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT);
+        if (!info || !info->pMutableDescriptorTypeLists)
+        {
+            return {};
+        }
+
+        const std::span lists(info->pMutableDescriptorTypeLists, info->mutableDescriptorTypeListCount);
+        gb::mutable_descriptor_type_lists header{.list_count = static_cast<uint32_t>(lists.size()), .type_count = 0};
+        for (const VkMutableDescriptorTypeListEXT& list : lists)
+        {
+            append_bytes(message, &list.descriptorTypeCount, sizeof(list.descriptorTypeCount));
+            header.type_count += list.descriptorTypeCount;
+        }
+        for (const VkMutableDescriptorTypeListEXT& list : lists)
+        {
+            static_assert(sizeof(VkDescriptorType) == sizeof(uint32_t));
+            append_bytes(message, list.pDescriptorTypes, list.descriptorTypeCount * sizeof(VkDescriptorType));
+        }
+        return header;
+    }
+
     struct render_pass_description
     {
         uint32_t flags{};
@@ -783,6 +807,140 @@ namespace
         request.array_layers = info.arrayLayers;
         request.flags = info.flags;
         return request;
+    }
+}
+
+namespace
+{
+    gb::image_subresource_range to_wire_range(const VkImageSubresourceRange& range)
+    {
+        gb::image_subresource_range out{};
+        out.aspect_mask = range.aspectMask;
+        out.base_mip_level = range.baseMipLevel;
+        out.level_count = range.levelCount;
+        out.base_array_layer = range.baseArrayLayer;
+        out.layer_count = range.layerCount;
+        return out;
+    }
+}
+
+namespace
+{
+    struct wire_dependency
+    {
+        VkDependencyFlags flags{};
+        std::vector<gb::barrier_masks> memory_barriers{};
+        std::vector<gb::buffer_memory_barrier> buffer_barriers{};
+        std::vector<gb::image_memory_barrier> image_barriers{};
+    };
+
+    void append_dependency(std::vector<uint8_t>& message, const wire_dependency& dependency)
+    {
+        const gb::dependency_info_header header{.dependency_flags = dependency.flags,
+                                                .memory_barrier_count = static_cast<uint32_t>(dependency.memory_barriers.size()),
+                                                .buffer_barrier_count = static_cast<uint32_t>(dependency.buffer_barriers.size()),
+                                                .image_barrier_count = static_cast<uint32_t>(dependency.image_barriers.size())};
+        append_bytes(message, &header, sizeof(header));
+        append_bytes(message, dependency.memory_barriers.data(), std::span(dependency.memory_barriers).size_bytes());
+        append_bytes(message, dependency.buffer_barriers.data(), std::span(dependency.buffer_barriers).size_bytes());
+        append_bytes(message, dependency.image_barriers.data(), std::span(dependency.image_barriers).size_bytes());
+    }
+
+    gb::buffer_memory_barrier to_wire_buffer_barrier(const gb::barrier_masks& masks, const uint32_t src_queue_family_index,
+                                                     const uint32_t dst_queue_family_index, const VkBuffer buffer,
+                                                     const VkDeviceSize offset, const VkDeviceSize size)
+    {
+        return {.masks = masks,
+                .src_queue_family_index = src_queue_family_index,
+                .dst_queue_family_index = dst_queue_family_index,
+                .buffer = to_object_id(buffer),
+                .offset = offset,
+                .size = size};
+    }
+
+    gb::image_memory_barrier to_wire_image_barrier(const gb::barrier_masks& masks, const VkImageLayout old_layout,
+                                                   const VkImageLayout new_layout, const uint32_t src_queue_family_index,
+                                                   const uint32_t dst_queue_family_index, const VkImage image,
+                                                   const VkImageSubresourceRange& range)
+    {
+        return {.masks = masks,
+                .old_layout = static_cast<uint32_t>(old_layout),
+                .new_layout = static_cast<uint32_t>(new_layout),
+                .src_queue_family_index = src_queue_family_index,
+                .dst_queue_family_index = dst_queue_family_index,
+                .image = to_object_id(image),
+                .subresource = to_wire_range(range),
+                .reserved = 0};
+    }
+}
+
+namespace
+{
+    // vkCmdPipelineBarrier and vkCmdWaitEvents apply one pair of stage masks to all their barriers.
+    wire_dependency legacy_dependency(const VkPipelineStageFlags src_stage_mask, const VkPipelineStageFlags dst_stage_mask,
+                                      const VkDependencyFlags flags, const std::span<const VkMemoryBarrier> memory_barriers,
+                                      const std::span<const VkBufferMemoryBarrier> buffer_barriers,
+                                      const std::span<const VkImageMemoryBarrier> image_barriers)
+    {
+        const auto masks = [&](const VkAccessFlags src_access, const VkAccessFlags dst_access) {
+            return gb::barrier_masks{.src_stage_mask = src_stage_mask,
+                                     .src_access_mask = src_access,
+                                     .dst_stage_mask = dst_stage_mask,
+                                     .dst_access_mask = dst_access};
+        };
+
+        wire_dependency dependency{.flags = flags};
+        for (const VkMemoryBarrier& b : memory_barriers)
+        {
+            dependency.memory_barriers.push_back(masks(b.srcAccessMask, b.dstAccessMask));
+        }
+        for (const VkBufferMemoryBarrier& b : buffer_barriers)
+        {
+            dependency.buffer_barriers.push_back(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex,
+                                                                        b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+        }
+        for (const VkImageMemoryBarrier& b : image_barriers)
+        {
+            dependency.image_barriers.push_back(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout,
+                                                                      b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image,
+                                                                      b.subresourceRange));
+        }
+        return dependency;
+    }
+
+    wire_dependency to_wire_dependency(const VkDependencyInfo& info)
+    {
+        const auto masks = [](const auto& b) {
+            return gb::barrier_masks{.src_stage_mask = b.srcStageMask,
+                                     .src_access_mask = b.srcAccessMask,
+                                     .dst_stage_mask = b.dstStageMask,
+                                     .dst_access_mask = b.dstAccessMask};
+        };
+
+        wire_dependency dependency{.flags = info.dependencyFlags};
+        for (const VkMemoryBarrier2& b : std::span(info.pMemoryBarriers, info.memoryBarrierCount))
+        {
+            dependency.memory_barriers.push_back(masks(b));
+        }
+        for (const VkBufferMemoryBarrier2& b : std::span(info.pBufferMemoryBarriers, info.bufferMemoryBarrierCount))
+        {
+            dependency.buffer_barriers.push_back(
+                to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+        }
+        for (const VkImageMemoryBarrier2& b : std::span(info.pImageMemoryBarriers, info.imageMemoryBarrierCount))
+        {
+            dependency.image_barriers.push_back(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex,
+                                                                      b.dstQueueFamilyIndex, b.image, b.subresourceRange));
+        }
+        return dependency;
+    }
+
+    template <typename Request>
+    std::vector<uint8_t> start_message(const Request& request)
+    {
+        std::vector<uint8_t> message{};
+        append_bytes(message, &request, sizeof(request));
+        return message;
     }
 }
 
@@ -1496,36 +1654,6 @@ extern "C"
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         return static_cast<VkResult>(response.vk_result);
-    }
-
-    // GPU-side event commands are not forwarded to the host command buffer: the bridge's submission model
-    // is effectively synchronous, so DXVK's vkGetEventStatus always reports the event as set (see the host).
-    // These recorders are no-ops; they exist so DXVK's device function table is non-null and does not call
-    // through a null pointer when it records them.
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent(VkCommandBuffer, VkEvent, VkPipelineStageFlags)
-    {
-    }
-
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent(VkCommandBuffer, VkEvent, VkPipelineStageFlags)
-    {
-    }
-
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents(VkCommandBuffer, uint32_t, const VkEvent*, VkPipelineStageFlags,
-                                                                     VkPipelineStageFlags, uint32_t, const VkMemoryBarrier*, uint32_t,
-                                                                     const VkBufferMemoryBarrier*, uint32_t, const VkImageMemoryBarrier*)
-    {
-    }
-
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent2(VkCommandBuffer, VkEvent, const VkDependencyInfo*)
-    {
-    }
-
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent2(VkCommandBuffer, VkEvent, VkPipelineStageFlags2)
-    {
-    }
-
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents2(VkCommandBuffer, uint32_t, const VkEvent*, const VkDependencyInfo*)
-    {
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreateInfo,
@@ -3160,168 +3288,125 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    namespace
-    {
-        gb::image_subresource_range to_wire_range(const VkImageSubresourceRange& range)
-        {
-            gb::image_subresource_range out{};
-            out.aspect_mask = range.aspectMask;
-            out.base_mip_level = range.baseMipLevel;
-            out.level_count = range.levelCount;
-            out.base_array_layer = range.baseArrayLayer;
-            out.layer_count = range.layerCount;
-            return out;
-        }
-    }
-
-    namespace
-    {
-        // A cmd_pipeline_barrier record, sized up front from its barrier counts.
-        class pipeline_barrier_record
-        {
-          public:
-            pipeline_barrier_record(const VkCommandBuffer command_buffer, const VkDependencyFlags dependency_flags,
-                                    const uint32_t memory_barrier_count, const uint32_t buffer_barrier_count,
-                                    const uint32_t image_barrier_count)
-                : message_(sizeof(gb::cmd_pipeline_barrier_request) + memory_barrier_count * sizeof(gb::barrier_masks) +
-                           buffer_barrier_count * sizeof(gb::buffer_memory_barrier) +
-                           image_barrier_count * sizeof(gb::image_memory_barrier))
-            {
-                const gb::cmd_pipeline_barrier_request header{.command_buffer = to_object_id(command_buffer),
-                                                              .dependency_flags = dependency_flags,
-                                                              .memory_barrier_count = memory_barrier_count,
-                                                              .buffer_barrier_count = buffer_barrier_count,
-                                                              .image_barrier_count = image_barrier_count};
-                this->command_buffer_ = header.command_buffer;
-                this->put(&header, sizeof(header));
-            }
-
-            // Memory barriers first, then buffer barriers, then image barriers.
-            void add(const gb::barrier_masks& barrier)
-            {
-                this->put(&barrier, sizeof(barrier));
-            }
-
-            void add(const gb::buffer_memory_barrier& barrier)
-            {
-                this->put(&barrier, sizeof(barrier));
-            }
-
-            void add(const gb::image_memory_barrier& barrier)
-            {
-                this->put(&barrier, sizeof(barrier));
-            }
-
-            void record() const
-            {
-                record_command(this->command_buffer_, gb::command::cmd_pipeline_barrier, this->message_.data(), this->message_.size());
-            }
-
-          private:
-            void put(const void* data, const size_t size)
-            {
-                std::memcpy(this->message_.data() + this->cursor_, data, size);
-                this->cursor_ += size;
-            }
-
-            std::vector<uint8_t> message_{};
-            size_t cursor_{};
-            gb::object_id command_buffer_{};
-        };
-
-        gb::buffer_memory_barrier to_wire_buffer_barrier(const gb::barrier_masks& masks, const uint32_t src_queue_family_index,
-                                                         const uint32_t dst_queue_family_index, const VkBuffer buffer,
-                                                         const VkDeviceSize offset, const VkDeviceSize size)
-        {
-            return {.masks = masks,
-                    .src_queue_family_index = src_queue_family_index,
-                    .dst_queue_family_index = dst_queue_family_index,
-                    .buffer = to_object_id(buffer),
-                    .offset = offset,
-                    .size = size};
-        }
-
-        gb::image_memory_barrier to_wire_image_barrier(const gb::barrier_masks& masks, const VkImageLayout old_layout,
-                                                       const VkImageLayout new_layout, const uint32_t src_queue_family_index,
-                                                       const uint32_t dst_queue_family_index, const VkImage image,
-                                                       const VkImageSubresourceRange& range)
-        {
-            return {.masks = masks,
-                    .old_layout = static_cast<uint32_t>(old_layout),
-                    .new_layout = static_cast<uint32_t>(new_layout),
-                    .src_queue_family_index = src_queue_family_index,
-                    .dst_queue_family_index = dst_queue_family_index,
-                    .image = to_object_id(image),
-                    .subresource = to_wire_range(range),
-                    .reserved = 0};
-        }
-    }
-
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
     vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
                          VkDependencyFlags dependencyFlags, uint32_t memoryBarrierCount, const VkMemoryBarrier* pMemoryBarriers,
                          uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier* pBufferMemoryBarriers,
                          uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier* pImageMemoryBarriers)
     {
-        const auto masks = [&](const VkAccessFlags src_access, const VkAccessFlags dst_access) {
-            return gb::barrier_masks{.src_stage_mask = srcStageMask,
-                                     .src_access_mask = src_access,
-                                     .dst_stage_mask = dstStageMask,
-                                     .dst_access_mask = dst_access};
-        };
-
+        auto dependency = legacy_dependency(srcStageMask, dstStageMask, dependencyFlags, std::span(pMemoryBarriers, memoryBarrierCount),
+                                            std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
+                                            std::span(pImageMemoryBarriers, imageMemoryBarrierCount));
         // Without barriers, the call still orders the source stages before the destination stages.
-        const bool stages_only = memoryBarrierCount == 0 && bufferMemoryBarrierCount == 0 && imageMemoryBarrierCount == 0;
-        pipeline_barrier_record record(commandBuffer, dependencyFlags, stages_only ? 1 : memoryBarrierCount, bufferMemoryBarrierCount,
-                                       imageMemoryBarrierCount);
-        if (stages_only)
+        if (dependency.memory_barriers.empty() && dependency.buffer_barriers.empty() && dependency.image_barriers.empty())
         {
-            record.add(masks(0, 0));
+            dependency.memory_barriers.push_back(
+                {.src_stage_mask = srcStageMask, .src_access_mask = 0, .dst_stage_mask = dstStageMask, .dst_access_mask = 0});
         }
-        for (const VkMemoryBarrier& b : std::span(pMemoryBarriers, memoryBarrierCount))
-        {
-            record.add(masks(b.srcAccessMask, b.dstAccessMask));
-        }
-        for (const VkBufferMemoryBarrier& b : std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount))
-        {
-            record.add(to_wire_buffer_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex,
-                                              b.buffer, b.offset, b.size));
-        }
-        for (const VkImageMemoryBarrier& b : std::span(pImageMemoryBarriers, imageMemoryBarrierCount))
-        {
-            record.add(to_wire_image_barrier(masks(b.srcAccessMask, b.dstAccessMask), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex,
-                                             b.dstQueueFamilyIndex, b.image, b.subresourceRange));
-        }
-        record.record();
+
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        auto message = start_message(command_buffer);
+        append_dependency(message, dependency);
+        record_command(command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer,
                                                                            const VkDependencyInfo* pDependencyInfo)
     {
-        const auto masks = [](const auto& b) {
-            return gb::barrier_masks{.src_stage_mask = b.srcStageMask,
-                                     .src_access_mask = b.srcAccessMask,
-                                     .dst_stage_mask = b.dstStageMask,
-                                     .dst_access_mask = b.dstAccessMask};
-        };
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        auto message = start_message(command_buffer);
+        append_dependency(message, to_wire_dependency(*pDependencyInfo));
+        record_command(command_buffer, gb::command::cmd_pipeline_barrier, message.data(), message.size());
+    }
 
-        const VkDependencyInfo& info = *pDependencyInfo;
-        pipeline_barrier_record record(commandBuffer, info.dependencyFlags, info.memoryBarrierCount, info.bufferMemoryBarrierCount,
-                                       info.imageMemoryBarrierCount);
-        for (const VkMemoryBarrier2& b : std::span(info.pMemoryBarriers, info.memoryBarrierCount))
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent(VkCommandBuffer commandBuffer, VkEvent event,
+                                                                   VkPipelineStageFlags stageMask)
+    {
+        const gb::cmd_set_event_request request{.command_buffer = to_object_id(commandBuffer),
+                                                .event = to_object_id(event),
+                                                .legacy = 1,
+                                                .reserved = 0,
+                                                .legacy_stage_mask = stageMask};
+        record_command(request.command_buffer, gb::command::cmd_set_event, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event,
+                                                                    const VkDependencyInfo* pDependencyInfo)
+    {
+        const gb::cmd_set_event_request request{.command_buffer = to_object_id(commandBuffer),
+                                                .event = to_object_id(event),
+                                                .legacy = 0,
+                                                .reserved = 0,
+                                                .legacy_stage_mask = 0};
+        auto message = start_message(request);
+        append_dependency(message, to_wire_dependency(*pDependencyInfo));
+        record_command(request.command_buffer, gb::command::cmd_set_event, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent(VkCommandBuffer commandBuffer, VkEvent event,
+                                                                     VkPipelineStageFlags stageMask)
+    {
+        const gb::cmd_reset_event_request request{.command_buffer = to_object_id(commandBuffer),
+                                                  .event = to_object_id(event),
+                                                  .legacy = 1,
+                                                  .reserved = 0,
+                                                  .stage_mask = stageMask};
+        record_command(request.command_buffer, gb::command::cmd_reset_event, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent event,
+                                                                      VkPipelineStageFlags2 stageMask)
+    {
+        const gb::cmd_reset_event_request request{.command_buffer = to_object_id(commandBuffer),
+                                                  .event = to_object_id(event),
+                                                  .legacy = 0,
+                                                  .reserved = 0,
+                                                  .stage_mask = stageMask};
+        record_command(request.command_buffer, gb::command::cmd_reset_event, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+    vkCmdWaitEvents(VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent* pEvents, VkPipelineStageFlags srcStageMask,
+                    VkPipelineStageFlags dstStageMask, uint32_t memoryBarrierCount, const VkMemoryBarrier* pMemoryBarriers,
+                    uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier* pBufferMemoryBarriers, uint32_t imageMemoryBarrierCount,
+                    const VkImageMemoryBarrier* pImageMemoryBarriers)
+    {
+        const gb::cmd_wait_events_request request{.command_buffer = to_object_id(commandBuffer),
+                                                  .event_count = eventCount,
+                                                  .legacy = 1,
+                                                  .legacy_src_stage_mask = srcStageMask,
+                                                  .legacy_dst_stage_mask = dstStageMask};
+        auto message = start_message(request);
+        for (const VkEvent event : std::span(pEvents, eventCount))
         {
-            record.add(masks(b));
+            const gb::object_id id = to_object_id(event);
+            append_bytes(message, &id, sizeof(id));
         }
-        for (const VkBufferMemoryBarrier2& b : std::span(info.pBufferMemoryBarriers, info.bufferMemoryBarrierCount))
+        append_dependency(message, legacy_dependency(srcStageMask, dstStageMask, 0, std::span(pMemoryBarriers, memoryBarrierCount),
+                                                     std::span(pBufferMemoryBarriers, bufferMemoryBarrierCount),
+                                                     std::span(pImageMemoryBarriers, imageMemoryBarrierCount)));
+        record_command(request.command_buffer, gb::command::cmd_wait_events, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount,
+                                                                      const VkEvent* pEvents, const VkDependencyInfo* pDependencyInfos)
+    {
+        const gb::cmd_wait_events_request request{.command_buffer = to_object_id(commandBuffer),
+                                                  .event_count = eventCount,
+                                                  .legacy = 0,
+                                                  .legacy_src_stage_mask = 0,
+                                                  .legacy_dst_stage_mask = 0};
+        auto message = start_message(request);
+        for (const VkEvent event : std::span(pEvents, eventCount))
         {
-            record.add(to_wire_buffer_barrier(masks(b), b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.buffer, b.offset, b.size));
+            const gb::object_id id = to_object_id(event);
+            append_bytes(message, &id, sizeof(id));
         }
-        for (const VkImageMemoryBarrier2& b : std::span(info.pImageMemoryBarriers, info.imageMemoryBarrierCount))
+        for (const VkDependencyInfo& dependency : std::span(pDependencyInfos, eventCount))
         {
-            record.add(to_wire_image_barrier(masks(b), b.oldLayout, b.newLayout, b.srcQueueFamilyIndex, b.dstQueueFamilyIndex, b.image,
-                                             b.subresourceRange));
+            append_dependency(message, to_wire_dependency(dependency));
         }
-        record.record();
+        record_command(request.command_buffer, gb::command::cmd_wait_events, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,
@@ -5531,6 +5616,8 @@ extern "C"
             }
             std::memcpy(message.data() + sizeof(header) + i * sizeof(wire), &wire, sizeof(wire));
         }
+        header.mutable_types = append_mutable_descriptor_types(message, pCreateInfo->pNext);
+        std::memcpy(message.data(), &header, sizeof(header));
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_descriptor_set_layout, message.data(), static_cast<DWORD>(message.size()), &response,
@@ -5597,6 +5684,8 @@ extern "C"
             wire.descriptor_count = pCreateInfo->pPoolSizes[i].descriptorCount;
             std::memcpy(message.data() + sizeof(header) + i * sizeof(wire), &wire, sizeof(wire));
         }
+        header.mutable_types = append_mutable_descriptor_types(message, pCreateInfo->pNext);
+        std::memcpy(message.data(), &header, sizeof(header));
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_descriptor_pool, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
@@ -6222,11 +6311,14 @@ extern "C"
         const VkDescriptorSetLayoutBindingFlagsCreateInfo* binding_flags = nullptr;
         for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
         {
-            if (next->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
+            if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
+            {
+                binding_flags = reinterpret_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(next);
+            }
+            else if (next->sType != VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT)
             {
                 return;
             }
-            binding_flags = reinterpret_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(next);
         }
         if (binding_flags && binding_flags->bindingCount != 0 &&
             (binding_flags->bindingCount != pCreateInfo->bindingCount || !binding_flags->pBindingFlags))
@@ -6269,6 +6361,8 @@ extern "C"
             }
             std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(wire), &wire, sizeof(wire));
         }
+        header.mutable_types = append_mutable_descriptor_types(message, pCreateInfo->pNext);
+        std::memcpy(message.data(), &header, sizeof(header));
 
         gb::descriptor_set_layout_support_response response{};
         if (!bridge_call(gb::ioctl_get_descriptor_set_layout_support, message.data(), static_cast<DWORD>(message.size()), &response,
@@ -6570,19 +6664,19 @@ namespace
 
     gb::pipeline_tessellation_state to_wire(const VkPipelineTessellationStateCreateInfo& state)
     {
-        const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
-            state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO);
-        return {.present = 1,
-                .flags = state.flags,
-                .patch_control_points = state.patchControlPoints,
-                .domain_origin_present = origin ? 1U : 0U,
-                .domain_origin = origin ? static_cast<uint32_t>(origin->domainOrigin) : 0U,
-                .reserved = 0};
+        gb::pipeline_tessellation_state wire{.present = 1, .flags = state.flags, .patch_control_points = state.patchControlPoints};
+        if (const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
+                state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO))
+        {
+            wire.domain_origin_present = 1;
+            wire.domain_origin = static_cast<uint32_t>(origin->domainOrigin);
+        }
+        return wire;
     }
 
     struct graphics_pipeline_stage
     {
-        uint32_t stage{}; // VkShaderStageFlagBits
+        VkShaderStageFlagBits stage{};
         resolved_stage_source source{};
         const VkSpecializationInfo* spec{};
         uint32_t spec_entries{};
@@ -6669,7 +6763,7 @@ extern "C"
                     break;
                 }
                 const VkSpecializationInfo* spec = stage_info.pSpecializationInfo;
-                stages.push_back({.stage = static_cast<uint32_t>(stage_info.stage),
+                stages.push_back({.stage = stage_info.stage,
                                   .source = source,
                                   .spec = spec,
                                   .spec_entries = (spec && spec->pMapEntries) ? spec->mapEntryCount : 0u,
@@ -6899,7 +6993,7 @@ extern "C"
             };
             for (const graphics_pipeline_stage& stage : stages)
             {
-                const gb::pipeline_shader_stage wire{.stage = stage.stage,
+                const gb::pipeline_shader_stage wire{.stage = static_cast<uint32_t>(stage.stage),
                                                      .spec_entry_count = stage.spec_entries,
                                                      .spec_data_size = stage.spec_bytes,
                                                      .reserved = 0,

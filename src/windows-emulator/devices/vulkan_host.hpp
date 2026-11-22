@@ -378,9 +378,21 @@ namespace sogen
             subresource_range range;
         };
 
-        // Records a VkDependencyInfo into the (recording) command buffer.
-        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags, std::span<const barrier_masks> memory_barriers,
-                                     std::span<const buffer_barrier> buffer_barriers, std::span<const image_barrier> image_barriers);
+        struct dependency_info
+        {
+            uint32_t flags;
+            std::span<const barrier_masks> memory_barriers;
+            std::span<const buffer_barrier> buffer_barriers;
+            std::span<const image_barrier> image_barriers;
+        };
+
+        int32_t cmd_pipeline_barrier(uint64_t command_buffer, const dependency_info& dependency);
+        // A legacy vkCmdSetEvent has only a stage mask and no dependency.
+        int32_t cmd_set_event(uint64_t command_buffer, uint64_t event, const dependency_info* dependency, uint64_t legacy_stage_mask);
+        int32_t cmd_reset_event(uint64_t command_buffer, uint64_t event, uint64_t stage_mask, bool legacy);
+        // A legacy vkCmdWaitEvents has one dependency for all events, whose barriers use the given stage masks.
+        int32_t cmd_wait_events(uint64_t command_buffer, std::span<const uint64_t> events, std::span<const dependency_info> dependencies,
+                                bool legacy, uint64_t legacy_src_stage_mask, uint64_t legacy_dst_stage_mask);
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
@@ -667,6 +679,9 @@ namespace sogen
             uint32_t binding_flags;
         };
 
+        // The VkDescriptorTypes of one VkMutableDescriptorTypeListEXT.
+        using mutable_descriptor_type_list = std::vector<uint32_t>;
+
         // VkDescriptorPoolSize as plain integers.
         struct descriptor_pool_size
         {
@@ -703,12 +718,14 @@ namespace sogen
         };
 
         int32_t create_descriptor_set_layout(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                             uint64_t& out_layout);
+                                             std::span<const mutable_descriptor_type_list> mutable_types, uint64_t& out_layout);
         int32_t get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                                  uint32_t& supported, uint32_t& max_variable_descriptor_count);
+                                                  std::span<const mutable_descriptor_type_list> mutable_types, uint32_t& supported,
+                                                  uint32_t& max_variable_descriptor_count);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
         int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, uint32_t flags, uint32_t max_inline_uniform_block_bindings,
-                                       std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
+                                       std::span<const descriptor_pool_size> sizes,
+                                       std::span<const mutable_descriptor_type_list> mutable_types, uint64_t& out_pool);
         int32_t reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags);
         void destroy_descriptor_pool(uint64_t device, uint64_t pool);
         // Allocates one set per layout id; writes the allocated set ids into out_sets, out_count gets the

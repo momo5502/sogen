@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 50;
+    inline constexpr uint32_t protocol_version = 51;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -225,6 +225,12 @@ namespace sogen::gpu_bridge
         // Runs the command ring to its head, as every other call does before itself; the shim sends it when the ring is
         // full. No input; answers a result_response with the ring's first_error.
         drain_command_ring = 0x8AF,
+        // Recorded: vkCmdSetEvent(2), a cmd_set_event_request.
+        cmd_set_event = 0x8B0,
+        // Recorded: vkCmdResetEvent(2), a cmd_reset_event_request.
+        cmd_reset_event = 0x8B1,
+        // Recorded: vkCmdWaitEvents(2), a cmd_wait_events_request.
+        cmd_wait_events = 0x8B2,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -1202,15 +1208,51 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // A VkDependencyInfo. The barriers trail the header: memory_barrier_count barrier_masks, then buffer_barrier_count
+    // A VkDependencyInfo. Its barriers follow it: memory_barrier_count barrier_masks, then buffer_barrier_count
     // buffer_memory_barrier, then image_barrier_count image_memory_barrier.
-    struct cmd_pipeline_barrier_request
+    struct dependency_info_header
     {
-        object_id command_buffer;
         uint32_t dependency_flags; // VkDependencyFlags
         uint32_t memory_barrier_count;
         uint32_t buffer_barrier_count;
         uint32_t image_barrier_count;
+    };
+
+    // Followed by one dependency_info_header with its barriers.
+    struct cmd_pipeline_barrier_request
+    {
+        object_id command_buffer;
+        dependency_info_header dependency;
+    };
+
+    // vkCmdSetEvent carries legacy_stage_mask; vkCmdSetEvent2 is followed by one dependency_info_header with its barriers.
+    struct cmd_set_event_request
+    {
+        object_id command_buffer;
+        object_id event;
+        uint32_t legacy;
+        uint32_t reserved;
+        uint64_t legacy_stage_mask; // VkPipelineStageFlags
+    };
+
+    struct cmd_reset_event_request
+    {
+        object_id command_buffer;
+        object_id event;
+        uint32_t legacy;
+        uint32_t reserved;
+        uint64_t stage_mask; // VkPipelineStageFlags, or VkPipelineStageFlags2 unless legacy
+    };
+
+    // Followed by event_count object_id events, then a dependency_info_header with its barriers per event for
+    // vkCmdWaitEvents2, or one for vkCmdWaitEvents, whose barriers all use the legacy stage masks.
+    struct cmd_wait_events_request
+    {
+        object_id command_buffer;
+        uint32_t event_count;
+        uint32_t legacy;
+        uint64_t legacy_src_stage_mask; // VkPipelineStageFlags
+        uint64_t legacy_dst_stage_mask; // VkPipelineStageFlags
     };
 
     struct cmd_clear_color_image_request
@@ -2451,13 +2493,24 @@ namespace sogen::gpu_bridge
         uint32_t binding_flags;    // VkDescriptorBindingFlags
     };
 
+    // VkMutableDescriptorTypeCreateInfoEXT trails the request's own array: one type count per list, then all lists'
+    // VkDescriptorTypes back to back.
+    struct mutable_descriptor_type_lists
+    {
+        uint32_t list_count;
+        uint32_t type_count;
+        // uint32_t type_counts[list_count];
+        // uint32_t types[type_count];
+    };
+
     // ioctl_create_descriptor_set_layout: in header immediately followed by `binding_count`
-    // descriptor_set_layout_binding entries; out = object_response
+    // descriptor_set_layout_binding entries and the mutable type lists; out = object_response
     struct create_descriptor_set_layout_request
     {
         object_id device;
         uint32_t binding_count;
         uint32_t flags; // VkDescriptorSetLayoutCreateFlags
+        mutable_descriptor_type_lists mutable_types;
         // descriptor_set_layout_binding bindings[binding_count];
     };
 
@@ -2466,6 +2519,7 @@ namespace sogen::gpu_bridge
         object_id device;
         uint32_t binding_count;
         uint32_t flags; // VkDescriptorSetLayoutCreateFlags
+        mutable_descriptor_type_lists mutable_types;
         // descriptor_set_layout_binding bindings[binding_count];
     };
 
@@ -2484,7 +2538,7 @@ namespace sogen::gpu_bridge
     };
 
     // ioctl_create_descriptor_pool: in header immediately followed by `pool_size_count`
-    // descriptor_pool_size entries; out = object_response
+    // descriptor_pool_size entries and the mutable type lists; out = object_response
     struct create_descriptor_pool_request
     {
         object_id device;
@@ -2492,6 +2546,7 @@ namespace sogen::gpu_bridge
         uint32_t pool_size_count;
         uint32_t flags; // VkDescriptorPoolCreateFlags
         uint32_t max_inline_uniform_block_bindings;
+        mutable_descriptor_type_lists mutable_types;
         // descriptor_pool_size pool_sizes[pool_size_count];
     };
 
@@ -2793,7 +2848,11 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(barrier_masks) == 32, "wire layout drift");
     static_assert(sizeof(buffer_memory_barrier) == 64, "wire layout drift");
     static_assert(sizeof(image_memory_barrier) == 80, "wire layout drift");
+    static_assert(sizeof(dependency_info_header) == 16, "wire layout drift");
     static_assert(sizeof(cmd_pipeline_barrier_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_event_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_reset_event_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_wait_events_request) == 32, "wire layout drift");
     static_assert(sizeof(acquire_next_image_request) == 32, "wire layout drift");
     static_assert(sizeof(get_surface_support_request) == 24, "wire layout drift");
     static_assert(sizeof(surface_format) == 8, "wire layout drift");
@@ -2828,7 +2887,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_write_timestamp2_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_query_pool_results_request) == 56, "wire layout drift");
-    static_assert(sizeof(create_descriptor_pool_request) == 24, "wire layout drift");
+    static_assert(sizeof(create_descriptor_pool_request) == 32, "wire layout drift");
     static_assert(sizeof(allocate_descriptor_sets_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_draw_indexed_indirect_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_draw_indexed_indirect_count_request) == 48, "wire layout drift");
@@ -2868,7 +2927,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
     static_assert(sizeof(cmd_set_sample_mask_request) == 24, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 20, "wire layout drift");
-    static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
+    static_assert(sizeof(create_descriptor_set_layout_request) == 24, "wire layout drift");
+    static_assert(sizeof(get_descriptor_set_layout_support_request) == 24, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_support_response) == 12, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_push_descriptor_set_request) == 32, "wire layout drift");

@@ -64,7 +64,7 @@ namespace sogen::test
                                                                           .stage_flags = VK_SHADER_STAGE_ALL,
                                                                           .binding_flags = 0}};
                 uint64_t made = 0;
-                return this->host.create_descriptor_set_layout(this->device, 0, bindings, made) == VK_SUCCESS ? made : 0;
+                return this->host.create_descriptor_set_layout(this->device, 0, bindings, {}, made) == VK_SUCCESS ? made : 0;
             }
 
             // A pool with room for max_sets sets of the layout.
@@ -73,7 +73,7 @@ namespace sogen::test
                 const std::array sizes{
                     vulkan_host::descriptor_pool_size{.descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptor_count = max_sets}};
                 uint64_t pool = 0;
-                return this->host.create_descriptor_pool(this->device, max_sets, flags, 0, sizes, pool) == VK_SUCCESS ? pool : 0;
+                return this->host.create_descriptor_pool(this->device, max_sets, flags, 0, sizes, {}, pool) == VK_SUCCESS ? pool : 0;
             }
 
             // A set allocated the way the shim defers it, under the guest's own id n.
@@ -133,13 +133,13 @@ namespace sogen::test
                                                                   .stage_flags = VK_SHADER_STAGE_ALL,
                                                                   .binding_flags = 0}};
         uint64_t layout = 0;
-        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, bindings, layout), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, bindings, {}, layout), VK_SUCCESS);
 
         // Like DXVK's pools, this one cannot free single sets; with maxSets 1 every set after the first exceeds it.
         const std::array sizes{
             vulkan_host::descriptor_pool_size{.descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptor_count = 1}};
         uint64_t pool = 0;
-        ASSERT_EQ(host.create_descriptor_pool(device, 1, 0, 0, sizes, pool), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_pool(device, 1, 0, 0, sizes, {}, pool), VK_SUCCESS);
 
         const std::array layouts{layout};
         for (uint64_t n = 1; n <= 3; ++n)
@@ -161,7 +161,7 @@ namespace sogen::test
         std::array<uint64_t, 2> freeable_pools{};
         for (auto& freeable : freeable_pools)
         {
-            ASSERT_EQ(host.create_descriptor_pool(device, 1, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, 0, sizes, freeable),
+            ASSERT_EQ(host.create_descriptor_pool(device, 1, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, 0, sizes, {}, freeable),
                       VK_SUCCESS);
         }
 
@@ -226,22 +226,22 @@ namespace sogen::test
         };
         uint64_t one_buffer = 0;
         uint64_t two_buffers = 0;
-        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, uniform_buffers(1), one_buffer), VK_SUCCESS);
-        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, uniform_buffers(2), two_buffers), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, uniform_buffers(1), {}, one_buffer), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_set_layout(device, 0, uniform_buffers(2), {}, two_buffers), VK_SUCCESS);
 
         const std::array one_uniform_buffer{
             vulkan_host::descriptor_pool_size{.descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptor_count = 1}};
 
         // Two sets of one uniform buffer each, from a pool with room for two sets but one uniform buffer.
         uint64_t pool = 0;
-        ASSERT_EQ(host.create_descriptor_pool(device, 2, 0, 0, one_uniform_buffer, pool), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_pool(device, 2, 0, 0, one_uniform_buffer, {}, pool), VK_SUCCESS);
         const std::array pair{one_buffer, one_buffer};
         const std::array pair_ids{gpu_bridge::guest_chosen_object_id | 1, gpu_bridge::guest_chosen_object_id | 2};
         EXPECT_EQ(host.allocate_descriptor_sets_as(device, pool, pair, {}, pair_ids), VK_SUCCESS);
 
         // One set of two uniform buffers, from a pool with room for one set and one uniform buffer.
         uint64_t small_pool = 0;
-        ASSERT_EQ(host.create_descriptor_pool(device, 1, 0, 0, one_uniform_buffer, small_pool), VK_SUCCESS);
+        ASSERT_EQ(host.create_descriptor_pool(device, 1, 0, 0, one_uniform_buffer, {}, small_pool), VK_SUCCESS);
         const std::array wide{two_buffers};
         const std::array wide_ids{gpu_bridge::guest_chosen_object_id | 3};
         EXPECT_EQ(host.allocate_descriptor_sets_as(device, small_pool, wide, {}, wide_ids), VK_SUCCESS);
