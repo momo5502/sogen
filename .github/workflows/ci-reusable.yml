@@ -1421,10 +1421,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Flutter's Gradle tooling decides which Kotlin and plugin versions the build downloads, so a pinned release keeps
+      # that set, and the Gradle cache below, from changing with every Flutter release.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.50.1
 
       # dart format reads the page width from analysis_options.yaml, which includes a package.
       - name: Fetch App Dependencies
@@ -1519,6 +1522,19 @@ jobs:
           }
           EOF
 
+      # The dependencies Gradle downloaded for the same Flutter release and app build files, so a build only asks Maven
+      # Central and the Plugin Portal for what changed.
+      - name: Restore Gradle Dependencies
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-flutter-3.50.1-${{ hashFiles('app/android/**/*.gradle.kts', 'app/android/gradle/wrapper/gradle-wrapper.properties', 'app/pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-flutter-3.50.1-
+
       # Some plugin markers (org.gradle.kotlin.kotlin-dsl) are only on the Plugin Portal, which intermittently answers 404.
       # A retry refreshes dependencies, since Gradle otherwise reuses the cached miss.
       - name: Build APK
@@ -1529,6 +1545,16 @@ jobs:
             export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
           done
           exit 1
+
+      # Only a successful build: Gradle also caches modules a repository failed to deliver.
+      - name: Save Gradle Dependencies
+        if: success() && github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Verify Bundled Guest Shims
         run: |
