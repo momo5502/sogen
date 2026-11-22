@@ -6695,7 +6695,12 @@ namespace
 
     gb::pipeline_tessellation_state to_wire(const VkPipelineTessellationStateCreateInfo& state)
     {
-        gb::pipeline_tessellation_state wire{.present = 1, .flags = state.flags, .patch_control_points = state.patchControlPoints};
+        gb::pipeline_tessellation_state wire{.present = 1,
+                                             .flags = state.flags,
+                                             .patch_control_points = state.patchControlPoints,
+                                             .domain_origin_present = 0,
+                                             .domain_origin = 0,
+                                             .reserved = 0};
         if (const auto* origin = find_in_chain<VkPipelineTessellationDomainOriginStateCreateInfo>(
                 state.pNext, VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO))
         {
