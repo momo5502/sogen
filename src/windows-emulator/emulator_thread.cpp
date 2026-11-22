@@ -35,7 +35,7 @@ namespace sogen
         void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr, uint64_t gdt_base)
         {
             const uint64_t base = teb32_addr;
-            const uint32_t limit = sizeof(TEB32) - 1;
+            const uint32_t limit = 0xFFF; // 4 KiB - 1 (Windows WOW64 FS limit).
 
             // Build the GDT descriptor matching Windows format exactly
             // Format: | Base[31:24] | G|D|L|AVL | Limit[19:16] | P|DPL|S|Type | Base[23:16] | Base[15:0] | Limit[15:0] |
