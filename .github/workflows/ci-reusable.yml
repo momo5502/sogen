@@ -1485,6 +1485,8 @@ jobs:
       # resolve only through the Gradle Plugin Portal, whose Maven Central proxy intermittently answers 404. Gradle does
       # not retry a 404, so resolve from Maven Central first in every build, included builds too. Maven Central itself
       # sometimes reports artifacts missing; Google's mirror of it is tried first, with Central and the Portal behind it.
+      # The same applies to the ordinary dependencies of every project, whose own repositories are Google's Android
+      # repository and Maven Central, so the mirror is put in front of those too.
       - name: Resolve Gradle Plugins From Maven Central
         run: |
           mkdir -p ~/.gradle/init.d
@@ -1498,6 +1500,14 @@ jobs:
                   maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
                   mavenCentral()
                   gradlePluginPortal()
+              }
+          }
+          allprojects {
+              buildscript.repositories {
+                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+              }
+              repositories {
+                  maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
               }
           }
           EOF
