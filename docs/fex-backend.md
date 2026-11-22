@@ -143,9 +143,10 @@ no-access pages stops the other vCPUs once so they arm the new watchpoints.
 
 - **Snapshots are refused.** `serialize_state`/`deserialize_state` throw "Multi-vCPU snapshots are
   not supported yet", as in WHP.
-- **A host copy can widen protection for the whole process.** A host read or write of guest memory
-  that lacks the permission it needs changes the host protection while it copies, so another vCPU's
-  guest access to that memory during the copy does not fault.
+- **On Linux, a host copy can widen protection for the whole process.** A host read or write of
+  guest memory that lacks the permission it needs changes the host protection while it copies, so
+  another vCPU's guest access to that memory during the copy does not fault. macOS has no such
+  window: it copies through a private alias of the host pages and never changes their protection.
 - **Linux tracked memory has a flush window.** The cache flush that brings a stale tracked chunk up to
   date needs the chunk readable, so another vCPU can read its old cache lines between the protection
   change and the flush.
