@@ -2,6 +2,8 @@
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
 #include <algorithm>
+#include <bit>
+#include <limits>
 #include <new>
 
 #include <utils/io.hpp>
@@ -59,6 +61,28 @@ namespace sogen
             {
                 throw std::runtime_error("Unsupported or inconsistent PE machine and optional header");
             }
+        }
+
+        template <typename T>
+        PENTHeaders_t<T> read_nt_headers(const utils::safe_buffer_accessor<const std::byte>& buffer, const size_t nt_headers_offset)
+        {
+            PENTHeaders_t<T> nt_headers{};
+            constexpr auto optional_offset = offsetof(PENTHeaders_t<T>, OptionalHeader);
+            std::memcpy(&nt_headers, buffer.get_pointer_for_range(nt_headers_offset, optional_offset), optional_offset);
+            constexpr auto directories_offset = offsetof(PEOptionalHeader_t<T>, DataDirectory);
+            const auto optional_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+            if (optional_size < directories_offset)
+            {
+                throw std::runtime_error("Optional header is too small");
+            }
+            const auto* optional_data = buffer.get_pointer_for_range(nt_headers_offset + optional_offset, optional_size);
+            std::memcpy(&nt_headers.OptionalHeader, optional_data, std::min<size_t>(optional_size, sizeof(nt_headers.OptionalHeader)));
+            auto& directories = nt_headers.OptionalHeader.DataDirectory;
+            const auto directory_count = std::min<size_t>({nt_headers.OptionalHeader.NumberOfRvaAndSizes, std::size(directories),
+                                                           (optional_size - directories_offset) / sizeof(directories[0])});
+            std::fill(std::begin(directories) + directory_count, std::end(directories), PEDirectory_t2{});
+            nt_headers.OptionalHeader.NumberOfRvaAndSizes = static_cast<uint32_t>(directory_count);
+            return nt_headers;
         }
 
         bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine)
@@ -564,39 +588,106 @@ namespace sogen
             return optional_header.SectionAlignment < page_align_up(1);
         }
 
+        // Windows rejects an image whose sections do not follow each other without gaps, in order, each slot
+        // sized by its VirtualSize (SizeOfRawData when that is 0) and rounded up to SectionAlignment. Only a
+        // sub-page-aligned image, which Windows maps as the file itself, may have gaps and unaligned sections.
+        template <typename T>
+        void validate_image_layout(const utils::safe_buffer_accessor<const std::byte>& buffer, const PENTHeaders_t<T>& nt_headers,
+                                   const uint64_t nt_headers_offset)
+        {
+            const auto& optional_header = nt_headers.OptionalHeader;
+            const uint64_t section_alignment = optional_header.SectionAlignment;
+            const uint64_t file_alignment = optional_header.FileAlignment;
+            const uint64_t image_size = page_align_up(optional_header.SizeOfImage);
+            const uint64_t file_size = buffer.get_buffer().size();
+
+            const auto require = [](const bool valid, const NTSTATUS status = STATUS_INVALID_IMAGE_FORMAT) {
+                if (!valid)
+                {
+                    throw invalid_image_format("Invalid image layout", status);
+                }
+            };
+
+            // The kernel fails an image whose raw data end, rounded up to FileAlignment, wraps 32 bits in any section (without
+            // the rounding in a sub-page image), compares only the raw data end of the last section header with the file size,
+            // whatever its pointer, and rejects any other section that has raw data at pointer 0 as not starting with MZ.
+            const auto raw_data_end_fits = [](const IMAGE_SECTION_HEADER& section, const uint64_t alignment) {
+                return section.SizeOfRawData == 0 || align_up(static_cast<uint64_t>(section.PointerToRawData) + section.SizeOfRawData,
+                                                              alignment) <= std::numeric_limits<uint32_t>::max();
+            };
+
+            require(image_size != 0 && optional_header.SizeOfHeaders <= image_size);
+            require(section_alignment != 0 && std::has_single_bit(file_alignment) && file_alignment <= section_alignment);
+
+            const auto first_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
+            const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(first_section_offset));
+            const auto section_count = nt_headers.FileHeader.NumberOfSections;
+
+            if (is_mapped_as_one_region(optional_header))
+            {
+                for (size_t i = 0; i < section_count; ++i)
+                {
+                    const auto section = sections.get(i);
+                    require(raw_data_end_fits(section, 1));
+                    require(section.PointerToRawData == section.VirtualAddress && section.Misc.VirtualSize <= section.SizeOfRawData);
+                }
+                return;
+            }
+
+            require(std::has_single_bit(section_alignment) && file_alignment >= 0x200);
+            require(section_count != 0);
+
+            uint64_t next_virtual_address = align_up(optional_header.SizeOfHeaders, section_alignment);
+            for (size_t i = 0; i < section_count; ++i)
+            {
+                const auto section = sections.get(i);
+                const uint64_t slot_size = section.Misc.VirtualSize ? section.Misc.VirtualSize : section.SizeOfRawData;
+                require(section.VirtualAddress == next_virtual_address && slot_size != 0);
+                require(raw_data_end_fits(section, file_alignment));
+                require(i + 1 == section_count || section.PointerToRawData != 0 || section.SizeOfRawData == 0, STATUS_INVALID_IMAGE_NOT_MZ);
+                next_virtual_address += align_up(slot_size, section_alignment);
+            }
+
+            require(next_virtual_address <= image_size);
+
+            const auto last_section = sections.get(section_count - 1);
+            require(last_section.SizeOfRawData == 0 ||
+                    static_cast<uint64_t>(last_section.PointerToRawData) + last_section.SizeOfRawData <= file_size);
+        }
+
         struct section_file_range
         {
             size_t offset{};
             size_t size{};
         };
 
+        section_file_range limit_to_file(const section_file_range range, const uint64_t file_size)
+        {
+            return {.offset = range.offset,
+                    .size = range.offset < file_size ? static_cast<size_t>(std::min<uint64_t>(range.size, file_size - range.offset)) : 0};
+        }
+
         // In a page-aligned image, the kernel reads the data of a section from PointerToRawData rounded down to a
         // 0x200-byte sector up to the end of the raw data rounded up to FileAlignment, limited to the section and the end
         // of the file. Only the pages that start below SizeOfRawData get file data; the kernel fills the others with
-        // zeros. Packers such as Upack set PointerToRawData below 0x200 to map the headers into a section.
+        // zeros, as it does for data past the end of the file. Packers such as Upack set PointerToRawData below 0x200 to
+        // map the headers into a section.
         section_file_range get_section_file_range(const IMAGE_SECTION_HEADER& section, const uint64_t section_size,
                                                   const uint64_t file_alignment, const uint64_t file_size)
         {
-            // The kernel fills a section with PointerToRawData 0 with zeros, whatever its SizeOfRawData. As for other
-            // sections, raw data that goes past the end of the file fails the mapping.
+            // The kernel fills a section with PointerToRawData 0 with zeros, whatever its SizeOfRawData.
             if (section.PointerToRawData == 0)
             {
-                if (std::min<uint64_t>(section_size, section.SizeOfRawData) > file_size)
-                {
-                    throw std::runtime_error("Section data extends beyond the file");
-                }
-
                 return {};
             }
 
             constexpr uint64_t sector_size = 0x200;
-            const uint64_t raw_start = section.PointerToRawData;
-            const uint64_t raw_end = raw_start + section.SizeOfRawData;
-            const auto start = align_down(raw_start, sector_size);
-            // The end of the file limits only the rounded part, so raw data that goes past the end of the file fails the read.
-            const auto aligned_end = std::max(raw_end, std::min(align_up(raw_end, file_alignment), file_size));
-            const auto end = std::min({aligned_end, start + section_size, start + page_align_up(section.SizeOfRawData)});
-            return {.offset = static_cast<size_t>(start), .size = static_cast<size_t>(end - start)};
+            const uint64_t raw_end = static_cast<uint64_t>(section.PointerToRawData) + section.SizeOfRawData;
+            const auto start = align_down(section.PointerToRawData, sector_size);
+            const auto end = std::min(
+                {align_up(raw_end, file_alignment), start + section_size, start + page_align_up(section.SizeOfRawData), file_size});
+            return end > start ? section_file_range{.offset = static_cast<size_t>(start), .size = static_cast<size_t>(end - start)}
+                               : section_file_range{};
         }
 
         template <typename T>
@@ -639,12 +730,15 @@ namespace sogen
 
                 if (section.SizeOfRawData > 0)
                 {
-                    const auto range = mapped_as_one_region
-                                           ? section_file_range{.offset = section.PointerToRawData, .size = size_of_data}
-                                           : get_section_file_range(section, size_of_section, nt_headers.OptionalHeader.FileAlignment,
-                                                                    buffer.get_buffer().size());
-                    const auto* source_ptr = buffer.get_pointer_for_range(range.offset, range.size);
-                    memory.write_memory(target_ptr, source_ptr, range.size);
+                    const uint64_t file_size = buffer.get_buffer().size();
+                    const auto range =
+                        mapped_as_one_region
+                            ? limit_to_file({.offset = section.PointerToRawData, .size = size_of_data}, file_size)
+                            : get_section_file_range(section, size_of_section, nt_headers.OptionalHeader.FileAlignment, file_size);
+                    if (range.size)
+                    {
+                        memory.write_memory(target_ptr, buffer.get_pointer_for_range(range.offset, range.size), range.size);
+                    }
                 }
 
                 const auto permissions = get_section_permissions(section, nt_headers.FileHeader.Machine);
@@ -698,10 +792,6 @@ namespace sogen
             binary.pe_sections.clear();
 
             const auto image_size = static_cast<size_t>(binary.size_of_image);
-            if (optional_header.SizeOfHeaders > image_size)
-            {
-                throw std::runtime_error("Headers extend beyond the image");
-            }
 
             if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true, memory_region_kind::section_image))
             {
@@ -779,34 +869,15 @@ namespace sogen
 
         const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
         const auto nt_headers_offset = dos_header.e_lfanew;
-
-        PENTHeaders_t<T> nt_headers{};
-        constexpr auto optional_offset = offsetof(PENTHeaders_t<T>, OptionalHeader);
-        std::memcpy(&nt_headers, buffer.get_pointer_for_range(nt_headers_offset, optional_offset), optional_offset);
-        constexpr auto directories_offset = offsetof(PEOptionalHeader_t<T>, DataDirectory);
-        const auto optional_size = nt_headers.FileHeader.SizeOfOptionalHeader;
-        if (optional_size < directories_offset)
-        {
-            throw std::runtime_error("Optional header is too small");
-        }
-        const auto* optional_data = buffer.get_pointer_for_range(nt_headers_offset + optional_offset, optional_size);
-        std::memcpy(&nt_headers.OptionalHeader, optional_data, std::min<size_t>(optional_size, sizeof(nt_headers.OptionalHeader)));
-        auto& directories = nt_headers.OptionalHeader.DataDirectory;
-        const auto directory_count = std::min<size_t>({nt_headers.OptionalHeader.NumberOfRvaAndSizes, std::size(directories),
-                                                       (optional_size - directories_offset) / sizeof(directories[0])});
-        std::fill(std::begin(directories) + directory_count, std::end(directories), PEDirectory_t2{});
-        nt_headers.OptionalHeader.NumberOfRvaAndSizes = static_cast<uint32_t>(directory_count);
+        const auto nt_headers = read_nt_headers<T>(buffer, nt_headers_offset);
         const auto& optional_header = nt_headers.OptionalHeader;
 
         validate_image_machine(nt_headers);
+        validate_image_layout(buffer, nt_headers, nt_headers_offset);
 
         binary.image_base = optional_header.ImageBase;
         binary.image_base_file = optional_header.ImageBase;
         binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
-        if (!binary.size_of_image)
-        {
-            throw std::runtime_error("Invalid image size");
-        }
 
         const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine);
         constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
@@ -990,6 +1061,34 @@ namespace sogen
         }
 
         return binary;
+    }
+
+    NTSTATUS check_image_layout(const std::span<const std::byte> data)
+    {
+        try
+        {
+            const utils::safe_buffer_accessor<const std::byte> buffer{data};
+            const auto nt_headers_offset = buffer.as<PEDosHeader_t>(0).get().e_lfanew;
+            const auto magic = buffer.as<uint16_t>(nt_headers_offset + offsetof(PENTHeaders_t<std::uint32_t>, OptionalHeader)).get();
+            if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+            {
+                validate_image_layout(buffer, read_nt_headers<std::uint32_t>(buffer, nt_headers_offset), nt_headers_offset);
+            }
+            else if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+            {
+                validate_image_layout(buffer, read_nt_headers<std::uint64_t>(buffer, nt_headers_offset), nt_headers_offset);
+            }
+        }
+        catch (const invalid_image_format& e)
+        {
+            return e.status;
+        }
+        catch (const std::exception&)
+        {
+            // Unreadable headers are reported when the image is mapped.
+        }
+
+        return STATUS_SUCCESS;
     }
 
     bool unmap_module(memory_manager& memory, const mapped_module& mod)

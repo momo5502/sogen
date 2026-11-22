@@ -2,6 +2,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../memory_manager.hpp"
+#include "../module/module_mapping.hpp"
 
 #include <utils/io.hpp>
 
@@ -361,6 +362,11 @@ namespace sogen
                 std::vector<std::byte> file_data;
                 if (c.win_emu.file_sys.read_file(s.file_name, &file_data))
                 {
+                    if (const auto status = check_image_layout(file_data); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
                     s.cache_image_info_from_filedata(file_data);
                 }
             }

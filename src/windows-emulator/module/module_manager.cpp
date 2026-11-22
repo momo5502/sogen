@@ -407,6 +407,15 @@ namespace sogen
             }
             return nullptr;
         }
+        catch (const invalid_image_format& e)
+        {
+            logger.error("Failed to map module: %s\n", e.what());
+            if (status)
+            {
+                *status = e.status;
+            }
+            return nullptr;
+        }
         catch (const std::exception& e)
         {
             logger.error("Failed to map module: %s\n", e.what());

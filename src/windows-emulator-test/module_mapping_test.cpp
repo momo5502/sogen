@@ -35,6 +35,7 @@ namespace sogen::test
             uint32_t file_alignment{};
             uint32_t size_of_image{};
             uint32_t size_of_headers{};
+            uint32_t file_size{};
             std::vector<section_layout> sections{};
         };
 
@@ -131,13 +132,18 @@ namespace sogen::test
         using ModulePointerTypes = testing::Types<uint32_t, uint64_t>;
         TYPED_TEST_SUITE(ModuleRelocationTest, ModulePointerTypes);
 
+        template <typename Pointer = std::uint64_t>
         std::vector<std::byte> build_image(const image_layout& layout)
         {
             const auto size_of_headers = layout.size_of_headers ? layout.size_of_headers : layout.file_alignment;
-            size_t file_size = size_of_headers;
-            for (const auto& section : layout.sections)
+            size_t file_size = layout.file_size;
+            if (!file_size)
             {
-                file_size = std::max<size_t>(file_size, section.raw_offset + section.raw_size);
+                file_size = size_of_headers;
+                for (const auto& section : layout.sections)
+                {
+                    file_size = std::max<size_t>(file_size, static_cast<size_t>(section.raw_offset) + section.raw_size);
+                }
             }
 
             std::vector<std::byte> image(file_size, std::byte{});
@@ -146,17 +152,17 @@ namespace sogen::test
             dos_header.e_magic = PEDosHeader_t::k_Magic;
             dos_header.e_lfanew = k_nt_offset;
 
-            using nt_headers_t = PENTHeaders_t<std::uint64_t>;
+            using nt_headers_t = PENTHeaders_t<Pointer>;
             nt_headers_t nt_headers{};
             nt_headers.Signature = nt_headers_t::k_Signature;
-            nt_headers.FileHeader.Machine = PEMachineType::AMD64;
+            nt_headers.FileHeader.Machine = sizeof(Pointer) == 4 ? PEMachineType::I386 : PEMachineType::AMD64;
             nt_headers.FileHeader.NumberOfSections = static_cast<uint16_t>(layout.sections.size());
-            nt_headers.FileHeader.SizeOfOptionalHeader = sizeof(PEOptionalHeader_t<std::uint64_t>);
+            nt_headers.FileHeader.SizeOfOptionalHeader = sizeof(PEOptionalHeader_t<Pointer>);
             nt_headers.FileHeader.Characteristics = IMAGE_FILE_DLL;
 
             auto& optional_header = nt_headers.OptionalHeader;
-            optional_header.Magic = PEOptionalHeader_t<std::uint64_t>::k_Magic;
-            optional_header.ImageBase = k_image_base;
+            optional_header.Magic = PEOptionalHeader_t<Pointer>::k_Magic;
+            optional_header.ImageBase = static_cast<Pointer>(sizeof(Pointer) == 4 ? 0x10000000 : k_image_base);
             optional_header.SectionAlignment = layout.section_alignment;
             optional_header.FileAlignment = layout.file_alignment;
             optional_header.SizeOfImage = layout.size_of_image;
@@ -179,7 +185,11 @@ namespace sogen::test
                 poke(image, section_offset, section);
                 section_offset += sizeof(section);
 
-                std::memset(image.data() + layout_section.raw_offset, std::to_integer<int>(layout_section.fill), layout_section.raw_size);
+                if (layout_section.raw_offset && layout_section.raw_offset < image.size())
+                {
+                    std::memset(image.data() + layout_section.raw_offset, std::to_integer<int>(layout_section.fill),
+                                std::min<size_t>(layout_section.raw_size, image.size() - layout_section.raw_offset));
+                }
             }
 
             return image;
@@ -255,6 +265,183 @@ namespace sogen::test
                          .fill = k_data_byte},
                     },
             };
+        }
+
+        constexpr NTSTATUS accepted = STATUS_SUCCESS;
+        constexpr NTSTATUS rejected = STATUS_INVALID_IMAGE_FORMAT;
+        constexpr NTSTATUS rejected_not_mz = STATUS_INVALID_IMAGE_NOT_MZ;
+
+        struct layout_row
+        {
+            const char* name;
+            NTSTATUS windows_status;
+            image_layout layout;
+        };
+
+        section_layout text_section(const uint32_t rva, const uint32_t virtual_size, const uint32_t raw_offset, const uint32_t raw_size)
+        {
+            return {rva, virtual_size, raw_offset, raw_size, k_code, k_text_byte};
+        }
+
+        section_layout data_section(const uint32_t rva, const uint32_t virtual_size, const uint32_t raw_offset, const uint32_t raw_size)
+        {
+            return {rva, virtual_size, raw_offset, raw_size, k_data, k_data_byte};
+        }
+
+        struct sub_page_case
+        {
+            const char* name;
+            bool windows_accepts;
+            uint32_t section_alignment;
+            uint32_t file_alignment;
+            uint32_t text_raw_size;
+            uint32_t data_virtual_size;
+            uint32_t data_raw_size;
+        };
+
+        layout_row sub_page_row(const sub_page_case& c)
+        {
+            const auto text_rva = std::max<uint32_t>(c.section_alignment, 0x200);
+            const auto data_rva = std::max<uint32_t>(2 * c.section_alignment, 0x400);
+            const auto file_size = static_cast<uint32_t>(align_up(data_rva + c.data_raw_size, 0x200));
+            return {c.name,
+                    c.windows_accepts ? accepted : rejected,
+                    {c.section_alignment,
+                     c.file_alignment,
+                     0x3000,
+                     0x200,
+                     file_size,
+                     {text_section(text_rva, 0x10, text_rva, c.text_raw_size),
+                      data_section(data_rva, c.data_virtual_size, data_rva, c.data_raw_size)}}};
+        }
+
+        struct raw_data_case
+        {
+            const char* name;
+            bool windows_accepts;
+            uint32_t section_alignment;
+            uint32_t size_of_image;
+            uint32_t data_virtual_size;
+            uint32_t data_raw_size;
+            uint32_t data_bytes_in_file;
+        };
+
+        layout_row raw_data_row(const raw_data_case& c)
+        {
+            return {c.name,
+                    c.windows_accepts ? accepted : rejected,
+                    {c.section_alignment,
+                     0x200,
+                     c.size_of_image,
+                     0x200,
+                     0x400 + c.data_bytes_in_file,
+                     {text_section(c.section_alignment, 0x10, 0x200, 0x200),
+                      data_section(2 * c.section_alignment, c.data_virtual_size, 0x400, c.data_raw_size)}}};
+        }
+
+        constexpr sub_page_case k_sub_page_cases[] = {
+            {"sp200_r200_v1FF", true, 0x200, 0x200, 0x200, 0x1FF, 0x200},
+            {"sp200_r200_v200", true, 0x200, 0x200, 0x200, 0x200, 0x200},
+            {"sp200_r200_v201", false, 0x200, 0x200, 0x200, 0x201, 0x200},
+            {"sp200_r200_v3FF", false, 0x200, 0x200, 0x200, 0x3FF, 0x200},
+            {"sp200_r200_v400", false, 0x200, 0x200, 0x200, 0x400, 0x200},
+            {"sp200_r200_v401", false, 0x200, 0x200, 0x200, 0x401, 0x200},
+            {"sp200_r200_v7FF", false, 0x200, 0x200, 0x200, 0x7FF, 0x200},
+            {"sp200_r200_v800", false, 0x200, 0x200, 0x200, 0x800, 0x200},
+            {"sp200_r200_v1000", false, 0x200, 0x200, 0x200, 0x1000, 0x200},
+            {"sp200_r200_v1800", false, 0x200, 0x200, 0x200, 0x1800, 0x200},
+            {"sp200_r400_v1FF", true, 0x200, 0x200, 0x200, 0x1FF, 0x400},
+            {"sp200_r400_v200", true, 0x200, 0x200, 0x200, 0x200, 0x400},
+            {"sp200_r400_v201", true, 0x200, 0x200, 0x200, 0x201, 0x400},
+            {"sp200_r400_v3FF", true, 0x200, 0x200, 0x200, 0x3FF, 0x400},
+            {"sp200_r400_v400", true, 0x200, 0x200, 0x200, 0x400, 0x400},
+            {"sp200_r400_v401", false, 0x200, 0x200, 0x200, 0x401, 0x400},
+            {"sp200_r400_v7FF", false, 0x200, 0x200, 0x200, 0x7FF, 0x400},
+            {"sp200_r400_v800", false, 0x200, 0x200, 0x200, 0x800, 0x400},
+            {"sp200_r400_v1000", false, 0x200, 0x200, 0x200, 0x1000, 0x400},
+            {"sp200_r400_v1800", false, 0x200, 0x200, 0x200, 0x1800, 0x400},
+            {"sp400_r200_v1FF", true, 0x400, 0x400, 0x400, 0x1FF, 0x400},
+            {"sp400_r200_v200", true, 0x400, 0x400, 0x400, 0x200, 0x400},
+            {"sp400_r200_v201", true, 0x400, 0x400, 0x400, 0x201, 0x400},
+            {"sp400_r200_v3FF", true, 0x400, 0x400, 0x400, 0x3FF, 0x400},
+            {"sp400_r200_v400", true, 0x400, 0x400, 0x400, 0x400, 0x400},
+            {"sp400_r200_v401", false, 0x400, 0x400, 0x400, 0x401, 0x400},
+            {"sp400_r200_v7FF", false, 0x400, 0x400, 0x400, 0x7FF, 0x400},
+            {"sp400_r200_v800", false, 0x400, 0x400, 0x400, 0x800, 0x400},
+            {"sp400_r200_v1000", false, 0x400, 0x400, 0x400, 0x1000, 0x400},
+            {"sp400_r200_v1800", false, 0x400, 0x400, 0x400, 0x1800, 0x400},
+            {"sp400_r400_v1FF", true, 0x400, 0x400, 0x400, 0x1FF, 0x400},
+            {"sp400_r400_v200", true, 0x400, 0x400, 0x400, 0x200, 0x400},
+            {"sp400_r400_v201", true, 0x400, 0x400, 0x400, 0x201, 0x400},
+            {"sp400_r400_v3FF", true, 0x400, 0x400, 0x400, 0x3FF, 0x400},
+            {"sp400_r400_v400", true, 0x400, 0x400, 0x400, 0x400, 0x400},
+            {"sp400_r400_v401", false, 0x400, 0x400, 0x400, 0x401, 0x400},
+            {"sp400_r400_v7FF", false, 0x400, 0x400, 0x400, 0x7FF, 0x400},
+            {"sp400_r400_v800", false, 0x400, 0x400, 0x400, 0x800, 0x400},
+            {"sp400_r400_v1000", false, 0x400, 0x400, 0x400, 0x1000, 0x400},
+            {"sp400_r400_v1800", false, 0x400, 0x400, 0x400, 0x1800, 0x400},
+            {"spsa400_r200_v200", true, 0x400, 0x200, 0x200, 0x200, 0x200},
+            {"spsa400_r200_v201", false, 0x400, 0x200, 0x200, 0x201, 0x200},
+            {"spsa400_r200_v400", false, 0x400, 0x200, 0x200, 0x400, 0x200},
+            {"spsa400_r200_v401", false, 0x400, 0x200, 0x200, 0x401, 0x200},
+            {"spsa400_r200_v1000", false, 0x400, 0x200, 0x200, 0x1000, 0x200},
+            {"sp200_r1A0_v1A0", true, 0x200, 0x200, 0x200, 0x1A0, 0x1A0},
+            {"sp200_r1A0_v1A1", false, 0x200, 0x200, 0x200, 0x1A1, 0x1A0},
+            {"sp200_r1A0_v1FF", false, 0x200, 0x200, 0x200, 0x1FF, 0x1A0},
+            {"sp200_r1A0_v200", false, 0x200, 0x200, 0x200, 0x200, 0x1A0},
+            {"sp200_r1A0_v201", false, 0x200, 0x200, 0x200, 0x201, 0x1A0},
+            {"sp_fa180_sa200", false, 0x200, 0x180, 0x200, 0x100, 0x180},
+            {"sp_sa300_fa300", false, 0x300, 0x300, 0x200, 0x100, 0x200},
+            {"sp_sa400_fa300", false, 0x400, 0x300, 0x200, 0x100, 0x200},
+            {"sp_sa100_fa100", true, 0x100, 0x100, 0x200, 0x100, 0x200},
+            {"sp_sa20_fa20", true, 0x20, 0x20, 0x200, 0x100, 0x200},
+        };
+
+        constexpr raw_data_case k_raw_data_cases[] = {
+            {"rx4k_full", true, 0x1000, 0x3000, 0x10, 0x3000, 0x3000},
+            {"rx4k_a2_short1", false, 0x1000, 0x3000, 0x10, 0x3000, 0x2FFF},
+            {"rx4k_a_in_excess", false, 0x1000, 0x3000, 0x10, 0x3000, 0x2000},
+            {"rx4k_b1_slot_plus1", false, 0x1000, 0x3000, 0x10, 0x3000, 0x1001},
+            {"rx4k_b_slot_end", false, 0x1000, 0x3000, 0x10, 0x3000, 0x1000},
+            {"rx4k_b0_slot_minus1", false, 0x1000, 0x3000, 0x10, 0x3000, 0xFFF},
+            {"rx4k_c_in_slot", false, 0x1000, 0x3000, 0x10, 0x3000, 0x800},
+            {"rx64k_full", true, 0x10000, 0x30000, 0x10, 0x12000, 0x12000},
+            {"rx64k_a2_past_slot", false, 0x10000, 0x30000, 0x10, 0x12000, 0x11000},
+            {"rx64k_slot64_end", false, 0x10000, 0x30000, 0x10, 0x12000, 0x10000},
+            {"rx64k_slot64_minus1", false, 0x10000, 0x30000, 0x10, 0x12000, 0xFFFF},
+            {"rx64k_a_in_slot", false, 0x10000, 0x30000, 0x10, 0x12000, 0x2000},
+            {"rx64k_b_page_end", false, 0x10000, 0x30000, 0x10, 0x12000, 0x1000},
+            {"rx64k_c_in_page", false, 0x10000, 0x30000, 0x10, 0x12000, 0x800},
+            {"rx_packed_huge", false, 0x1000, 0x3000, 0x10, 0x100000, 0x200},
+            {"rx_packed_vs2_slot_end", false, 0x1000, 0x4000, 0x2000, 0x100000, 0x2000},
+            {"rx_packed_vs2_slot_minus1", false, 0x1000, 0x4000, 0x2000, 0x100000, 0x1FFF},
+            {"rx_packed_vs2_in_slot", false, 0x1000, 0x4000, 0x2000, 0x100000, 0x1000},
+        };
+
+        template <typename Pointer>
+        void expect_layout(const layout_row& row)
+        {
+            const auto file = build_image<Pointer>(row.layout);
+            EXPECT_EQ(check_image_layout(file), row.windows_status);
+
+            page_memory backend{};
+            memory_manager memory{backend};
+            const auto map = [&] { return map_module_from_data<Pointer>(memory, file, "test.dll", windows_path{"C:\\test.dll"}); };
+            if (row.windows_status == accepted)
+            {
+                EXPECT_NO_THROW(map());
+                return;
+            }
+
+            try
+            {
+                map();
+                ADD_FAILURE() << "the image was mapped";
+            }
+            catch (const invalid_image_format& e)
+            {
+                EXPECT_EQ(e.status, row.windows_status);
+            }
         }
     }
 
@@ -776,5 +963,566 @@ namespace sogen::test
 
         EXPECT_THROW(this->map(layout), std::runtime_error);
         EXPECT_EQ(this->read(k_page, k_page), repeated(k_neighbour_byte, k_page));
+    }
+
+    TEST_F(ModuleMappingTest, RawDataPastTheFileEndIsZeroFilled)
+    {
+        const image_layout layout{
+            .section_alignment = k_page,
+            .file_alignment = 0x200,
+            .size_of_image = 4 * k_page,
+            .size_of_headers = 0x400,
+            .file_size = 0x1600,
+            .sections =
+                {
+                    {.rva = k_page,
+                     .virtual_size = 2 * k_page,
+                     .raw_offset = 0x400,
+                     .raw_size = 0x3000,
+                     .characteristics = k_code,
+                     .fill = k_text_byte},
+                    {.rva = 3 * k_page,
+                     .virtual_size = 0x10,
+                     .raw_offset = 0x1400,
+                     .raw_size = 0x200,
+                     .characteristics = k_data,
+                     .fill = k_data_byte},
+                },
+        };
+        this->map(layout);
+
+        EXPECT_EQ(this->read(k_page, k_page), this->file_bytes(0x400, k_page));
+        EXPECT_EQ(this->read(2 * k_page, 0x200), this->file_bytes(0x1400, 0x200));
+        EXPECT_EQ(this->read((2 * k_page) + 0x200, k_page - 0x200), repeated(std::byte{}, k_page - 0x200));
+    }
+
+    TEST(ModuleLayoutTest, ImagesAreAcceptedOrRejectedLikeWindows)
+    {
+        // Rows are Windows 11 captures that are identical for PE32 and PE32+, except the kernel_subpage_* rows, which follow the
+        // sub-page branch of ntoskrnl's MiParseImageSectionHeaders.
+        std::vector<layout_row> rows{
+            {"ctl4k",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x800, 0x400, 0x200)}}},
+            {"ctl64k",
+             accepted,
+             {0x10000, 0x200, 0x30000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x20000, 0x10, 0x400, 0x200)}}},
+            {"midgap64k",
+             rejected,
+             {0x10000, 0x200, 0x40000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x30000, 0x10, 0x400, 0x200)}}},
+            {"gap_subpage",
+             accepted,
+             {0x200, 0x200, 0x800, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x600, 0x100, 0x600, 0x200)}}},
+            {"overlap4k",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x200, 0x0, {text_section(0x1000, 0x2000, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"dup_va",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x1000, 0x10, 0x400, 0x200)}}},
+            {"out_of_order",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x2000, 0x10, 0x200, 0x200), data_section(0x1000, 0x10, 0x400, 0x200)}}},
+            {"va_in_headers",
+             rejected,
+             {0x1000, 0x200, 0x2000, 0x200, 0x0, {text_section(0x0, 0x10, 0x200, 0x200), data_section(0x1000, 0x10, 0x400, 0x200)}}},
+            {"soh_gt_first_va",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x1400, 0x0, {text_section(0x1000, 0x10, 0x1400, 0x200), data_section(0x2000, 0x10, 0x1600, 0x200)}}},
+            {"soh_gt_soi",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x4000, 0x0, {text_section(0x1000, 0x10, 0x4000, 0x200), data_section(0x2000, 0x10, 0x4200, 0x200)}}},
+            {"soh_lt_tables",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x100, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"soh_not_fa_multiple",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x300, 0x0, {text_section(0x1000, 0x10, 0x400, 0x200), data_section(0x2000, 0x10, 0x600, 0x200)}}},
+            {"nsec0", rejected, {0x1000, 0x200, 0x1000, 0x200, 0x400, {}}},
+            {"nsec0_soi_small", rejected, {0x1000, 0x200, 0x200, 0x200, 0x400, {}}},
+            {"soi_zero",
+             rejected,
+             {0x1000, 0x200, 0x0, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"va_eq_soi",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x3000, 0x10, 0x400, 0x200)}}},
+            {"short_raw_only",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x3000)}}},
+            {"short64k_2f000",
+             rejected,
+             {0x10000, 0x200, 0x2F000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x20000, 0x10, 0x400, 0x200)}}},
+            {"short64k_21000",
+             rejected,
+             {0x10000, 0x200, 0x21000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x20000, 0x10, 0x400, 0x200)}}},
+            {"long64k_31000",
+             accepted,
+             {0x10000, 0x200, 0x31000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x20000, 0x10, 0x400, 0x200)}}},
+            {"va_unaligned_4k",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2200, 0x10, 0x400, 0x200)}}},
+            {"va_unaligned_first",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1200, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"va_page_not_64k",
+             rejected,
+             {0x10000, 0x200, 0x30000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x21000, 0x10, 0x400, 0x200)}}},
+            {"lowalign_va_unaligned",
+             accepted,
+             {0x200, 0x200, 0x800, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x500, 0x10, 0x500, 0x200)}}},
+            {"sa8k",
+             accepted,
+             {0x2000, 0x200, 0x6000, 0x200, 0x0, {text_section(0x2000, 0x10, 0x200, 0x200), data_section(0x4000, 0x10, 0x400, 0x200)}}},
+            {"sa_lt_fa_4k",
+             rejected,
+             {0x1000,
+              0x2000,
+              0x3000,
+              0x200,
+              0x0,
+              {text_section(0x1000, 0x10, 0x2000, 0x2000), data_section(0x2000, 0x10, 0x4000, 0x2000)}}},
+            {"sa_lt_fa_sub",
+             rejected,
+             {0x200, 0x400, 0x800, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x400), data_section(0x400, 0x10, 0x400, 0x400)}}},
+            {"sa_ne_fa_sub",
+             accepted,
+             {0x400, 0x200, 0xC00, 0x200, 0x0, {text_section(0x400, 0x10, 0x400, 0x200), data_section(0x800, 0x10, 0x800, 0x200)}}},
+            {"sa_not_pow2",
+             rejected,
+             {0x1800, 0x200, 0x4800, 0x200, 0x0, {text_section(0x1800, 0x10, 0x200, 0x200), data_section(0x3000, 0x10, 0x400, 0x200)}}},
+            {"sa_zero",
+             rejected,
+             {0x0, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"fa_not_pow2",
+             rejected,
+             {0x1000, 0x300, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"fa_0x100",
+             rejected,
+             {0x1000, 0x100, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"fa_zero",
+             rejected,
+             {0x1000, 0x0, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x200)}}},
+            {"fa_1000",
+             accepted,
+             {0x1000,
+              0x1000,
+              0x3000,
+              0x1000,
+              0x0,
+              {text_section(0x1000, 0x10, 0x1000, 0x1000), data_section(0x2000, 0x10, 0x2000, 0x1000)}}},
+            {"lowalign_ptr_ne_va",
+             rejected,
+             {0x200, 0x200, 0x600, 0x200, 0x0, {text_section(0x200, 0x10, 0x400, 0x200), data_section(0x400, 0x10, 0x600, 0x200)}}},
+            {"lowalign_soi_odd",
+             accepted,
+             {0x200, 0x200, 0x510, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x100, 0x400, 0x200)}}},
+            {"lowalign_soi_short",
+             accepted,
+             {0x200, 0x200, 0x500, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x200, 0x400, 0x200)}}},
+            {"raw_ptr_odd",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x480, 0x200)}}},
+            {"raw_past_eof",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x500, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x400)}}},
+            {"raw_ptr_past_eof",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x400, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x2000, 0x200)}}},
+            {"raw_size_odd",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x600, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x1A0)}}},
+            {"raw_shared",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"headgap4k",
+             rejected,
+             {0x1000, 0x200, 0x7000, 0x200, 0x0, {text_section(0x3000, 0x10, 0x200, 0x200), data_section(0x4000, 0x2800, 0x400, 0x200)}}},
+            {"midgap4k",
+             rejected,
+             {0x1000, 0x200, 0x7000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x4000, 0x2800, 0x400, 0x200)}}},
+            {"rx_upx_shape",
+             accepted,
+             {0x1000,
+              0x200,
+              0x13000,
+              0x200,
+              0x1200,
+              {{0x1000, 0x10000, 0, 0, k_data, k_data_byte}, {0x11000, 0x2000, 0x200, 0x1000, k_code, k_text_byte}}}},
+            {"lr4k_example",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x400,
+              0x1600,
+              {text_section(0x1000, 0x10, 0x400, 0x3000), data_section(0x2000, 0x10, 0x1400, 0x200)}}},
+            {"lr4k_last_plus1",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x400,
+              0x1600,
+              {text_section(0x1000, 0x10, 0x400, 0x3000), data_section(0x2000, 0x10, 0x1400, 0x201)}}},
+            {"lr4k_last_minus1",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x400,
+              0x1600,
+              {text_section(0x1000, 0x10, 0x400, 0x3000), data_section(0x2000, 0x10, 0x1400, 0x1FF)}}},
+            {"lr4k_last_overruns",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x400,
+              0x1600,
+              {text_section(0x1000, 0x10, 0x400, 0x3000), data_section(0x2000, 0x10, 0x1400, 0x400)}}},
+            {"lr64k_example",
+             accepted,
+             {0x10000,
+              0x200,
+              0x30000,
+              0x400,
+              0x1600,
+              {text_section(0x10000, 0x10, 0x400, 0x3000), data_section(0x20000, 0x10, 0x1400, 0x200)}}},
+            {"lr64k_text_raw_past_slot",
+             accepted,
+             {0x10000,
+              0x200,
+              0x30000,
+              0x400,
+              0x1600,
+              {text_section(0x10000, 0x10, 0x400, 0x12000), data_section(0x20000, 0x10, 0x1400, 0x200)}}},
+            {"lr4k_early_mapped_past_eof",
+             accepted,
+             {0x1000,
+              0x200,
+              0x4000,
+              0x400,
+              0x1600,
+              {text_section(0x1000, 0x2000, 0x400, 0x3000), data_section(0x3000, 0x10, 0x1400, 0x200)}}},
+            {"lr4k_early_mapped_to_eof",
+             accepted,
+             {0x1000,
+              0x200,
+              0x4000,
+              0x400,
+              0x2600,
+              {text_section(0x1000, 0x2000, 0x400, 0x3000), data_section(0x3000, 0x10, 0x2400, 0x200)}}},
+            {"lr4k_early_ptr_past_eof",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x400, {text_section(0x1000, 0x10, 0x4000, 0x200), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lr4k_only_section_past_eof", rejected, {0x1000, 0x200, 0x2000, 0x200, 0x400, {text_section(0x1000, 0x10, 0x200, 0x400)}}},
+            {"lrsp_last_overruns",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x10, 0x400, 0x400)}}},
+            {"lrsp_early_overruns",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {text_section(0x200, 0x10, 0x200, 0x800), data_section(0x600, 0x10, 0x600, 0x200)}}},
+            {"lrsp_last_not_highest",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {data_section(0x600, 0x10, 0x600, 0x200), text_section(0x200, 0x10, 0x200, 0x800)}}},
+            {"lw4k_last_ptr0_example",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x400, 0x1600, {text_section(0x1000, 0x10, 0x400, 0x200), data_section(0x2000, 0x2000, 0x0, 0x3000)}}},
+            {"lw4k_last_ptr0_fits",
+             accepted,
+             {0x1000, 0x200, 0x4000, 0x400, 0x1600, {text_section(0x1000, 0x10, 0x400, 0x200), data_section(0x2000, 0x2000, 0x0, 0x200)}}},
+            {"lw4k_last_ptr0_raw_eq_file",
+             accepted,
+             {0x1000, 0x200, 0x4000, 0x400, 0x1600, {text_section(0x1000, 0x10, 0x400, 0x200), data_section(0x2000, 0x2000, 0x0, 0x1600)}}},
+            {"lw4k_last_ptr0_raw_plus1",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x400, 0x1600, {text_section(0x1000, 0x10, 0x400, 0x200), data_section(0x2000, 0x2000, 0x0, 0x1601)}}},
+            {"lw4k_early_ptr0_raw_big",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x4000, 0x400, 0x1600, {text_section(0x1000, 0x10, 0x0, 0x3000), data_section(0x2000, 0x2000, 0x400, 0x200)}}},
+            {"lw64k_last_ptr0_example",
+             rejected,
+             {0x10000,
+              0x200,
+              0x30000,
+              0x400,
+              0x1600,
+              {text_section(0x10000, 0x10, 0x400, 0x200), data_section(0x20000, 0x10, 0x0, 0x3000)}}},
+            {"lw4k_last_raw0_ptr_past_eof",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x400, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x4000, 0x0)}}},
+            {"lw4k_last_raw0_ptr_at_eof",
+             accepted,
+             {0x1000, 0x200, 0x3000, 0x200, 0x400, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x400, 0x0)}}},
+            {"lw4k_early_wrap",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0xFFFFFE00, 0x400), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lw4k_last_wrap",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0xFFFFFE00, 0x400)}}},
+            {"lw4k_early_end_2p32_ptr",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0xFFFFFC00, 0x400), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lw4k_early_end_2p32_size",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x400, 0xFFFFFC00), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lw4k_early_end_max_ptr",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0xFFFFFC00, 0x3FF), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lw4k_early_end_max_size",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEFFF), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lwsp_early_wrap",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {text_section(0x200, 0x10, 0x200, 0xFFFFFE00), data_section(0x400, 0x10, 0x400, 0x200)}}},
+            {"lwsp_last_wrap",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x10, 0x400, 0xFFFFFC00)}}},
+            {"lwsp_early_huge_nowrap",
+             accepted,
+             {0x200,
+              0x200,
+              0x3000,
+              0x200,
+              0x800,
+              {data_section(0x2000, 0x10, 0x2000, 0xFFFFD000), text_section(0x200, 0x10, 0x200, 0x200)}}},
+            {"lwsp_last_huge_nowrap",
+             accepted,
+             {0x200,
+              0x200,
+              0x3000,
+              0x200,
+              0x800,
+              {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x2000, 0xFFFFD000)}}},
+            {"lwsp_last_ptr0_va0",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x0, 0x10, 0x0, 0x3000)}}},
+            {"lwsp_early_ptr0_va0",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x800, {data_section(0x0, 0x10, 0x0, 0x3000), text_section(0x200, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFFFFE",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEFFE), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFFE01",
+             rejected,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEE01), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFFE00",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEE00), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFFDFF",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEDFF), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFF001",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFE001), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_end_FFFFF000",
+             accepted,
+             {0x1000,
+              0x200,
+              0x3000,
+              0x200,
+              0x400,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFE000), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lbsp_end_FFFFFFFF",
+             accepted,
+             {0x200,
+              0x200,
+              0x3000,
+              0x200,
+              0x800,
+              {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x2000, 0xFFFFDFFF)}}},
+            {"lbsp_end_FFFFFFFE",
+             accepted,
+             {0x200,
+              0x200,
+              0x3000,
+              0x200,
+              0x800,
+              {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x2000, 0x10, 0x2000, 0xFFFFDFFE)}}},
+            {"lb4k_early_ptr0_fits",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x3000, 0x200, 0x1600, {text_section(0x1000, 0x10, 0x0, 0x200), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_early_ptr0_eq_file",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x3000, 0x200, 0x1600, {text_section(0x1000, 0x10, 0x0, 0x1600), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_early_ptr0_plus1",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x3000, 0x200, 0x1600, {text_section(0x1000, 0x10, 0x0, 0x1601), data_section(0x2000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_early_ptr0_vs_big",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x4000, 0x200, 0x1600, {text_section(0x1000, 0x2000, 0x0, 0x3000), data_section(0x3000, 0x10, 0x200, 0x200)}}},
+            {"lb4k_early_ptr0_big_last_overruns",
+             rejected_not_mz,
+             {0x1000, 0x200, 0x4000, 0x200, 0x1600, {text_section(0x1000, 0x10, 0x0, 0x3000), data_section(0x2000, 0x10, 0x1400, 0x400)}}},
+            {"lf_fa400_end_FFFFFC00",
+             accepted,
+             {0x1000,
+              0x400,
+              0x3000,
+              0x400,
+              0x800,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEC00), data_section(0x2000, 0x10, 0x400, 0x400)}}},
+            {"lf_fa400_end_FFFFFC01",
+             rejected,
+             {0x1000,
+              0x400,
+              0x3000,
+              0x400,
+              0x800,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEC01), data_section(0x2000, 0x10, 0x400, 0x400)}}},
+            {"lf_fa400_end_FFFFFE01",
+             rejected,
+             {0x1000,
+              0x400,
+              0x3000,
+              0x400,
+              0x800,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFEE01), data_section(0x2000, 0x10, 0x400, 0x400)}}},
+            {"lf_fa1000_end_FFFFF000",
+             accepted,
+             {0x1000,
+              0x1000,
+              0x3000,
+              0x200,
+              0x2000,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFE000), data_section(0x2000, 0x10, 0x1000, 0x1000)}}},
+            {"lf_fa1000_end_FFFFF001",
+             rejected,
+             {0x1000,
+              0x1000,
+              0x3000,
+              0x200,
+              0x2000,
+              {text_section(0x1000, 0x10, 0x1000, 0xFFFFE001), data_section(0x2000, 0x10, 0x1000, 0x1000)}}},
+            {"lf_fa10000_end_FFFF0000",
+             accepted,
+             {0x10000,
+              0x10000,
+              0x30000,
+              0x200,
+              0x20000,
+              {text_section(0x10000, 0x10, 0x10000, 0xFFFE0000), data_section(0x20000, 0x10, 0x10000, 0x10000)}}},
+            {"lf_fa10000_end_FFFF0001",
+             rejected,
+             {0x10000,
+              0x10000,
+              0x30000,
+              0x200,
+              0x20000,
+              {text_section(0x10000, 0x10, 0x10000, 0xFFFE0001), data_section(0x20000, 0x10, 0x10000, 0x10000)}}},
+            {"kernel_subpage_no_raw_data",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x10, 0x400, 0)}}},
+            {"kernel_subpage_no_raw_data_pointer_0",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x10, 0, 0)}}},
+            {"kernel_subpage_bss_like",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x1000, 0x400, 0)}}},
+            {"kernel_subpage_empty_pointer_differs",
+             rejected,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0, 0x800, 0)}}},
+            {"kernel_subpage_empty_at_its_address",
+             accepted,
+             {0x200, 0x200, 0x3000, 0x200, 0x600, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0, 0x400, 0)}}},
+            {"size_unaligned",
+             accepted,
+             {0x1000, 0x200, 0x2800, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x800, 0x400, 0x200)}}},
+            {"tail4k",
+             accepted,
+             {0x1000, 0x200, 0x8000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x2800, 0x400, 0x200)}}},
+            {"short4k",
+             rejected,
+             {0x1000, 0x200, 0x4000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x2800, 0x400, 0x200)}}},
+            {"bighead4k",
+             accepted,
+             {0x1000,
+              0x200,
+              0x6000,
+              0x1400,
+              0x0,
+              {text_section(0x2000, 0x10, 0x1400, 0x200), data_section(0x3000, 0x2800, 0x1600, 0x200)}}},
+            {"headgap64k",
+             rejected,
+             {0x10000,
+              0x200,
+              0x50000,
+              0x200,
+              0x0,
+              {text_section(0x30000, 0x10, 0x200, 0x200), data_section(0x40000, 0x2800, 0x400, 0x200)}}},
+            {"lowalign_bss",
+             rejected,
+             {0x200, 0x200, 0x2000, 0x200, 0x0, {text_section(0x200, 0x10, 0x200, 0x200), data_section(0x400, 0x1800, 0x400, 0x200)}}},
+            {"vsize0_raw0",
+             rejected,
+             {0x1000, 0x200, 0x3000, 0x200, 0x0, {text_section(0x1000, 0x10, 0x200, 0x200), data_section(0x2000, 0x0, 0x0, 0x0)}}},
+            {"align64k_size_unaligned",
+             rejected,
+             {0x10000, 0x200, 0x28000, 0x200, 0x0, {text_section(0x10000, 0x10, 0x200, 0x200), data_section(0x20000, 0x10, 0x400, 0x200)}}},
+        };
+
+        std::ranges::transform(k_sub_page_cases, std::back_inserter(rows), sub_page_row);
+        std::ranges::transform(k_raw_data_cases, std::back_inserter(rows), raw_data_row);
+
+        for (const auto& row : rows)
+        {
+            SCOPED_TRACE(row.name);
+            expect_layout<std::uint32_t>(row);
+            expect_layout<std::uint64_t>(row);
+        }
     }
 }
