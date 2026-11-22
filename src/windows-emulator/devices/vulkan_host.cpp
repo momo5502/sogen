@@ -19,6 +19,7 @@
 #include <deque>
 #include <tuple>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -466,6 +467,64 @@ namespace sogen
             bool lost{};
             bool copyable{};
         };
+
+        VkImageSubresourceRange to_vk_range(const vulkan_host::subresource_range& range)
+        {
+            VkImageSubresourceRange out{};
+            out.aspectMask = range.aspect_mask;
+            out.baseMipLevel = range.base_mip_level;
+            out.levelCount = range.level_count;
+            out.baseArrayLayer = range.base_array_layer;
+            out.layerCount = range.layer_count;
+            return out;
+        }
+
+        class mutable_descriptor_type_info
+        {
+          public:
+            explicit mutable_descriptor_type_info(const std::span<const vulkan_host::mutable_descriptor_type_list> lists)
+            {
+                this->types_.reserve(lists.size());
+                this->lists_.reserve(lists.size());
+                for (const vulkan_host::mutable_descriptor_type_list& list : lists)
+                {
+                    auto& types = this->types_.emplace_back();
+                    types.reserve(list.size());
+                    for (const uint32_t type : list)
+                    {
+                        types.push_back(static_cast<VkDescriptorType>(type));
+                    }
+                    this->lists_.push_back({.descriptorTypeCount = static_cast<uint32_t>(types.size()),
+                                            .pDescriptorTypes = types.empty() ? nullptr : types.data()});
+                }
+                this->info_.mutableDescriptorTypeListCount = static_cast<uint32_t>(this->lists_.size());
+                this->info_.pMutableDescriptorTypeLists = this->lists_.empty() ? nullptr : this->lists_.data();
+            }
+
+            mutable_descriptor_type_info(const mutable_descriptor_type_info&) = delete;
+            mutable_descriptor_type_info& operator=(const mutable_descriptor_type_info&) = delete;
+            mutable_descriptor_type_info(mutable_descriptor_type_info&&) = delete;
+            mutable_descriptor_type_info& operator=(mutable_descriptor_type_info&&) = delete;
+            ~mutable_descriptor_type_info() = default;
+
+            const void* prepend_to(const void* next)
+            {
+                if (this->lists_.empty())
+                {
+                    return next;
+                }
+                this->info_.pNext = next;
+                return &this->info_;
+            }
+
+          private:
+            std::vector<std::vector<VkDescriptorType>> types_{};
+            std::vector<VkMutableDescriptorTypeListEXT> lists_{};
+            VkMutableDescriptorTypeCreateInfoEXT info_{.sType = VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT,
+                                                       .pNext = nullptr,
+                                                       .mutableDescriptorTypeListCount = 0,
+                                                       .pMutableDescriptorTypeLists = nullptr};
+        };
     }
 
     struct vulkan_host::impl
@@ -746,8 +805,14 @@ namespace sogen
             PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
+            PFN_vkCmdSetEvent cmd_set_event{};
+            PFN_vkCmdResetEvent cmd_reset_event{};
+            PFN_vkCmdWaitEvents cmd_wait_events{};
             // Null unless the guest enabled synchronization2.
             PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier2{};
+            PFN_vkCmdSetEvent2 cmd_set_event2{};
+            PFN_vkCmdResetEvent2 cmd_reset_event2{};
+            PFN_vkCmdWaitEvents2 cmd_wait_events2{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdClearAttachments cmd_clear_attachments{};
             PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
@@ -1728,17 +1793,20 @@ namespace sogen
         {
             uint32_t flags{};
             std::vector<descriptor_binding> bindings{};
+            std::vector<mutable_descriptor_type_list> mutable_types{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
                 buffer.write(this->flags);
                 buffer.write_vector(this->bindings);
+                buffer.write_vector(this->mutable_types);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
             {
                 buffer.read(this->flags);
                 buffer.read_vector(this->bindings);
+                buffer.read_vector(this->mutable_types);
             }
         };
 
@@ -2068,6 +2136,8 @@ namespace sogen
             uint32_t flags{};
             uint32_t max_inline_uniform_block_bindings{};
             std::vector<descriptor_pool_size> sizes{};
+            // Parallel to sizes; a size past its end has no mutable types.
+            std::vector<mutable_descriptor_type_list> mutable_types{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
@@ -2075,6 +2145,7 @@ namespace sogen
                 buffer.write(this->flags);
                 buffer.write(this->max_inline_uniform_block_bindings);
                 buffer.write_vector(this->sizes);
+                buffer.write_vector(this->mutable_types);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
@@ -2083,6 +2154,7 @@ namespace sogen
                 buffer.read(this->flags);
                 buffer.read(this->max_inline_uniform_block_bindings);
                 buffer.read_vector(this->sizes);
+                buffer.read_vector(this->mutable_types);
             }
         };
 
@@ -2498,7 +2570,9 @@ namespace sogen
         };
 
         // An overflow pool made like the guest's that holds at least these sets: each descriptor type and maxSets raised to
-        // what they take, so a fresh one has room for them.
+        // what they take, so a fresh one has room for them. A mutable descriptor only takes room from a pool entry whose
+        // type list contains its own, and Vulkan forbids entries whose lists partly overlap, so all mutable entries
+        // collapse into one listing every type of the guest's entries and the layouts.
         static descriptor_pool_params overflow_pool_params(const descriptor_pool_params& guest,
                                                            std::span<const set_layout_params* const> layouts)
         {
@@ -2506,6 +2580,7 @@ namespace sogen
             params.max_sets = std::max(params.max_sets, static_cast<uint32_t>(layouts.size()));
 
             std::map<uint32_t, uint32_t> needed{};
+            std::set<uint32_t> mutable_types{};
             uint32_t inline_uniform_blocks = 0;
             for (const auto* layout : layouts)
             {
@@ -2514,78 +2589,251 @@ namespace sogen
                     continue;
                 }
 
-                for (const vulkan_host::descriptor_binding& binding : layout->bindings)
+                for (size_t i = 0; i < layout->bindings.size(); ++i)
                 {
+                    const vulkan_host::descriptor_binding& binding = layout->bindings[i];
                     needed[binding.descriptor_type] += binding.descriptor_count;
                     inline_uniform_blocks += binding.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK ? 1 : 0;
+                    if (binding.descriptor_type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT && i < layout->mutable_types.size())
+                    {
+                        mutable_types.insert(layout->mutable_types[i].begin(), layout->mutable_types[i].end());
+                    }
+                }
+            }
+
+            std::vector<vulkan_host::descriptor_pool_size> sizes{};
+            uint32_t mutable_count = 0;
+            for (size_t i = 0; i < guest.sizes.size(); ++i)
+            {
+                const auto& size = guest.sizes[i];
+                if (size.descriptor_type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
+                {
+                    mutable_count += size.descriptor_count;
+                    if (i < guest.mutable_types.size())
+                    {
+                        mutable_types.insert(guest.mutable_types[i].begin(), guest.mutable_types[i].end());
+                    }
+                }
+                else
+                {
+                    sizes.push_back(size);
                 }
             }
 
             for (const auto& [type, count] : needed)
             {
-                const auto size = std::ranges::find(params.sizes, type, &vulkan_host::descriptor_pool_size::descriptor_type);
-                if (size != params.sizes.end())
+                if (type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
+                {
+                    continue;
+                }
+
+                const auto size = std::ranges::find(sizes, type, &vulkan_host::descriptor_pool_size::descriptor_type);
+                if (size != sizes.end())
                 {
                     size->descriptor_count = std::max(size->descriptor_count, count);
                 }
                 else if (count != 0)
                 {
-                    params.sizes.push_back({.descriptor_type = type, .descriptor_count = count});
+                    sizes.push_back({.descriptor_type = type, .descriptor_count = count});
                 }
             }
 
+            params.mutable_types.clear();
+            mutable_count = std::max(mutable_count, needed[VK_DESCRIPTOR_TYPE_MUTABLE_EXT]);
+            if (mutable_count != 0)
+            {
+                params.mutable_types.resize(sizes.size());
+                params.mutable_types.emplace_back(mutable_types.begin(), mutable_types.end());
+                sizes.push_back({.descriptor_type = VK_DESCRIPTOR_TYPE_MUTABLE_EXT, .descriptor_count = mutable_count});
+            }
+
+            params.sizes = std::move(sizes);
             params.max_inline_uniform_block_bindings = std::max(params.max_inline_uniform_block_bindings, inline_uniform_blocks);
             return params;
         }
 
-        // Without synchronization2 the guest can only have used the legacy flags, which fit the legacy call. Each barrier
-        // keeps its own stages, so each becomes a call of its own.
-        static void record_legacy_barriers(const device_data& device, const VkCommandBuffer command_buffer, const uint32_t dependency_flags,
-                                           const std::span<const VkMemoryBarrier2> memory_barriers,
-                                           const std::span<const VkBufferMemoryBarrier2> buffer_barriers,
-                                           const std::span<const VkImageMemoryBarrier2> image_barriers)
+        // A dependency in Vulkan's types, owning everything the VkDependencyInfo it builds points to.
+        struct native_dependency
         {
+            uint32_t flags{};
+            std::vector<VkMemoryBarrier2> memory_barriers{};
+            std::vector<VkBufferMemoryBarrier2> buffer_barriers{};
+            std::vector<VkImageMemoryBarrier2> image_barriers{};
+
+            VkDependencyInfo info() const
+            {
+                return {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                        .pNext = nullptr,
+                        .dependencyFlags = this->flags,
+                        .memoryBarrierCount = static_cast<uint32_t>(this->memory_barriers.size()),
+                        .pMemoryBarriers = this->memory_barriers.data(),
+                        .bufferMemoryBarrierCount = static_cast<uint32_t>(this->buffer_barriers.size()),
+                        .pBufferMemoryBarriers = this->buffer_barriers.data(),
+                        .imageMemoryBarrierCount = static_cast<uint32_t>(this->image_barriers.size()),
+                        .pImageMemoryBarriers = this->image_barriers.data()};
+            }
+        };
+
+        // Without synchronization2 the guest can only have used the legacy flags, which are the same values in the legacy
+        // types.
+        struct legacy_barriers
+        {
+            std::vector<VkMemoryBarrier> memory_barriers{};
+            std::vector<VkBufferMemoryBarrier> buffer_barriers{};
+            std::vector<VkImageMemoryBarrier> image_barriers{};
+        };
+
+        static VkMemoryBarrier to_legacy(const VkMemoryBarrier2& barrier)
+        {
+            return {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                    .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
+        }
+
+        static VkBufferMemoryBarrier to_legacy(const VkBufferMemoryBarrier2& barrier)
+        {
+            return {.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                    .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                    .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                    .buffer = barrier.buffer,
+                    .offset = barrier.offset,
+                    .size = barrier.size};
+        }
+
+        static VkImageMemoryBarrier to_legacy(const VkImageMemoryBarrier2& barrier)
+        {
+            return {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
+                    .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
+                    .oldLayout = barrier.oldLayout,
+                    .newLayout = barrier.newLayout,
+                    .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+                    .image = barrier.image,
+                    .subresourceRange = barrier.subresourceRange};
+        }
+
+        static legacy_barriers to_legacy(const native_dependency& dependency)
+        {
+            legacy_barriers legacy{};
+            std::ranges::transform(dependency.memory_barriers, std::back_inserter(legacy.memory_barriers),
+                                   [](const VkMemoryBarrier2& b) { return to_legacy(b); });
+            std::ranges::transform(dependency.buffer_barriers, std::back_inserter(legacy.buffer_barriers),
+                                   [](const VkBufferMemoryBarrier2& b) { return to_legacy(b); });
+            std::ranges::transform(dependency.image_barriers, std::back_inserter(legacy.image_barriers),
+                                   [](const VkImageMemoryBarrier2& b) { return to_legacy(b); });
+            return legacy;
+        }
+
+        // Each barrier keeps its own stages, so each becomes a call of its own.
+        static void record_legacy_barriers(const device_data& device, const VkCommandBuffer command_buffer,
+                                           const native_dependency& dependency)
+        {
+            const auto legacy = to_legacy(dependency);
             const auto record = [&](const auto& barrier, const VkMemoryBarrier* memory, const VkBufferMemoryBarrier* buffer,
                                     const VkImageMemoryBarrier* image) {
                 device.cmd_pipeline_barrier(command_buffer, static_cast<VkPipelineStageFlags>(barrier.srcStageMask),
-                                            static_cast<VkPipelineStageFlags>(barrier.dstStageMask), dependency_flags, memory ? 1 : 0,
+                                            static_cast<VkPipelineStageFlags>(barrier.dstStageMask), dependency.flags, memory ? 1 : 0,
                                             memory, buffer ? 1 : 0, buffer, image ? 1 : 0, image);
             };
+            for (size_t i = 0; i < legacy.memory_barriers.size(); ++i)
+            {
+                record(dependency.memory_barriers[i], &legacy.memory_barriers[i], nullptr, nullptr);
+            }
+            for (size_t i = 0; i < legacy.buffer_barriers.size(); ++i)
+            {
+                record(dependency.buffer_barriers[i], nullptr, &legacy.buffer_barriers[i], nullptr);
+            }
+            for (size_t i = 0; i < legacy.image_barriers.size(); ++i)
+            {
+                record(dependency.image_barriers[i], nullptr, nullptr, &legacy.image_barriers[i]);
+            }
+        }
 
-            for (const VkMemoryBarrier2& barrier : memory_barriers)
+        std::optional<native_dependency> to_native(const uint64_t device_id, const vulkan_host::dependency_info& dependency)
+        {
+            native_dependency native{.flags = dependency.flags};
+            native.memory_barriers.reserve(dependency.memory_barriers.size());
+            for (const vulkan_host::barrier_masks& masks : dependency.memory_barriers)
             {
-                const VkMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                                             .pNext = nullptr,
-                                             .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
-                                             .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask)};
-                record(barrier, &legacy, nullptr, nullptr);
-            }
-            for (const VkBufferMemoryBarrier2& barrier : buffer_barriers)
-            {
-                const VkBufferMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                                                   .pNext = nullptr,
-                                                   .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
-                                                   .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
-                                                   .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
-                                                   .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
-                                                   .buffer = barrier.buffer,
-                                                   .offset = barrier.offset,
-                                                   .size = barrier.size};
-                record(barrier, nullptr, &legacy, nullptr);
-            }
-            for (const VkImageMemoryBarrier2& barrier : image_barriers)
-            {
-                const VkImageMemoryBarrier legacy{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                native.memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
                                                   .pNext = nullptr,
-                                                  .srcAccessMask = static_cast<VkAccessFlags>(barrier.srcAccessMask),
-                                                  .dstAccessMask = static_cast<VkAccessFlags>(barrier.dstAccessMask),
-                                                  .oldLayout = barrier.oldLayout,
-                                                  .newLayout = barrier.newLayout,
-                                                  .srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
-                                                  .dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
-                                                  .image = barrier.image,
-                                                  .subresourceRange = barrier.subresourceRange};
-                record(barrier, nullptr, nullptr, &legacy);
+                                                  .srcStageMask = masks.src_stage_mask,
+                                                  .srcAccessMask = masks.src_access_mask,
+                                                  .dstStageMask = masks.dst_stage_mask,
+                                                  .dstAccessMask = masks.dst_access_mask});
+            }
+
+            native.buffer_barriers.reserve(dependency.buffer_barriers.size());
+            for (const vulkan_host::buffer_barrier& barrier : dependency.buffer_barriers)
+            {
+                const auto buffer = this->buffers.find(barrier.buffer);
+                if (buffer == this->buffers.end() || buffer->second.device_id != device_id)
+                {
+                    return std::nullopt;
+                }
+                native.buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                                  .pNext = nullptr,
+                                                  .srcStageMask = barrier.masks.src_stage_mask,
+                                                  .srcAccessMask = barrier.masks.src_access_mask,
+                                                  .dstStageMask = barrier.masks.dst_stage_mask,
+                                                  .dstAccessMask = barrier.masks.dst_access_mask,
+                                                  .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                                  .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                                  .buffer = buffer->second.handle,
+                                                  .offset = barrier.offset,
+                                                  .size = barrier.size});
+            }
+
+            native.image_barriers.reserve(dependency.image_barriers.size());
+            for (const vulkan_host::image_barrier& barrier : dependency.image_barriers)
+            {
+                const auto image = this->images.find(barrier.image);
+                if (image == this->images.end() || image->second.device_id != device_id)
+                {
+                    return std::nullopt;
+                }
+                native.image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                 .pNext = nullptr,
+                                                 .srcStageMask = barrier.masks.src_stage_mask,
+                                                 .srcAccessMask = barrier.masks.src_access_mask,
+                                                 .dstStageMask = barrier.masks.dst_stage_mask,
+                                                 .dstAccessMask = barrier.masks.dst_access_mask,
+                                                 .oldLayout = image->second.host_layout(barrier.old_layout),
+                                                 .newLayout = image->second.host_layout(barrier.new_layout),
+                                                 .srcQueueFamilyIndex = barrier.src_queue_family_index,
+                                                 .dstQueueFamilyIndex = barrier.dst_queue_family_index,
+                                                 .image = image->second.handle,
+                                                 .subresourceRange = to_vk_range(barrier.range)});
+            }
+            return native;
+        }
+
+        // The layout transitions a dependency executes. A vkCmdSetEvent2 dependency only describes the scope the event
+        // releases; its transitions happen at the wait.
+        void track_layout_transitions(command_buffer_data& command_buffer, const vulkan_host::dependency_info& dependency)
+        {
+            for (const vulkan_host::image_barrier& barrier : dependency.image_barriers)
+            {
+                const auto& range = barrier.range;
+                command_buffer.layout_transitions.push_back(layout_transition{
+                    .image = barrier.image,
+                    .aspect_mask = range.aspect_mask,
+                    .base_mip_level = range.base_mip_level,
+                    .level_count = range.level_count,
+                    .base_array_layer = range.base_array_layer,
+                    .layer_count = range.layer_count,
+                    .new_layout = static_cast<uint32_t>(this->images.at(barrier.image).host_layout(barrier.new_layout)),
+                    .transfers_ownership = barrier.src_queue_family_index != barrier.dst_queue_family_index &&
+                                           barrier.src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+                    .source_family = barrier.src_queue_family_index,
+                    .destination_family = barrier.dst_queue_family_index,
+                });
             }
         }
 
@@ -2612,6 +2860,9 @@ namespace sogen
                 inline_uniform_blocks.maxInlineUniformBlockBindings = create.max_inline_uniform_block_bindings;
                 info.pNext = &inline_uniform_blocks;
             }
+
+            mutable_descriptor_type_info mutable_types(create.mutable_types);
+            info.pNext = mutable_types.prepend_to(info.pNext);
 
             return device.create_descriptor_pool(device.handle, &info, nullptr, &pool);
         }
@@ -6077,13 +6328,19 @@ namespace sogen
             data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
+            data.cmd_set_event = reinterpret_cast<PFN_vkCmdSetEvent>(resolve("vkCmdSetEvent"));
+            data.cmd_reset_event = reinterpret_cast<PFN_vkCmdResetEvent>(resolve("vkCmdResetEvent"));
+            data.cmd_wait_events = reinterpret_cast<PFN_vkCmdWaitEvents>(resolve("vkCmdWaitEvents"));
             if (synchronization2_enabled)
             {
-                data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2"));
-                if (!data.cmd_pipeline_barrier2)
-                {
-                    data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve("vkCmdPipelineBarrier2KHR"));
-                }
+                const auto resolve_core_or_khr = [&](const std::string& name) {
+                    const auto function = resolve(name.c_str());
+                    return function ? function : resolve((name + "KHR").c_str());
+                };
+                data.cmd_pipeline_barrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(resolve_core_or_khr("vkCmdPipelineBarrier2"));
+                data.cmd_set_event2 = reinterpret_cast<PFN_vkCmdSetEvent2>(resolve_core_or_khr("vkCmdSetEvent2"));
+                data.cmd_reset_event2 = reinterpret_cast<PFN_vkCmdResetEvent2>(resolve_core_or_khr("vkCmdResetEvent2"));
+                data.cmd_wait_events2 = reinterpret_cast<PFN_vkCmdWaitEvents2>(resolve_core_or_khr("vkCmdWaitEvents2"));
             }
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_clear_attachments = reinterpret_cast<PFN_vkCmdClearAttachments>(resolve("vkCmdClearAttachments"));
@@ -6915,11 +7172,12 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // GPU-side event ops (vkCmdSetEvent2/ResetEvent2/WaitEvents2) are not recorded through the bridge,
-        // so the real VkEvent is never signalled by the GPU. DXVK only uses these events to poll for the
-        // completion of work the bridge has already executed by the time the guest gets here, so report the
-        // event as set. (If precise GPU event ordering is ever needed, record the cmd ops instead.)
-        return VK_EVENT_SET;
+        const auto dev = this->impl_->devices.find(it->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.get_event_status)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return dev->second.get_event_status(dev->second.handle, it->second.handle);
     }
 
     int32_t vulkan_host::set_event(uint64_t device, uint64_t event)
@@ -8168,17 +8426,6 @@ namespace sogen
 
     namespace
     {
-        VkImageSubresourceRange to_vk_range(const vulkan_host::subresource_range& range)
-        {
-            VkImageSubresourceRange out{};
-            out.aspectMask = range.aspect_mask;
-            out.baseMipLevel = range.base_mip_level;
-            out.levelCount = range.level_count;
-            out.baseArrayLayer = range.base_array_layer;
-            out.layerCount = range.layer_count;
-            return out;
-        }
-
         VkImageLayout translate_layout(uint32_t layout)
         {
             return static_cast<VkImageLayout>(layout);
@@ -8317,10 +8564,7 @@ namespace sogen
         }
     }
 
-    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint32_t dependency_flags,
-                                              std::span<const barrier_masks> memory_barriers,
-                                              std::span<const buffer_barrier> buffer_barriers,
-                                              std::span<const image_barrier> image_barriers)
+    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, const dependency_info& dependency)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -8334,98 +8578,154 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        std::vector<VkMemoryBarrier2> vk_memory_barriers{};
-        vk_memory_barriers.reserve(memory_barriers.size());
-        for (const barrier_masks& masks : memory_barriers)
+        const auto native = this->impl_->to_native(cb->second.device_id, dependency);
+        if (!native)
         {
-            vk_memory_barriers.push_back({.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                                          .pNext = nullptr,
-                                          .srcStageMask = masks.src_stage_mask,
-                                          .srcAccessMask = masks.src_access_mask,
-                                          .dstStageMask = masks.dst_stage_mask,
-                                          .dstAccessMask = masks.dst_access_mask});
-        }
-
-        std::vector<VkBufferMemoryBarrier2> vk_buffer_barriers{};
-        vk_buffer_barriers.reserve(buffer_barriers.size());
-        for (const buffer_barrier& barrier : buffer_barriers)
-        {
-            const auto buffer = this->impl_->buffers.find(barrier.buffer);
-            if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            vk_buffer_barriers.push_back({.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                          .pNext = nullptr,
-                                          .srcStageMask = barrier.masks.src_stage_mask,
-                                          .srcAccessMask = barrier.masks.src_access_mask,
-                                          .dstStageMask = barrier.masks.dst_stage_mask,
-                                          .dstAccessMask = barrier.masks.dst_access_mask,
-                                          .srcQueueFamilyIndex = barrier.src_queue_family_index,
-                                          .dstQueueFamilyIndex = barrier.dst_queue_family_index,
-                                          .buffer = buffer->second.handle,
-                                          .offset = barrier.offset,
-                                          .size = barrier.size});
-        }
-
-        std::vector<VkImageMemoryBarrier2> vk_image_barriers{};
-        vk_image_barriers.reserve(image_barriers.size());
-        for (const image_barrier& barrier : image_barriers)
-        {
-            const auto image = this->impl_->images.find(barrier.image);
-            if (image == this->impl_->images.end() || image->second.device_id != cb->second.device_id)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            vk_image_barriers.push_back({.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                         .pNext = nullptr,
-                                         .srcStageMask = barrier.masks.src_stage_mask,
-                                         .srcAccessMask = barrier.masks.src_access_mask,
-                                         .dstStageMask = barrier.masks.dst_stage_mask,
-                                         .dstAccessMask = barrier.masks.dst_access_mask,
-                                         .oldLayout = image->second.host_layout(barrier.old_layout),
-                                         .newLayout = image->second.host_layout(barrier.new_layout),
-                                         .srcQueueFamilyIndex = barrier.src_queue_family_index,
-                                         .dstQueueFamilyIndex = barrier.dst_queue_family_index,
-                                         .image = image->second.handle,
-                                         .subresourceRange = to_vk_range(barrier.range)});
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         if (dev->second.cmd_pipeline_barrier2)
         {
-            const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .pNext = nullptr,
-                                              .dependencyFlags = dependency_flags,
-                                              .memoryBarrierCount = static_cast<uint32_t>(vk_memory_barriers.size()),
-                                              .pMemoryBarriers = vk_memory_barriers.data(),
-                                              .bufferMemoryBarrierCount = static_cast<uint32_t>(vk_buffer_barriers.size()),
-                                              .pBufferMemoryBarriers = vk_buffer_barriers.data(),
-                                              .imageMemoryBarrierCount = static_cast<uint32_t>(vk_image_barriers.size()),
-                                              .pImageMemoryBarriers = vk_image_barriers.data()};
-            dev->second.cmd_pipeline_barrier2(cb->second.handle, &dependency);
+            const VkDependencyInfo info = native->info();
+            dev->second.cmd_pipeline_barrier2(cb->second.handle, &info);
         }
         else
         {
-            impl::record_legacy_barriers(dev->second, cb->second.handle, dependency_flags, vk_memory_barriers, vk_buffer_barriers,
-                                         vk_image_barriers);
+            impl::record_legacy_barriers(dev->second, cb->second.handle, *native);
         }
 
-        for (const image_barrier& barrier : image_barriers)
+        this->impl_->track_layout_transitions(cb->second, dependency);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_event(uint64_t command_buffer, uint64_t event, const dependency_info* dependency,
+                                       uint64_t legacy_stage_mask)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto ev = this->impl_->events.find(event);
+        if (cb == this->impl_->command_buffers.end() || ev == this->impl_->events.end() || ev->second.device_id != cb->second.device_id)
         {
-            const auto& range = barrier.range;
-            cb->second.layout_transitions.push_back(impl::layout_transition{
-                .image = barrier.image,
-                .aspect_mask = range.aspect_mask,
-                .base_mip_level = range.base_mip_level,
-                .level_count = range.level_count,
-                .base_array_layer = range.base_array_layer,
-                .layer_count = range.layer_count,
-                .new_layout = static_cast<uint32_t>(this->impl_->images.at(barrier.image).host_layout(barrier.new_layout)),
-                .transfers_ownership = barrier.src_queue_family_index != barrier.dst_queue_family_index &&
-                                       barrier.src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
-                .source_family = barrier.src_queue_family_index,
-                .destination_family = barrier.dst_queue_family_index,
-            });
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (!dependency)
+        {
+            if (!dev->second.cmd_set_event)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_event(cb->second.handle, ev->second.handle, static_cast<VkPipelineStageFlags>(legacy_stage_mask));
+            return VK_SUCCESS;
+        }
+
+        const auto native = this->impl_->to_native(cb->second.device_id, *dependency);
+        if (!native || !dev->second.cmd_set_event2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const VkDependencyInfo info = native->info();
+        dev->second.cmd_set_event2(cb->second.handle, ev->second.handle, &info);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_reset_event(uint64_t command_buffer, uint64_t event, uint64_t stage_mask, bool legacy)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto ev = this->impl_->events.find(event);
+        if (cb == this->impl_->command_buffers.end() || ev == this->impl_->events.end() || ev->second.device_id != cb->second.device_id)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (legacy)
+        {
+            if (!dev->second.cmd_reset_event)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_reset_event(cb->second.handle, ev->second.handle, static_cast<VkPipelineStageFlags>(stage_mask));
+            return VK_SUCCESS;
+        }
+
+        if (!dev->second.cmd_reset_event2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_reset_event2(cb->second.handle, ev->second.handle, stage_mask);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_wait_events(uint64_t command_buffer, std::span<const uint64_t> events,
+                                         std::span<const dependency_info> dependencies, bool legacy, uint64_t legacy_src_stage_mask,
+                                         uint64_t legacy_dst_stage_mask)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end() || dependencies.size() != (legacy ? 1 : events.size()))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || (legacy ? !dev->second.cmd_wait_events : !dev->second.cmd_wait_events2))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkEvent> event_handles{};
+        event_handles.reserve(events.size());
+        for (const uint64_t event : events)
+        {
+            const auto ev = this->impl_->events.find(event);
+            if (ev == this->impl_->events.end() || ev->second.device_id != cb->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            event_handles.push_back(ev->second.handle);
+        }
+
+        std::vector<impl::native_dependency> natives{};
+        natives.reserve(dependencies.size());
+        for (const dependency_info& dependency : dependencies)
+        {
+            auto native = this->impl_->to_native(cb->second.device_id, dependency);
+            if (!native)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            natives.push_back(std::move(*native));
+        }
+
+        if (legacy)
+        {
+            const auto barriers = impl::to_legacy(natives.front());
+            dev->second.cmd_wait_events(cb->second.handle, static_cast<uint32_t>(event_handles.size()), event_handles.data(),
+                                        static_cast<VkPipelineStageFlags>(legacy_src_stage_mask),
+                                        static_cast<VkPipelineStageFlags>(legacy_dst_stage_mask),
+                                        static_cast<uint32_t>(barriers.memory_barriers.size()), barriers.memory_barriers.data(),
+                                        static_cast<uint32_t>(barriers.buffer_barriers.size()), barriers.buffer_barriers.data(),
+                                        static_cast<uint32_t>(barriers.image_barriers.size()), barriers.image_barriers.data());
+        }
+        else
+        {
+            std::vector<VkDependencyInfo> infos{};
+            infos.reserve(natives.size());
+            std::ranges::transform(natives, std::back_inserter(infos), [](const impl::native_dependency& native) { return native.info(); });
+            dev->second.cmd_wait_events2(cb->second.handle, static_cast<uint32_t>(event_handles.size()), event_handles.data(),
+                                         infos.data());
+        }
+
+        for (const dependency_info& dependency : dependencies)
+        {
+            this->impl_->track_layout_transitions(cb->second, dependency);
         }
         return VK_SUCCESS;
     }
@@ -10709,7 +11009,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_descriptor_set_layout(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                                      uint64_t& out_layout)
+                                                      std::span<const mutable_descriptor_type_list> mutable_types, uint64_t& out_layout)
     {
         out_layout = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -10738,10 +11038,12 @@ namespace sogen
         binding_flags.bindingCount = static_cast<uint32_t>(vk_binding_flags.size());
         binding_flags.pBindingFlags = vk_binding_flags.data();
 
+        mutable_descriptor_type_info mutable_type_info(mutable_types);
+
         VkDescriptorSetLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        info.pNext =
-            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr;
+        info.pNext = mutable_type_info.prepend_to(
+            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr);
         info.flags = flags;
         info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
         info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
@@ -10758,13 +11060,16 @@ namespace sogen
             id, impl::descriptor_set_layout_data{.handle = layout,
                                                  .device_id = device,
                                                  .create = std::make_shared<const impl::set_layout_params>(impl::set_layout_params{
-                                                     .flags = flags, .bindings = {bindings.begin(), bindings.end()}})});
+                                                     .flags = flags,
+                                                     .bindings = {bindings.begin(), bindings.end()},
+                                                     .mutable_types = {mutable_types.begin(), mutable_types.end()}})});
         out_layout = id;
         return VK_SUCCESS;
     }
 
     int32_t vulkan_host::get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                                           uint32_t& supported, uint32_t& max_variable_descriptor_count)
+                                                           std::span<const mutable_descriptor_type_list> mutable_types, uint32_t& supported,
+                                                           uint32_t& max_variable_descriptor_count)
     {
         supported = VK_FALSE;
         max_variable_descriptor_count = 0;
@@ -10795,10 +11100,12 @@ namespace sogen
         binding_flags.bindingCount = static_cast<uint32_t>(vk_binding_flags.size());
         binding_flags.pBindingFlags = vk_binding_flags.data();
 
+        mutable_descriptor_type_info mutable_type_info(mutable_types);
+
         VkDescriptorSetLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        info.pNext =
-            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr;
+        info.pNext = mutable_type_info.prepend_to(
+            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr);
         info.flags = flags;
         info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
         info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
@@ -10831,7 +11138,7 @@ namespace sogen
 
     int32_t vulkan_host::create_descriptor_pool(uint64_t device, uint32_t max_sets, uint32_t flags,
                                                 uint32_t max_inline_uniform_block_bindings, std::span<const descriptor_pool_size> sizes,
-                                                uint64_t& out_pool)
+                                                std::span<const mutable_descriptor_type_list> mutable_types, uint64_t& out_pool)
     {
         out_pool = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -10843,7 +11150,8 @@ namespace sogen
         impl::descriptor_pool_params create{.max_sets = max_sets,
                                             .flags = flags,
                                             .max_inline_uniform_block_bindings = max_inline_uniform_block_bindings,
-                                            .sizes = {sizes.begin(), sizes.end()}};
+                                            .sizes = {sizes.begin(), sizes.end()},
+                                            .mutable_types = {mutable_types.begin(), mutable_types.end()}};
         VkDescriptorPool pool{};
         const VkResult result = impl::create_host_descriptor_pool(dev->second, create, pool);
         if (result != VK_SUCCESS)
@@ -14902,7 +15210,7 @@ namespace sogen
             }
 
             uint64_t layout{};
-            if (this->create_descriptor_set_layout(device, create.flags, create.bindings, layout) != VK_SUCCESS)
+            if (this->create_descriptor_set_layout(device, create.flags, create.bindings, create.mutable_types, layout) != VK_SUCCESS)
             {
                 throw std::runtime_error("Re-creating a destroyed Vulkan descriptor set layout failed");
             }
@@ -15496,7 +15804,7 @@ namespace sogen
 
             uint64_t layout{};
             impl.forced_ids = {id};
-            const auto result = this->create_descriptor_set_layout(device, create.flags, create.bindings, layout);
+            const auto result = this->create_descriptor_set_layout(device, create.flags, create.bindings, create.mutable_types, layout);
             expect_restored(result, layout, id, "descriptor set layout");
         }
 
@@ -15696,8 +16004,8 @@ namespace sogen
 
             uint64_t pool{};
             impl.forced_ids = {id};
-            const auto result = this->create_descriptor_pool(device, create.max_sets, create.flags,
-                                                             create.max_inline_uniform_block_bindings, create.sizes, pool);
+            const auto result = this->create_descriptor_pool(
+                device, create.max_sets, create.flags, create.max_inline_uniform_block_bindings, create.sizes, create.mutable_types, pool);
             expect_restored(result, pool, id, "descriptor pool");
         }
 

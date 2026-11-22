@@ -1280,6 +1280,33 @@ namespace sogen
                 return true;
             }
 
+            static bool read_mutable_descriptor_types(windows_emulator& win_emu, const io_device_context& context, const size_t offset,
+                                                      const gpu_bridge::mutable_descriptor_type_lists& header,
+                                                      std::vector<vulkan_host::mutable_descriptor_type_list>& out)
+            {
+                std::vector<uint32_t> type_counts;
+                std::vector<uint32_t> types;
+                if (!read_trailing_array(win_emu, context, offset, header.list_count, type_counts) ||
+                    !read_trailing_array(win_emu, context, offset + type_counts.size() * sizeof(uint32_t), header.type_count, types))
+                {
+                    return false;
+                }
+
+                out.clear();
+                out.reserve(type_counts.size());
+                auto next = types.begin();
+                for (const uint32_t count : type_counts)
+                {
+                    if (count > static_cast<size_t>(types.end() - next))
+                    {
+                        return false;
+                    }
+                    out.emplace_back(next, next + count);
+                    next += count;
+                }
+                return next == types.end();
+            }
+
             // Writes a fixed-size response struct to the guest output buffer and records its size.
             template <typename Response>
             static NTSTATUS write_output(windows_emulator& win_emu, const io_device_context& context, const Response& response)
@@ -2868,6 +2895,94 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
+            struct parsed_dependency
+            {
+                uint32_t flags{};
+                std::vector<vulkan_host::barrier_masks> memory_barriers{};
+                std::vector<vulkan_host::buffer_barrier> buffer_barriers{};
+                std::vector<vulkan_host::image_barrier> image_barriers{};
+
+                vulkan_host::dependency_info view() const
+                {
+                    return {.flags = this->flags,
+                            .memory_barriers = this->memory_barriers,
+                            .buffer_barriers = this->buffer_barriers,
+                            .image_barriers = this->image_barriers};
+                }
+            };
+
+            template <typename T>
+            static bool take(std::span<const std::byte>& data, T& value)
+            {
+                if (data.size() < sizeof(T))
+                {
+                    return false;
+                }
+                std::memcpy(&value, data.data(), sizeof(T));
+                data = data.subspan(sizeof(T));
+                return true;
+            }
+
+            static vulkan_host::barrier_masks to_host_masks(const gpu_bridge::barrier_masks& masks)
+            {
+                return {.src_stage_mask = masks.src_stage_mask,
+                        .src_access_mask = masks.src_access_mask,
+                        .dst_stage_mask = masks.dst_stage_mask,
+                        .dst_access_mask = masks.dst_access_mask};
+            }
+
+            // Takes one dependency_info_header with its barriers from the front of data, bounding every count by what is left.
+            static bool parse_dependency(std::span<const std::byte>& data, parsed_dependency& out)
+            {
+                gpu_bridge::dependency_info_header header{};
+                if (!take(data, header))
+                {
+                    return false;
+                }
+                const size_t needed = static_cast<size_t>(header.memory_barrier_count) * sizeof(gpu_bridge::barrier_masks) +
+                                      static_cast<size_t>(header.buffer_barrier_count) * sizeof(gpu_bridge::buffer_memory_barrier) +
+                                      static_cast<size_t>(header.image_barrier_count) * sizeof(gpu_bridge::image_memory_barrier);
+                if (needed > data.size())
+                {
+                    return false;
+                }
+
+                out.flags = header.dependency_flags;
+                out.memory_barriers.resize(header.memory_barrier_count);
+                for (auto& barrier : out.memory_barriers)
+                {
+                    gpu_bridge::barrier_masks wire{};
+                    take(data, wire);
+                    barrier = to_host_masks(wire);
+                }
+                out.buffer_barriers.resize(header.buffer_barrier_count);
+                for (auto& barrier : out.buffer_barriers)
+                {
+                    gpu_bridge::buffer_memory_barrier wire{};
+                    take(data, wire);
+                    barrier = {.masks = to_host_masks(wire.masks),
+                               .src_queue_family_index = wire.src_queue_family_index,
+                               .dst_queue_family_index = wire.dst_queue_family_index,
+                               .buffer = wire.buffer,
+                               .offset = wire.offset,
+                               .size = wire.size};
+                }
+                out.image_barriers.resize(header.image_barrier_count);
+                for (auto& barrier : out.image_barriers)
+                {
+                    gpu_bridge::image_memory_barrier wire{};
+                    take(data, wire);
+                    barrier = {.masks = to_host_masks(wire.masks),
+                               .old_layout = wire.old_layout,
+                               .new_layout = wire.new_layout,
+                               .src_queue_family_index = wire.src_queue_family_index,
+                               .dst_queue_family_index = wire.dst_queue_family_index,
+                               .image = wire.image,
+                               .range = to_host_range(wire.subresource)};
+                }
+                return true;
+            }
+
             static vulkan_host::subresource_range to_host_range(const gpu_bridge::image_subresource_range& range)
             {
                 return vulkan_host::subresource_range{
@@ -3895,7 +4010,10 @@ namespace sogen
                 }
 
                 std::vector<gpu_bridge::descriptor_set_layout_binding> wire;
-                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire))
+                std::vector<vulkan_host::mutable_descriptor_type_list> mutable_types;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire) ||
+                    !read_mutable_descriptor_types(win_emu, context, sizeof(request_t) + wire.size() * sizeof(wire[0]),
+                                                   request.mutable_types, mutable_types))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -3913,7 +4031,8 @@ namespace sogen
                 }
 
                 uint64_t layout = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_descriptor_set_layout(request.device, request.flags, bindings, layout);
+                const int32_t result =
+                    this->vulkan_.create_descriptor_set_layout(request.device, request.flags, bindings, mutable_types, layout);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
             }
 
@@ -3928,7 +4047,10 @@ namespace sogen
                 }
 
                 std::vector<gpu_bridge::descriptor_set_layout_binding> wire;
-                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire))
+                std::vector<vulkan_host::mutable_descriptor_type_list> mutable_types;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire) ||
+                    !read_mutable_descriptor_types(win_emu, context, sizeof(request_t) + wire.size() * sizeof(wire[0]),
+                                                   request.mutable_types, mutable_types))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -3947,7 +4069,7 @@ namespace sogen
 
                 gpu_bridge::descriptor_set_layout_support_response response{};
                 response.vk_result = this->vulkan_.get_descriptor_set_layout_support(
-                    request.device, request.flags, bindings, response.supported, response.max_variable_descriptor_count);
+                    request.device, request.flags, bindings, mutable_types, response.supported, response.max_variable_descriptor_count);
                 return write_output(win_emu, context, response);
             }
 
@@ -3973,7 +4095,10 @@ namespace sogen
                 }
 
                 std::vector<gpu_bridge::descriptor_pool_size> wire;
-                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.pool_size_count, wire))
+                std::vector<vulkan_host::mutable_descriptor_type_list> mutable_types;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.pool_size_count, wire) ||
+                    !read_mutable_descriptor_types(win_emu, context, sizeof(request_t) + wire.size() * sizeof(wire[0]),
+                                                   request.mutable_types, mutable_types))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -3987,8 +4112,8 @@ namespace sogen
                 }
 
                 uint64_t pool = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_descriptor_pool(request.device, request.max_sets, request.flags,
-                                                                            request.max_inline_uniform_block_bindings, sizes, pool);
+                const int32_t result = this->vulkan_.create_descriptor_pool(
+                    request.device, request.max_sets, request.flags, request.max_inline_uniform_block_bindings, sizes, mutable_types, pool);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pool});
             }
 
@@ -5058,67 +5183,83 @@ namespace sogen
                     return this->vulkan_.cmd_fill_buffer(req.command_buffer, req.buffer, req.offset, req.size, req.data);
                 }
                 case gpu_bridge::command::cmd_pipeline_barrier: {
-                    gpu_bridge::cmd_pipeline_barrier_request req{};
+                    gpu_bridge::object_id command_buffer{};
+                    if (!read(command_buffer))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::span<const std::byte> rest{payload + sizeof(command_buffer), size - sizeof(command_buffer)};
+                    parsed_dependency dependency{};
+                    if (!parse_dependency(rest, dependency) || !rest.empty())
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_pipeline_barrier(command_buffer, dependency.view());
+                }
+                case gpu_bridge::command::cmd_set_event: {
+                    gpu_bridge::cmd_set_event_request req{};
                     if (!read(req))
                     {
                         return vk_error_initialization_failed;
                     }
-                    const size_t memory_bytes = static_cast<size_t>(req.memory_barrier_count) * sizeof(gpu_bridge::barrier_masks);
-                    const size_t buffer_bytes = static_cast<size_t>(req.buffer_barrier_count) * sizeof(gpu_bridge::buffer_memory_barrier);
-                    const size_t image_bytes = static_cast<size_t>(req.image_barrier_count) * sizeof(gpu_bridge::image_memory_barrier);
-                    if (size - sizeof(req) != memory_bytes + buffer_bytes + image_bytes)
+                    std::span<const std::byte> rest{payload + sizeof(req), size - sizeof(req)};
+                    if (req.legacy)
+                    {
+                        return rest.empty() ? this->vulkan_.cmd_set_event(req.command_buffer, req.event, nullptr, req.legacy_stage_mask)
+                                            : vk_error_initialization_failed;
+                    }
+                    parsed_dependency dependency{};
+                    if (!parse_dependency(rest, dependency) || !rest.empty())
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const auto view = dependency.view();
+                    return this->vulkan_.cmd_set_event(req.command_buffer, req.event, &view, 0);
+                }
+                case gpu_bridge::command::cmd_reset_event: {
+                    gpu_bridge::cmd_reset_event_request req{};
+                    if (!read(req) || size != sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_reset_event(req.command_buffer, req.event, req.stage_mask, req.legacy != 0);
+                }
+                case gpu_bridge::command::cmd_wait_events: {
+                    gpu_bridge::cmd_wait_events_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::span<const std::byte> rest{payload + sizeof(req), size - sizeof(req)};
+                    const size_t event_bytes = static_cast<size_t>(req.event_count) * sizeof(gpu_bridge::object_id);
+                    if (event_bytes > rest.size())
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> events(req.event_count);
+                    std::memcpy(events.data(), rest.data(), event_bytes);
+                    rest = rest.subspan(event_bytes);
+
+                    const size_t dependency_count = req.legacy ? 1 : req.event_count;
+                    std::vector<parsed_dependency> parsed(dependency_count);
+                    for (auto& dependency : parsed)
+                    {
+                        if (!parse_dependency(rest, dependency))
+                        {
+                            return vk_error_initialization_failed;
+                        }
+                    }
+                    if (!rest.empty())
                     {
                         return vk_error_initialization_failed;
                     }
 
-                    const auto* cursor = payload + sizeof(req);
-                    const auto to_masks = [](const gpu_bridge::barrier_masks& masks) {
-                        return vulkan_host::barrier_masks{.src_stage_mask = masks.src_stage_mask,
-                                                          .src_access_mask = masks.src_access_mask,
-                                                          .dst_stage_mask = masks.dst_stage_mask,
-                                                          .dst_access_mask = masks.dst_access_mask};
-                    };
-
-                    std::vector<vulkan_host::barrier_masks> memory_barriers(req.memory_barrier_count);
-                    for (auto& barrier : memory_barriers)
-                    {
-                        gpu_bridge::barrier_masks wire{};
-                        std::memcpy(&wire, cursor, sizeof(wire));
-                        cursor += sizeof(wire);
-                        barrier = to_masks(wire);
-                    }
-
-                    std::vector<vulkan_host::buffer_barrier> buffer_barriers(req.buffer_barrier_count);
-                    for (auto& barrier : buffer_barriers)
-                    {
-                        gpu_bridge::buffer_memory_barrier wire{};
-                        std::memcpy(&wire, cursor, sizeof(wire));
-                        cursor += sizeof(wire);
-                        barrier = {.masks = to_masks(wire.masks),
-                                   .src_queue_family_index = wire.src_queue_family_index,
-                                   .dst_queue_family_index = wire.dst_queue_family_index,
-                                   .buffer = wire.buffer,
-                                   .offset = wire.offset,
-                                   .size = wire.size};
-                    }
-
-                    std::vector<vulkan_host::image_barrier> image_barriers(req.image_barrier_count);
-                    for (auto& barrier : image_barriers)
-                    {
-                        gpu_bridge::image_memory_barrier wire{};
-                        std::memcpy(&wire, cursor, sizeof(wire));
-                        cursor += sizeof(wire);
-                        barrier = {.masks = to_masks(wire.masks),
-                                   .old_layout = wire.old_layout,
-                                   .new_layout = wire.new_layout,
-                                   .src_queue_family_index = wire.src_queue_family_index,
-                                   .dst_queue_family_index = wire.dst_queue_family_index,
-                                   .image = wire.image,
-                                   .range = to_host_range(wire.subresource)};
-                    }
-
-                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.dependency_flags, memory_barriers, buffer_barriers,
-                                                              image_barriers);
+                    std::vector<vulkan_host::dependency_info> dependencies{};
+                    dependencies.reserve(parsed.size());
+                    std::ranges::transform(parsed, std::back_inserter(dependencies),
+                                           [](const parsed_dependency& dependency) { return dependency.view(); });
+                    return this->vulkan_.cmd_wait_events(req.command_buffer, events, dependencies, req.legacy != 0,
+                                                         req.legacy_src_stage_mask, req.legacy_dst_stage_mask);
                 }
                 case gpu_bridge::command::cmd_clear_color_image: {
                     gpu_bridge::cmd_clear_color_image_request req{};
