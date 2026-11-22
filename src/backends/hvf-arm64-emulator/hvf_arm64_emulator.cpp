@@ -53,6 +53,7 @@ namespace sogen::hvf
         constexpr uint64_t pool_chunk_size = 64ull << 20;
         constexpr uint64_t nzcv_mask = 0xF0000000;
         constexpr uint64_t software_step_bit = 1ull << 21;
+        constexpr uint64_t actlr_el1_en_tso = 1ull << 1;
         constexpr uint64_t user_vector_offset = 0x404;
         constexpr int instruction_abort_class = 0x20;
         constexpr int data_abort_class = 0x24;
@@ -589,6 +590,13 @@ namespace sogen::hvf
                 on_owner([&] { run(count); });
             }
 
+            bool enable_hardware_tso()
+            {
+                bool enabled{};
+                on_owner([&] { enabled = enable_hardware_tso_on_owner(); });
+                return enabled;
+            }
+
             void stop() override
             {
                 std::lock_guard lock(run_mutex_);
@@ -703,6 +711,7 @@ namespace sogen::hvf
             }
 
             void create();
+            bool enable_hardware_tso_on_owner() const;
             void run(size_t count);
             bool enter_guest();
             void prepare_user_entry();
@@ -1232,6 +1241,11 @@ namespace sogen::hvf
             void set_el0_exception_handler(hvf::el0_exception_handler handler)
             {
                 el0_exception_handler_ = std::move(handler);
+            }
+
+            bool enable_hardware_tso()
+            {
+                return std::ranges::all_of(vcpus_, [](const auto& vcpu) { return vcpu->enable_hardware_tso(); });
             }
 
           private:
@@ -2047,6 +2061,17 @@ namespace sogen::hvf
             set_system(HV_SYS_REG_CNTKCTL_EL1, 1);
         }
 
+        bool hvf_vcpu::enable_hardware_tso_on_owner() const
+        {
+            if (__builtin_available(macOS 15.0, *))
+            {
+                uint64_t actlr{};
+                return hv_vcpu_set_sys_reg(vcpu_, HV_SYS_REG_ACTLR_EL1, actlr_el1_en_tso) == HV_SUCCESS &&
+                       hv_vcpu_get_sys_reg(vcpu_, HV_SYS_REG_ACTLR_EL1, &actlr) == HV_SUCCESS && actlr == actlr_el1_en_tso;
+            }
+            return false;
+        }
+
         void hvf_vcpu::run(const size_t count)
         {
             {
@@ -2744,5 +2769,10 @@ namespace sogen::hvf
     void set_el0_exception_handler(arm64_emulator& vm, el0_exception_handler handler)
     {
         dynamic_cast<hvf_arm64_emulator&>(vm).set_el0_exception_handler(std::move(handler));
+    }
+
+    bool enable_hardware_tso(arm64_emulator& vm)
+    {
+        return dynamic_cast<hvf_arm64_emulator&>(vm).enable_hardware_tso();
     }
 }
