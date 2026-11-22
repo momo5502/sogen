@@ -8839,17 +8839,182 @@ namespace sogen
         {
             namespace spi_action
             {
+                constexpr uint32_t getmouse = 0x0003;
+                constexpr uint32_t getgridgranularity = 0x0012;
                 constexpr uint32_t geticontitlelogfont = 0x001F;
                 constexpr uint32_t getnonclientmetrics = 0x0029;
+                constexpr uint32_t getminimizedmetrics = 0x002B;
                 constexpr uint32_t geticonmetrics = 0x002D;
                 constexpr uint32_t getworkarea = 0x0030;
+                constexpr uint32_t getfilterkeys = 0x0032;
+                constexpr uint32_t gettogglekeys = 0x0034;
+                constexpr uint32_t getmousekeys = 0x0036;
+                constexpr uint32_t getstickykeys = 0x003A;
+                constexpr uint32_t getaccesstimeout = 0x003C;
+                constexpr uint32_t getsoundsentry = 0x0040;
+                constexpr uint32_t gethighcontrast = 0x0042;
+                constexpr uint32_t getanimation = 0x0048;
+                constexpr uint32_t getdeskwallpaper = 0x0073;
+                constexpr uint32_t getlogicaldpioverride = 0x009E;
+                constexpr uint32_t getmenurect = 0x00A2;
+                constexpr uint32_t getbeep = 0x0001;
+                constexpr uint32_t getborder = 0x0005;
+                constexpr uint32_t getkeyboardspeed = 0x000A;
+                constexpr uint32_t getscreensavetimeout = 0x000E;
+                constexpr uint32_t getscreensaveactive = 0x0010;
+                constexpr uint32_t getkeyboarddelay = 0x0016;
+                constexpr uint32_t iconhorizontalspacing = 0x000D;
+                constexpr uint32_t iconverticalspacing = 0x0018;
+                constexpr uint32_t geticontitlewrap = 0x0019;
+                constexpr uint32_t getmenudropalignment = 0x001B;
+                constexpr uint32_t getfasttaskswitch = 0x0023;
+                constexpr uint32_t getdragfullwindows = 0x0026;
+                constexpr uint32_t getkeyboardcues = 0x100A;
+                constexpr uint32_t getkeyboardpref = 0x0044;
+                constexpr uint32_t getscreenreader = 0x0046;
+                constexpr uint32_t getfontsmoothing = 0x004A;
+                constexpr uint32_t getlowpowertimeout = 0x004F;
+                constexpr uint32_t getpowerofftimeout = 0x0050;
+                constexpr uint32_t getlowpoweractive = 0x0053;
+                constexpr uint32_t getpoweroffactive = 0x0054;
+                constexpr uint32_t getsnaptodefbutton = 0x005F;
+                constexpr uint32_t getmousehoverwidth = 0x0062;
+                constexpr uint32_t getmousehoverheight = 0x0064;
+                constexpr uint32_t getmousehovertime = 0x0066;
+                constexpr uint32_t getwheelscrolllines = 0x0068;
+                constexpr uint32_t getmenushowdelay = 0x006A;
+                constexpr uint32_t getwheelscrollchars = 0x006C;
+                constexpr uint32_t getshowimeui = 0x006E;
+                constexpr uint32_t getmousespeed = 0x0070;
+                constexpr uint32_t getscreensaverrunning = 0x0072;
+                constexpr uint32_t getactivewindowtracking = 0x1000;
+                constexpr uint32_t getmenuanimation = 0x1002;
+                constexpr uint32_t getcomboboxanimation = 0x1004;
+                constexpr uint32_t getlistboxsmoothscrolling = 0x1006;
+                constexpr uint32_t getgradientcaptions = 0x1008;
+                constexpr uint32_t getactivewndtrkzorder = 0x100C;
+                constexpr uint32_t gethottracking = 0x100E;
+                constexpr uint32_t getmenufade = 0x1012;
+                constexpr uint32_t getselectionfade = 0x1014;
+                constexpr uint32_t gettooltipanimation = 0x1016;
+                constexpr uint32_t gettooltipfade = 0x1018;
+                constexpr uint32_t getcursorshadow = 0x101A;
+                constexpr uint32_t getuieffects = 0x103E;
+                constexpr uint32_t getdisableoverlappedcontent = 0x1040;
+                constexpr uint32_t getclientareaanimation = 0x1042;
+                constexpr uint32_t getcleartype = 0x1048;
+                constexpr uint32_t getspeechrecognition = 0x104A;
+                constexpr uint32_t getforegroundlocktimeout = 0x2000;
+                constexpr uint32_t getactivewndtrktimeout = 0x2002;
+                constexpr uint32_t getforegroundflashcount = 0x2004;
+                constexpr uint32_t getcaretwidth = 0x2006;
+                constexpr uint32_t getmouseclicklocktime = 0x2008;
+                constexpr uint32_t getfontsmoothingtype = 0x200A;
+                constexpr uint32_t getfontsmoothingcontrast = 0x200C;
+                constexpr uint32_t getfocusborderwidth = 0x200E;
+                constexpr uint32_t getfocusborderheight = 0x2010;
+                constexpr uint32_t getfontsmoothingorientation = 0x2012;
+                constexpr uint32_t getmousewheelrouting = 0x201C;
+                constexpr uint32_t getthreadlocalinputsettings = 0x104E;
+                constexpr uint32_t getsystemlanguagebar = 0x1050;
+                constexpr uint32_t getmessageduration = 0x2016;
+                constexpr uint32_t getcontactvisualization = 0x2018;
+                constexpr uint32_t getgesturevisualization = 0x201A;
+                constexpr uint32_t getwinarranging = 0x0082;
+                constexpr uint32_t getdockmoving = 0x0090;
+                constexpr uint32_t getsnapsizing = 0x008E;
+                constexpr uint32_t getflatmenu = 0x1022;
+                constexpr uint32_t getdropshadow = 0x1024;
+                constexpr uint32_t getblocksendinputresets = 0x1026;
             }
 
+            struct spi_scalar
+            {
+                uint32_t action;
+                uint32_t value;
+            };
+
+            constexpr auto k_scalar_gets = std::to_array<spi_scalar>({
+                {.action = spi_action::getbeep, .value = 1},
+                {.action = spi_action::getborder, .value = 1},
+                {.action = spi_action::getkeyboardspeed, .value = 31},
+                {.action = spi_action::getscreensavetimeout, .value = 0},
+                {.action = spi_action::getscreensaveactive, .value = 1},
+                {.action = spi_action::getkeyboarddelay, .value = 1},
+                {.action = spi_action::iconhorizontalspacing, .value = 75},
+                {.action = spi_action::iconverticalspacing, .value = 75},
+                {.action = spi_action::geticontitlewrap, .value = 1},
+                {.action = spi_action::getmenudropalignment, .value = 0},
+                {.action = spi_action::getfasttaskswitch, .value = 1},
+                {.action = spi_action::getdragfullwindows, .value = 1},
+                {.action = spi_action::getkeyboardcues, .value = 0},
+                {.action = spi_action::getkeyboardpref, .value = 0},
+                {.action = spi_action::getscreenreader, .value = 0},
+                {.action = spi_action::getfontsmoothing, .value = 1},
+                {.action = spi_action::getlowpowertimeout, .value = 0},
+                {.action = spi_action::getpowerofftimeout, .value = 0},
+                {.action = spi_action::getlowpoweractive, .value = 0},
+                {.action = spi_action::getpoweroffactive, .value = 0},
+                {.action = spi_action::getsnaptodefbutton, .value = 0},
+                {.action = spi_action::getmousehoverwidth, .value = 4},
+                {.action = spi_action::getmousehoverheight, .value = 4},
+                {.action = spi_action::getmousehovertime, .value = 400},
+                {.action = spi_action::getwheelscrolllines, .value = 3},
+                {.action = spi_action::getmenushowdelay, .value = 400},
+                {.action = spi_action::getwheelscrollchars, .value = 3},
+                {.action = spi_action::getshowimeui, .value = 1},
+                {.action = spi_action::getmousespeed, .value = 10},
+                {.action = spi_action::getscreensaverrunning, .value = 0},
+                {.action = spi_action::getactivewindowtracking, .value = 0},
+                {.action = spi_action::getmenuanimation, .value = 1},
+                {.action = spi_action::getcomboboxanimation, .value = 1},
+                {.action = spi_action::getlistboxsmoothscrolling, .value = 1},
+                {.action = spi_action::getgradientcaptions, .value = 1},
+                {.action = spi_action::getactivewndtrkzorder, .value = 0},
+                {.action = spi_action::gethottracking, .value = 1},
+                {.action = spi_action::getmenufade, .value = 1},
+                {.action = spi_action::getselectionfade, .value = 1},
+                {.action = spi_action::gettooltipanimation, .value = 1},
+                {.action = spi_action::gettooltipfade, .value = 1},
+                {.action = spi_action::getcursorshadow, .value = 1},
+                {.action = spi_action::getuieffects, .value = 1},
+                {.action = spi_action::getdisableoverlappedcontent, .value = 0},
+                {.action = spi_action::getclientareaanimation, .value = 1},
+                {.action = spi_action::getcleartype, .value = 1},
+                {.action = spi_action::getspeechrecognition, .value = 0},
+                {.action = spi_action::getforegroundlocktimeout, .value = 200000},
+                {.action = spi_action::getactivewndtrktimeout, .value = 0},
+                {.action = spi_action::getforegroundflashcount, .value = 7},
+                {.action = spi_action::getcaretwidth, .value = 1},
+                {.action = spi_action::getmouseclicklocktime, .value = 1200},
+                {.action = spi_action::getfontsmoothingtype, .value = 2},
+                {.action = spi_action::getfontsmoothingcontrast, .value = 1200},
+                {.action = spi_action::getfocusborderwidth, .value = 1},
+                {.action = spi_action::getfocusborderheight, .value = 1},
+                {.action = spi_action::getfontsmoothingorientation, .value = 1},
+                {.action = spi_action::getmousewheelrouting, .value = 2},
+                {.action = spi_action::getthreadlocalinputsettings, .value = 0},
+                {.action = spi_action::getsystemlanguagebar, .value = 0},
+                {.action = spi_action::getmessageduration, .value = 5},
+                {.action = spi_action::getcontactvisualization, .value = 0},
+                {.action = spi_action::getgesturevisualization, .value = 24},
+                {.action = spi_action::getwinarranging, .value = 1},
+                {.action = spi_action::getdockmoving, .value = 1},
+                {.action = spi_action::getsnapsizing, .value = 1},
+                {.action = spi_action::getflatmenu, .value = 1},
+                {.action = spi_action::getdropshadow, .value = 0},
+                {.action = spi_action::getblocksendinputresets, .value = 0},
+            });
+
+            constexpr std::array<uint32_t, 3> k_mouse_acceleration{6, 10, 1};
+            constexpr std::array<uint32_t, 5> k_minimized_metrics{20, 154, 0, 0, 0};
+            constexpr DWORD k_high_contrast_flags = 0x7E;
             constexpr uint32_t k_default_dpi = 96;
             constexpr DWORD k_error_success = 0;
             constexpr DWORD k_error_invalid_parameter = 87;
             constexpr DWORD k_error_noaccess = 998;
             constexpr uint16_t k_flat_border_subsystem_version = 6;
+            constexpr DWORD k_error_invalid_spi_value = 1439;
 
             BOOL fail_with(const syscall_context& c, const DWORD error)
             {
@@ -8867,6 +9032,26 @@ namespace sogen
                 return TRUE;
             }
 
+            std::optional<uint32_t> probe_output_struct_size(const syscall_context& c, const emulator_pointer value, const size_t size)
+            {
+                uint32_t struct_size{};
+                if (!is_writable_range(c.win_emu, value, size) ||
+                    !c.win_emu.memory.try_read_memory(value, &struct_size, sizeof(struct_size)))
+                {
+                    return std::nullopt;
+                }
+
+                return struct_size;
+            }
+
+            // Windows copies its zeroed output buffer back even though the call fails.
+            bool write_zeroed_output(const syscall_context& c, const emulator_pointer value, const size_t size, const uint32_t struct_size)
+            {
+                std::vector<std::byte> zeroed(size);
+                std::memcpy(zeroed.data(), &struct_size, sizeof(struct_size));
+                return c.win_emu.memory.try_write_memory(value, zeroed.data(), zeroed.size());
+            }
+
             DWORD check_for_dpi_output(const syscall_context& c, const emulator_pointer value, const uint32_t param, const size_t size,
                                        const bool has_struct_size)
             {
@@ -8875,32 +9060,23 @@ namespace sogen
                     return k_error_invalid_parameter;
                 }
 
-                if (!is_writable_range(c.win_emu, value, size))
-                {
-                    return k_error_noaccess;
-                }
-
                 if (!has_struct_size)
                 {
-                    return k_error_success;
+                    return is_writable_range(c.win_emu, value, size) ? k_error_success : k_error_noaccess;
                 }
 
-                uint32_t struct_size{};
-                if (!c.win_emu.memory.try_read_memory(value, &struct_size, sizeof(struct_size)))
+                const auto struct_size = probe_output_struct_size(c, value, size);
+                if (!struct_size)
                 {
                     return k_error_noaccess;
                 }
 
-                if (struct_size == size)
+                if (*struct_size == size)
                 {
                     return k_error_success;
                 }
 
-                // Windows copies its zeroed output buffer back even though the call fails.
-                std::vector<std::byte> zeroed(size);
-                std::memcpy(zeroed.data(), &struct_size, sizeof(struct_size));
-                return c.win_emu.memory.try_write_memory(value, zeroed.data(), zeroed.size()) ? k_error_invalid_parameter
-                                                                                              : k_error_noaccess;
+                return write_zeroed_output(c, value, size, *struct_size) ? k_error_invalid_parameter : k_error_noaccess;
             }
 
             LONG scale_to_dpi(const LONG value, const uint32_t dpi)
@@ -8978,6 +9154,69 @@ namespace sogen
                 const auto work_area = monitor.read().rcWork;
                 return write_output(c, value, &work_area, sizeof(work_area));
             }
+
+            BOOL get_animation(const syscall_context& c, const uint32_t param, const emulator_pointer value)
+            {
+                const bool size_matches = param == sizeof(EMU_ANIMATIONINFO);
+                const LONG min_animate = size_matches ? TRUE : FALSE;
+                if (!write_output(c, value + offsetof(EMU_ANIMATIONINFO, iMinAnimate), &min_animate, sizeof(min_animate)))
+                {
+                    return FALSE;
+                }
+
+                return size_matches ? TRUE : FALSE;
+            }
+
+            BOOL get_high_contrast(const syscall_context& c, const emulator_pointer value)
+            {
+                return write_output(c, value + offsetof(EMU_HIGHCONTRAST, dwFlags), &k_high_contrast_flags, sizeof(k_high_contrast_flags));
+            }
+
+            const std::unordered_map<uint32_t, std::vector<uint32_t>>& sized_struct_gets()
+            {
+                static const std::unordered_map<uint32_t, std::vector<uint32_t>> structs{
+                    {spi_action::getfilterkeys, {24, 0x7E, 1000, 1000, 500, 0}},
+                    {spi_action::gettogglekeys, {8, 0x3E}},
+                    {spi_action::getmousekeys, {28, 0x1000003E, 80, 3000, 0, 0, 0}},
+                    {spi_action::getstickykeys, {8, 0x1FE}},
+                    {spi_action::getaccesstimeout, {12, 2, 300000}},
+                    {spi_action::getsoundsentry, {56, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}},
+                };
+
+                return structs;
+            }
+
+            BOOL get_setting(const syscall_context& c, const uint32_t action, const uint32_t param, const emulator_pointer value)
+            {
+                for (const auto& scalar : k_scalar_gets)
+                {
+                    if (scalar.action == action)
+                    {
+                        return write_output(c, value, &scalar.value, sizeof(scalar.value));
+                    }
+                }
+
+                const auto& structs = sized_struct_gets();
+                if (const auto entry = structs.find(action); entry != structs.end())
+                {
+                    const auto size = entry->second.size() * sizeof(uint32_t);
+                    const auto struct_size = probe_output_struct_size(c, value, size);
+                    if (!struct_size)
+                    {
+                        return fail_with(c, k_error_noaccess);
+                    }
+
+                    if (*struct_size == size && (param == 0 || param == size))
+                    {
+                        return write_output(c, value, entry->second.data(), size);
+                    }
+
+                    return write_zeroed_output(c, value, size, *struct_size) ? FALSE : fail_with(c, k_error_noaccess);
+                }
+
+                c.win_emu.log.error("Unimplemented NtUserSystemParametersInfo action: 0x%X\n", action);
+                return fail_with(c, k_error_invalid_parameter);
+            }
         }
 
         BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, const uint32_t action, const uint32_t param,
@@ -9022,6 +9261,7 @@ namespace sogen
             switch (action)
             {
             case spi_action::getworkarea:
+            case spi_action::getmenurect:
                 return get_primary_work_area(c, value);
             case spi_action::geticontitlelogfont:
                 return write_icontitle_logfont(c, value, k_default_dpi);
@@ -9031,8 +9271,23 @@ namespace sogen
                 const auto flat_borders = c.win_emu.mod_manager.executable->subsystem_major_version >= k_flat_border_subsystem_version;
                 return write_nonclient_metrics(c, value, param, k_default_dpi, flat_borders ? 1 : 5, flat_borders ? 4 : 0);
             }
-            default:
+            case spi_action::getanimation:
+                return get_animation(c, param, value);
+            case spi_action::gethighcontrast:
+                return get_high_contrast(c, value);
+            case spi_action::getminimizedmetrics:
+                return write_output(c, value, k_minimized_metrics.data(), sizeof(k_minimized_metrics));
+            case spi_action::getmouse:
+                return write_output(c, value, k_mouse_acceleration.data(), sizeof(k_mouse_acceleration));
+            case spi_action::getdeskwallpaper:
+                return write_output(c, value, u"", sizeof(char16_t));
+            case spi_action::getlogicaldpioverride:
                 return FALSE;
+            case 0:
+            case spi_action::getgridgranularity:
+                return fail_with(c, k_error_invalid_spi_value);
+            default:
+                return get_setting(c, action, param, value);
             }
         }
 

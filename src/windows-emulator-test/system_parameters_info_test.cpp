@@ -15,8 +15,16 @@ namespace sogen::test
         constexpr uint32_t spi_get_icontitle_logfont = 0x1F;
         constexpr uint32_t spi_get_nonclientmetrics = 0x29;
         constexpr uint32_t spi_get_iconmetrics = 0x2D;
+        constexpr uint32_t spi_get_minimizedmetrics = 0x2B;
         constexpr uint32_t spi_get_workarea = 0x30;
+        constexpr uint32_t spi_get_filterkeys = 0x32;
+        constexpr uint32_t spi_get_togglekeys = 0x34;
+        constexpr uint32_t spi_get_mousekeys = 0x36;
+        constexpr uint32_t spi_get_stickykeys = 0x3A;
+        constexpr uint32_t spi_get_accesstimeout = 0x3C;
+        constexpr uint32_t spi_get_soundsentry = 0x40;
         constexpr uint32_t spi_get_animation = 0x48;
+        constexpr uint32_t error_invalid_spi_value = 1439;
         constexpr uint32_t error_invalid_parameter = 87;
         constexpr uint32_t error_noaccess = 998;
         constexpr auto ncm_size = static_cast<uint32_t>(sizeof(EMU_NONCLIENTMETRICS));
@@ -173,6 +181,30 @@ namespace sogen::test
             EXPECT_EQ(failure.struct_size, this->emu.memory.read_memory<uint32_t>(this->out)) << failure.action;
             EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(this->out + sizeof(uint32_t))) << failure.action;
         }
+
+        this->clear_output();
+        ASSERT_TRUE(this->query(spi_get_animation, 8, this->out));
+        EXPECT_EQ(1, this->emu.memory.read_memory<int32_t>(this->out + 4));
+
+        this->clear_output();
+        EXPECT_FALSE(this->query(spi_get_animation, 0, this->out));
+        EXPECT_EQ(0, this->emu.memory.read_memory<int32_t>(this->out + 4));
+        EXPECT_EQ(0u, this->last_error());
+
+        for (const uint32_t action : {0u, 0x12u})
+        {
+            this->clear_output();
+            EXPECT_FALSE(this->query(action, 0, this->out)) << action;
+            EXPECT_EQ(error_invalid_spi_value, this->last_error()) << action;
+        }
+
+        for (const uint32_t action : {0x7FFFu, 0xFFFFu, 0x1FFFu, 0xFFFFFFFFu, 0x10000u})
+        {
+            this->clear_output();
+            EXPECT_FALSE(this->query(action, 0, this->out)) << action;
+            EXPECT_EQ(error_invalid_parameter, this->last_error()) << action;
+            EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(this->out)) << action;
+        }
     }
 
     // Expected values captured on Windows 11 build 26100 (x64) with a 0xCC-filled buffer.
@@ -202,6 +234,58 @@ namespace sogen::test
             }
 
             EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(this->out + failure.size)) << failure.action;
+        }
+    }
+
+    // Expected values captured on Windows 11 build 26300 (x64) by calling win32u!NtUserSystemParametersInfo directly.
+    TEST_F(SystemParametersInfoTest, SizedStructureGetsCheckTheStructSizeInsteadOfTheParameter)
+    {
+        struct sized_structure
+        {
+            uint32_t action;
+            uint32_t size;
+        };
+
+        for (const auto& [action, size] :
+             {sized_structure{spi_get_filterkeys, 24}, sized_structure{spi_get_togglekeys, 8}, sized_structure{spi_get_mousekeys, 28},
+              sized_structure{spi_get_stickykeys, 8}, sized_structure{spi_get_accesstimeout, 12}, sized_structure{spi_get_soundsentry, 56}})
+        {
+            struct call
+            {
+                uint32_t param;
+                uint32_t struct_size;
+                bool succeeds;
+            };
+
+            for (const auto& [param, struct_size, succeeds] :
+                 {call{0, size, true}, call{size, size, true}, call{size, 0, false}, call{size, size + 4, false}, call{0, 0, false},
+                  call{1, size, false}, call{16, size, false}, call{size + 4, size, false}, call{0, size + 4, false},
+                  call{size, 100, false}})
+            {
+                this->clear_output();
+                this->set_struct_size(struct_size);
+                EXPECT_EQ(succeeds, this->query(action, param, this->out) == TRUE) << action << " " << param << " " << struct_size;
+                EXPECT_EQ(0u, this->last_error()) << action << " " << param << " " << struct_size;
+                EXPECT_EQ(struct_size, this->emu.memory.read_memory<uint32_t>(this->out)) << action << " " << param << " " << struct_size;
+                EXPECT_EQ(!succeeds, this->emu.memory.read_memory<uint32_t>(this->out + sizeof(uint32_t)) == 0)
+                    << action << " " << param << " " << struct_size;
+                EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(this->out + size)) << action << " " << param << " " << struct_size;
+            }
+
+            this->clear_output();
+            const auto read_only = this->emu.memory.allocate_memory(0x1000, memory_permission::read);
+            EXPECT_FALSE(this->query(action, size, read_only)) << action;
+            EXPECT_EQ(error_noaccess, this->last_error()) << action;
+        }
+
+        for (const auto& [param, struct_size] : {std::pair{0u, 20u}, std::pair{20u, 0u}, std::pair{1u, 24u}, std::pair{24u, 100u}})
+        {
+            this->clear_output();
+            this->set_struct_size(struct_size);
+            EXPECT_TRUE(this->query(spi_get_minimizedmetrics, param, this->out)) << param << " " << struct_size;
+            EXPECT_EQ(20u, this->emu.memory.read_memory<uint32_t>(this->out)) << param << " " << struct_size;
+            EXPECT_EQ(154u, this->emu.memory.read_memory<uint32_t>(this->out + sizeof(uint32_t))) << param << " " << struct_size;
+            EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(this->out + 20)) << param << " " << struct_size;
         }
     }
 
