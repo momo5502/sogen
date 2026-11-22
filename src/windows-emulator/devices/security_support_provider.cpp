@@ -10,220 +10,422 @@ namespace sogen
 
     namespace
     {
-        constexpr std::size_t ksec_operation_offset = 0x06;
+        constexpr uint32_t ksec_request_signature = 0x1a2b3c4d;
+        constexpr uint32_t ksec_resolve_providers_function = 0x20000;
+        constexpr uint32_t ksec_last_registry_function = 3;
+        constexpr uint32_t ksec_configuration_function_class = 1;
+        constexpr uint32_t ksec_resolve_function_class = 2;
+        constexpr std::size_t ksec_minimum_request_size = 0x08;
+        constexpr std::size_t ksec_minimum_reply_size = 0x08;
+        constexpr std::size_t ksec_max_request_size = 0x1000;
+        constexpr std::size_t ksec_in_place_reply_threshold = 216;
+        constexpr std::size_t ksec_function_offset = 0x04;
         constexpr std::size_t ksec_interface_offset = 0x10;
-        constexpr uint32_t ksec_rng_interface = 6;
-        constexpr std::size_t ksec_algorithm_name_offset = 0x30;
-        constexpr std::size_t ksec_algorithm_request_min_size = ksec_algorithm_name_offset;
+        constexpr std::size_t ksec_mode_offset = 0x28;
+        constexpr std::size_t ksec_flags_offset = 0x2c;
+        constexpr std::size_t ksec_strings_offset = 0x30;
+        constexpr std::array<std::size_t, 3> ksec_string_offset_fields{0x08, 0x18, 0x20};
+        constexpr uint64_t ksec_no_string = std::numeric_limits<uint64_t>::max();
+        constexpr std::size_t ksec_abbreviation_offset = 4;
+        constexpr uint32_t ksec_default_marker = std::numeric_limits<uint32_t>::max();
+        constexpr uint32_t ksec_first_mode = 1;
+        constexpr uint32_t ksec_last_mode = 3;
+        constexpr uint32_t ksec_user_mode_bit = 1;
+        constexpr uint32_t ksec_kernel_mode_bit = 2;
+        constexpr uint32_t ksec_all_functions_flag = 1;
+        constexpr uint32_t ksec_valid_flags = 3;
+        constexpr uint32_t ksec_property_type_dword = 4;
+        constexpr std::size_t ksec_reply_array_offset = 0x10;
+        constexpr std::size_t ksec_provider_reference_size = 0x38;
+        constexpr std::size_t ksec_property_size = 0x18;
+        constexpr std::size_t ksec_image_reference_size = 0x10;
+        constexpr std::u16string_view ksec_key_length_property = u"KeyLength";
+        constexpr std::u16string_view ksec_default_context = u"Default";
+        constexpr std::u16string_view ksec_ssl_context = u"SSL";
+        constexpr uint32_t ksec_ssl_interface = 0x10002;
 
-        std::u16string read_ksec_algorithm_name(const std::span<const uint8_t> request)
+        struct ksec_resolve_request
         {
-            std::u16string name;
-            for (size_t offset = ksec_algorithm_name_offset; offset + sizeof(char16_t) <= request.size(); offset += sizeof(char16_t))
-            {
-                const auto character =
-                    static_cast<char16_t>(static_cast<uint16_t>(request[offset]) | (static_cast<uint16_t>(request[offset + 1]) << 8));
-                if (character == u'\0')
-                {
-                    break;
-                }
+            std::optional<std::u16string> context;
+            std::optional<std::u16string> function;
+            std::optional<std::u16string> provider;
+            bool function_offset_present{};
+            std::array<char16_t, 2> abbreviation{};
+            uint32_t interface_id{};
+            uint32_t mode{};
+            uint32_t flags{};
+        };
 
-                name.push_back(character);
+        struct ksec_registration
+        {
+            const ksecdd_data::function_registration* function{};
+            const ksecdd_data::provider_registration* provider{};
+            uint32_t interface_id{};
+            uint32_t marker{};
+        };
+
+        bool equals_ignoring_case(const std::u16string_view left, const std::u16string_view right)
+        {
+            return std::ranges::equal(left, right, [](const char16_t a, const char16_t b) {
+                const auto fold = [](const char16_t c) { return c >= u'a' && c <= u'z' ? static_cast<char16_t>(c - u'a' + u'A') : c; };
+                return fold(a) == fold(b);
+            });
+        }
+
+        uint64_t wire_offset(const std::optional<size_t> offset)
+        {
+            return offset ? static_cast<uint64_t>(*offset) : ksec_no_string;
+        }
+
+        template <typename T>
+        T read_request_field(const std::span<const uint8_t> request, const size_t offset)
+        {
+            T value{};
+            std::memcpy(&value, request.data() + offset, sizeof(value));
+            return value;
+        }
+
+        std::optional<std::u16string> read_request_string(const std::span<const uint8_t> request, const size_t field)
+        {
+            const auto offset = read_request_field<uint64_t>(request, field);
+            if (offset == ksec_no_string)
+            {
+                return std::nullopt;
             }
 
-            return name;
+            if (offset >= request.size())
+            {
+                return std::nullopt;
+            }
+
+            std::u16string text;
+            for (auto position = static_cast<size_t>(offset); position + sizeof(char16_t) <= request.size(); position += sizeof(char16_t))
+            {
+                const auto character =
+                    static_cast<char16_t>(static_cast<uint16_t>(request[position]) | (static_cast<uint16_t>(request[position + 1]) << 8));
+                if (character == u'\0')
+                {
+                    return text;
+                }
+
+                text.push_back(character);
+            }
+
+            return std::nullopt;
+        }
+
+        std::array<char16_t, 2> read_abbreviation(const std::span<const uint8_t> request)
+        {
+            std::array<char16_t, 2> abbreviation{};
+            for (const auto field : ksec_string_offset_fields)
+            {
+                const auto offset = read_request_field<uint64_t>(request, field);
+                if (offset == ksec_no_string)
+                {
+                    continue;
+                }
+
+                const auto start = static_cast<size_t>(offset & ~uint64_t{1}) + ksec_abbreviation_offset;
+                if (start + sizeof(abbreviation) <= request.size())
+                {
+                    std::memcpy(abbreviation.data(), request.data() + start, sizeof(abbreviation));
+                }
+
+                break;
+            }
+
+            return abbreviation;
+        }
+
+        bool has_invalid_string(const std::span<const uint8_t> request)
+        {
+            return std::ranges::any_of(ksec_string_offset_fields, [&](const size_t field) {
+                const auto offset = read_request_field<uint64_t>(request, field);
+                if (offset == ksec_no_string)
+                {
+                    return false;
+                }
+
+                return offset < ksec_strings_offset || offset >= request.size() || !read_request_string(request, field);
+            });
+        }
+
+        const ksecdd_data::function_registration* find_function(const std::u16string_view name)
+        {
+            for (const auto& function : ksecdd_data::functions)
+            {
+                if (equals_ignoring_case(function.name, name))
+                {
+                    return &function;
+                }
+            }
+
+            return nullptr;
+        }
+
+        const ksecdd_data::interface_default* find_interface(const uint32_t interface_id)
+        {
+            for (const auto& interface_default : ksecdd_data::interface_defaults)
+            {
+                if (interface_default.interface_id == interface_id)
+                {
+                    return &interface_default;
+                }
+            }
+
+            return nullptr;
+        }
+
+        bool context_contains_interface(const std::u16string_view context, const uint32_t interface_id)
+        {
+            return equals_ignoring_case(context, ksec_default_context) ||
+                   (equals_ignoring_case(context, ksec_ssl_context) && interface_id == ksec_ssl_interface);
+        }
+
+        bool supports_requested_modes(const ksecdd_data::function_registration& function, const uint32_t mode)
+        {
+            return (mode & ksec_kernel_mode_bit) == 0 ||
+                   (function.kernel_mode && !ksecdd_data::provider_of(function.provider).kernel_mode.name.empty());
+        }
+
+        class reply_writer
+        {
+          public:
+            size_t size() const
+            {
+                return this->bytes_.size();
+            }
+
+            size_t append_zeros(const size_t count)
+            {
+                const auto offset = this->bytes_.size();
+                this->bytes_.resize(offset + count);
+                return offset;
+            }
+
+            template <typename T>
+            size_t append(const T value)
+            {
+                const auto offset = this->append_zeros(sizeof(value));
+                this->put(offset, value);
+                return offset;
+            }
+
+            template <typename T>
+            void put(const size_t offset, const T value)
+            {
+                std::memcpy(this->bytes_.data() + offset, &value, sizeof(value));
+            }
+
+            size_t append_string(const std::u16string_view text)
+            {
+                const auto size = (((text.size() + 1) * sizeof(char16_t)) + 7) & ~size_t{7};
+                const auto offset = this->append_zeros(size);
+                std::memcpy(this->bytes_.data() + offset, text.data(), text.size() * sizeof(char16_t));
+                return offset;
+            }
+
+            size_t append_image(const ksecdd_data::image_registration& image)
+            {
+                const auto reference = this->append_zeros(ksec_image_reference_size);
+                this->put(reference, wire_offset(this->append_string(image.name)));
+                this->put(reference + sizeof(uint64_t), image.type);
+                return reference;
+            }
+
+            std::vector<uint8_t> take()
+            {
+                return std::move(this->bytes_);
+            }
+
+          private:
+            std::vector<uint8_t> bytes_;
+        };
+
+        std::vector<uint8_t> build_resolution_reply(const std::span<const ksec_registration> registrations, const uint32_t mode,
+                                                    const std::array<char16_t, 2>& abbreviation)
+        {
+            reply_writer reply;
+            reply.append(static_cast<uint32_t>(registrations.size()));
+            reply.append(ksec_resolve_providers_function);
+            reply.append(static_cast<uint64_t>(ksec_reply_array_offset));
+            reply.append_zeros(registrations.size() * sizeof(uint64_t));
+
+            for (size_t i = 0; i < registrations.size(); ++i)
+            {
+                const auto& [function, provider, interface_id, marker] = registrations[i];
+                const auto reference = reply.append_zeros(ksec_provider_reference_size);
+                reply.put(ksec_reply_array_offset + (i * sizeof(uint64_t)), wire_offset(reference));
+
+                std::optional<size_t> function_name;
+                if (function)
+                {
+                    function_name = reply.append_string(function->name);
+                }
+
+                const auto provider_name = reply.append_string(provider->name);
+
+                std::optional<size_t> properties;
+                if (function && function->key_length != 0)
+                {
+                    properties = reply.append_zeros(sizeof(uint64_t) + ksec_property_size);
+                    const auto property = *properties + sizeof(uint64_t);
+                    reply.put(*properties, wire_offset(property));
+                    reply.put(property, wire_offset(reply.append_string(ksec_key_length_property)));
+                    reply.put(property + sizeof(uint64_t), uint64_t{ksec_property_type_dword});
+                    reply.put(property + (2 * sizeof(uint64_t)), wire_offset(reply.append(uint64_t{function->key_length})));
+                }
+
+                std::optional<size_t> user_mode_image;
+                if ((mode & ksec_user_mode_bit) != 0)
+                {
+                    user_mode_image = reply.append_image(provider->user_mode);
+                }
+
+                std::optional<size_t> kernel_mode_image;
+                if ((mode & ksec_kernel_mode_bit) != 0)
+                {
+                    kernel_mode_image = reply.append_image(provider->kernel_mode);
+                }
+
+                reply.put(reference, interface_id);
+                reply.put(reference + 4, marker);
+                reply.put(reference + 8, wire_offset(function_name));
+                reply.put(reference + 16, wire_offset(provider_name));
+                reply.put(reference + 24, static_cast<uint32_t>(properties ? 1 : 0));
+                reply.put(reference + 28, abbreviation);
+                reply.put(reference + 32, wire_offset(properties));
+                reply.put(reference + 40, wire_offset(user_mode_image));
+                reply.put(reference + 48, wire_offset(kernel_mode_image));
+            }
+
+            return reply.take();
+        }
+
+        std::optional<ksec_resolve_request> parse_resolve_request(const std::span<const uint8_t> request)
+        {
+            if (has_invalid_string(request))
+            {
+                return std::nullopt;
+            }
+
+            const auto read_name = [&](const size_t field) {
+                auto name = read_request_string(request, field);
+                return name && name->empty() ? std::nullopt : name;
+            };
+
+            ksec_resolve_request parsed{};
+            parsed.context = read_name(ksec_string_offset_fields[0]);
+            parsed.function = read_name(ksec_string_offset_fields[1]);
+            parsed.provider = read_name(ksec_string_offset_fields[2]);
+            parsed.function_offset_present = read_request_field<uint64_t>(request, ksec_string_offset_fields[1]) != ksec_no_string;
+            parsed.interface_id = read_request_field<uint32_t>(request, ksec_interface_offset);
+            parsed.mode = read_request_field<uint32_t>(request, ksec_mode_offset);
+            parsed.flags = read_request_field<uint32_t>(request, ksec_flags_offset);
+            parsed.abbreviation = read_abbreviation(request);
+            return parsed;
+        }
+
+        const ksecdd_data::provider_registration& provider_of(const ksecdd_data::function_registration& function)
+        {
+            return ksecdd_data::provider_of(function.provider);
+        }
+
+        std::vector<ksec_registration> list_interface_functions(const uint32_t interface_id, const uint32_t mode, const uint32_t flags)
+        {
+            std::vector<ksec_registration> registrations;
+            for (const auto& function : ksecdd_data::functions)
+            {
+                if (function.interface_id == interface_id && supports_requested_modes(function, mode))
+                {
+                    const auto marker = function.listing_marker == ksecdd_data::marker_request_flags ? flags : function.listing_marker;
+                    registrations.push_back(
+                        {.function = &function, .provider = &provider_of(function), .interface_id = interface_id, .marker = marker});
+                }
+            }
+
+            return registrations;
+        }
+
+        NTSTATUS select_registrations(windows_emulator& win_emu, const ksec_resolve_request& request,
+                                      std::vector<ksec_registration>& selected)
+        {
+            if (request.function)
+            {
+                if (request.interface_id != 0 && !find_interface(request.interface_id))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto* function = find_function(*request.function);
+                if (!function || (request.interface_id != 0 && function->interface_id != request.interface_id) ||
+                    (request.provider && !equals_ignoring_case(*request.provider, provider_of(*function).name)) ||
+                    (request.context && !context_contains_interface(*request.context, function->interface_id)) ||
+                    !supports_requested_modes(*function, request.mode))
+                {
+                    return STATUS_NOT_FOUND;
+                }
+
+                selected.push_back(
+                    {.function = function, .provider = &provider_of(*function), .interface_id = function->interface_id, .marker = 0});
+                return STATUS_SUCCESS;
+            }
+
+            const auto* interface_default = find_interface(request.interface_id);
+            if (!interface_default)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (request.context && !context_contains_interface(*request.context, request.interface_id))
+            {
+                return STATUS_NOT_FOUND;
+            }
+
+            const auto* default_function = find_function(interface_default->function);
+            if (!default_function || !supports_requested_modes(*default_function, request.mode))
+            {
+                return STATUS_NOT_FOUND;
+            }
+
+            if (request.provider)
+            {
+                const auto registrations = list_interface_functions(request.interface_id, request.mode, request.flags);
+                const auto match = std::ranges::find_if(registrations, [&](const ksec_registration& registration) {
+                    return equals_ignoring_case(*request.provider, registration.provider->name);
+                });
+                if (match == registrations.end())
+                {
+                    return STATUS_NOT_FOUND;
+                }
+
+                selected.push_back({.function = nullptr,
+                                    .provider = match->provider,
+                                    .interface_id = request.interface_id,
+                                    .marker = ksec_default_marker});
+                return STATUS_SUCCESS;
+            }
+
+            if ((request.flags & ksec_all_functions_flag) != 0)
+            {
+                if (request.context)
+                {
+                    win_emu.log.error("Unverified KsecDD provider list for context %s\n", u16_to_u8(*request.context).c_str());
+                }
+
+                selected = list_interface_functions(request.interface_id, request.mode, request.flags);
+                return STATUS_SUCCESS;
+            }
+
+            selected.push_back({.function = default_function,
+                                .provider = &provider_of(*default_function),
+                                .interface_id = request.interface_id,
+                                .marker = request.function_offset_present ? 0 : ksec_default_marker});
+            return STATUS_SUCCESS;
         }
 
         struct security_support_provider : stateless_device
         {
-            // RNG Microsoft Primitive Provider
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            std::uint8_t rng_output_data[216] = //
-                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0xFF, 0xFF, 0xFF, 0xFF, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0x52, 0x00, 0x4E, 0x00, 0x47, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00,
-                 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
-                 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00,
-                 0x65, 0x00, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00,
-                 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00,
-                 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            // Microsoft SSL Protocol Provider -> ncryptsslp.dll (native KsecDD capture)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            std::uint8_t ssl_provider_output_data[192] = //
-                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x72, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0xFF, 0xFF, 0xFF, 0xFF, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00, 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00,
-                 0x53, 0x00, 0x53, 0x00, 0x4C, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x74, 0x00, 0x6F, 0x00, 0x63, 0x00,
-                 0x6F, 0x00, 0x6C, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00,
-                 0x72, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x6E, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00, 0x73, 0x00, 0x73, 0x00, 0x6C, 0x00, 0x70, 0x00,
-                 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            // AES Microsoft Primitive Provider (native KsecDD capture)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            std::uint8_t aes_output_data[280] = //
-                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x53, 0x00, 0x00, 0x00, 0x98, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0x41, 0x00, 0x45, 0x00, 0x53, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00,
-                 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
-                 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00,
-                 0x65, 0x00, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x4B, 0x00, 0x65, 0x00, 0x79, 0x00, 0x4C, 0x00, 0x65, 0x00, 0x6E, 0x00, 0x67, 0x00, 0x74, 0x00,
-                 0x68, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00,
-                 0x70, 0x00, 0x74, 0x00, 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00,
-                 0x65, 0x00, 0x73, 0x00, 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            // SHA256 Microsoft Primitive Provider
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            std::uint8_t sha256_output_data[224] = //
-                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x00, 0x32, 0x00, 0xFF,
-                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0xFF, 0xFF, 0xFF, 0xFF, 0x53, 0x00, 0x48, 0x00, 0x41, 0x00, 0x32, 0x00, 0x35, 0x00, 0x36, 0x00, 0x00, 0x00, 0x00,
-                 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00, 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00,
-                 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65,
-                 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00, 0x72, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00, 0x70, 0x00,
-                 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00, 0x2E,
-                 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            std::array<std::uint8_t, 296> ecdsa_p256_output_data = {
-                0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x68, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x44, 0x00, 0x53, 0x00, 0xa8, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0x45, 0x00, 0x43, 0x00, 0x44, 0x00, 0x53, 0x00, 0x41, 0x00, 0x5f, 0x00, 0x50, 0x00, 0x32, 0x00, 0x35, 0x00, 0x36, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x4d, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6f, 0x00, 0x73, 0x00, 0x6f, 0x00, 0x66, 0x00,
-                0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6d, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00,
-                0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6f, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00, 0x72, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc8, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x4b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x4c, 0x00, 0x65, 0x00, 0x6e, 0x00, 0x67, 0x00, 0x74, 0x00, 0x68, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00,
-                0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6d, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00,
-                0x2e, 0x00, 0x64, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            // MD5 Microsoft Primitive Provider (shared layout for the MD family)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            std::uint8_t md5_output_data[216] = //
-                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x35, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0xFF, 0xFF, 0xFF, 0xFF, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                 0x4D, 0x00, 0x44, 0x00, 0x35, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00,
-                 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
-                 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00,
-                 0x65, 0x00, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00,
-                 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00,
-                 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-            // Offsets into a provider response. The algorithm name is a fixed-width
-            // field rather than a packed string, and 0x34 holds a two-character
-            // abbreviation of it that BCrypt cross-checks.
-            static constexpr std::size_t response_interface_offset = 0x18;
-            static constexpr std::size_t response_name_offset = 0x50;
-            static constexpr std::size_t response_abbreviation_offset = 0x34;
-            static constexpr std::size_t response_abbreviation_size = 0x04;
-            static constexpr std::size_t response_key_length_offset = 0xD0;
-
-            struct provider_algorithm
-            {
-                std::u16string_view name;
-                // Third and fourth characters of the name: "SHA1" -> A1, "MD5" -> 5.
-                std::u16string_view abbreviation;
-                std::span<const std::uint8_t> response;
-                // The provider name follows the algorithm name directly, so the
-                // field is only as wide as the longest name sharing the template.
-                std::size_t name_size;
-                std::uint32_t interface_id;
-                std::uint32_t key_length{};
-                std::size_t key_length_offset{response_key_length_offset};
-            };
-
-            std::optional<provider_algorithm> find_provider_algorithm(const std::u16string_view name)
-            {
-                const std::array<provider_algorithm, 11> algorithms{{
-                    {.name = u"SHA1", .abbreviation = u"A1", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
-                    {.name = u"SHA256", .abbreviation = u"A2", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
-                    {.name = u"SHA384", .abbreviation = u"A3", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
-                    {.name = u"SHA512", .abbreviation = u"A5", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
-                    {.name = u"ECDSA_P256",
-                     .abbreviation = u"DS",
-                     .response = ecdsa_p256_output_data,
-                     .name_size = 0x18,
-                     .interface_id = 5,
-                     .key_length = 256,
-                     .key_length_offset = 0xe0},
-                    {.name = u"ECDSA_P384",
-                     .abbreviation = u"DS",
-                     .response = ecdsa_p256_output_data,
-                     .name_size = 0x18,
-                     .interface_id = 5,
-                     .key_length = 384,
-                     .key_length_offset = 0xe0},
-                    {.name = u"DSA",
-                     .abbreviation = u"A",
-                     .response = aes_output_data,
-                     .name_size = 0x08,
-                     .interface_id = 5,
-                     .key_length = 1024},
-                    {.name = u"RSA",
-                     .abbreviation = u"A",
-                     .response = aes_output_data,
-                     .name_size = 0x08,
-                     .interface_id = 3,
-                     .key_length = 1024},
-                    {.name = u"MD2", .abbreviation = u"2", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
-                    {.name = u"MD4", .abbreviation = u"4", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
-                    {.name = u"MD5", .abbreviation = u"5", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
-                }};
-
-                for (const auto& algorithm : algorithms)
-                {
-                    if (algorithm.name == name)
-                    {
-                        return algorithm;
-                    }
-                }
-
-                return std::nullopt;
-            }
-
-            static void patch_algorithm_response(std::vector<std::uint8_t>& response, const provider_algorithm& algorithm)
-            {
-                const auto write_utf16 = [&](const std::size_t offset, const std::u16string_view text) {
-                    for (std::size_t i = 0; i < text.size(); ++i)
-                    {
-                        response[offset + (i * 2)] = static_cast<std::uint8_t>(text[i] & 0xFF);
-                        response[offset + (i * 2) + 1] = static_cast<std::uint8_t>(text[i] >> 8);
-                    }
-                };
-                std::memcpy(response.data() + response_interface_offset, &algorithm.interface_id, sizeof(algorithm.interface_id));
-                if (algorithm.key_length != 0)
-                {
-                    std::memcpy(response.data() + algorithm.key_length_offset, &algorithm.key_length, sizeof(algorithm.key_length));
-                }
-
-                std::fill_n(response.begin() + response_name_offset, algorithm.name_size, std::uint8_t{});
-                std::fill_n(response.begin() + response_abbreviation_offset, response_abbreviation_size, std::uint8_t{});
-                write_utf16(response_name_offset, algorithm.name);
-                write_utf16(response_abbreviation_offset, algorithm.abbreviation);
-            }
-
             static NTSTATUS complete_status_ioctl(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS payload)
             {
                 ULONG info = 0;
@@ -307,6 +509,87 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            static NTSTATUS complete_with_error_status(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS status)
+            {
+                win_emu.emu().write_memory(c.output_buffer, status);
+                write_io_information(c, sizeof(status));
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            static NTSTATUS complete_with_reply(windows_emulator& win_emu, const io_device_context& c, const std::span<const uint8_t> reply)
+            {
+                if (c.output_buffer_length < reply.size())
+                {
+                    const std::array<uint32_t, 2> size_hint{
+                        static_cast<uint32_t>(STATUS_BUFFER_TOO_SMALL),
+                        static_cast<uint32_t>(reply.size()),
+                    };
+                    win_emu.emu().write_memory(c.output_buffer, size_hint);
+                    write_io_information(c, sizeof(size_hint));
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                win_emu.emu().write_memory(c.output_buffer, reply.data(), reply.size());
+                write_io_information(c, reply.size());
+                return STATUS_SUCCESS;
+            }
+
+            static void write_io_information(const io_device_context& c, const size_t information)
+            {
+                if (c.io_status_block)
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                    block.Information = information;
+                    c.io_status_block.write(block);
+                }
+            }
+
+            static NTSTATUS resolve_providers(windows_emulator& win_emu, const io_device_context& c, const std::span<const uint8_t> request,
+                                              const uint32_t function)
+            {
+                if (request.size() < ksec_strings_offset)
+                {
+                    return complete_with_error_status(
+                        win_emu, c, request.size() == ksec_minimum_request_size ? STATUS_INVALID_PARAMETER : STATUS_INTERNAL_ERROR);
+                }
+
+                const auto parsed = parse_resolve_request(request);
+                if (!parsed)
+                {
+                    return complete_with_error_status(win_emu, c, STATUS_INTERNAL_ERROR);
+                }
+
+                if (parsed->mode < ksec_first_mode || parsed->mode > ksec_last_mode || (parsed->flags & ~ksec_valid_flags) != 0)
+                {
+                    return complete_with_error_status(win_emu, c, STATUS_INVALID_PARAMETER);
+                }
+
+                if (function != ksec_resolve_providers_function)
+                {
+                    return STATUS_ILLEGAL_FUNCTION;
+                }
+
+                std::vector<ksec_registration> selected;
+                const auto status = select_registrations(win_emu, *parsed, selected);
+                if (status != STATUS_SUCCESS)
+                {
+                    if (parsed->function && !find_function(*parsed->function))
+                    {
+                        win_emu.log.error("Unsupported KsecDD function: %s\n", u16_to_u8(*parsed->function).c_str());
+                    }
+
+                    return complete_with_error_status(win_emu, c, status);
+                }
+
+                const auto reply = build_resolution_reply(selected, parsed->mode, parsed->abbreviation);
+                return complete_with_reply(win_emu, c, reply);
+            }
+
+            static bool is_unmodelled_function(const uint32_t function)
+            {
+                return function <= ksec_last_registry_function || (function >> 16) == ksec_configuration_function_class;
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
                 if (is_memory_crypt_ioctl(c.io_control_code))
@@ -319,141 +602,44 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                // BCryptOpenAlgorithmProvider uses a dedicated output buffer sized for the provider blob.
-                // Other KsecDD clients issue 0x390400 in-place (same input/output pointer) with a small
-                // buffer and expect DeviceIoControl to succeed with a NTSTATUS in the first dword.
-                const bool in_place = c.input_buffer != 0 && c.input_buffer == c.output_buffer;
-                if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size ||
-                    (in_place && c.output_buffer_length < sizeof(rng_output_data)))
+                if (!c.output_buffer || c.output_buffer_length < ksec_minimum_reply_size)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                if (!c.input_buffer || c.input_buffer_length < ksec_minimum_request_size)
+                {
+                    return STATUS_ILLEGAL_FUNCTION;
+                }
+
+                const auto request_size = std::min<size_t>(c.input_buffer_length, ksec_max_request_size);
+                std::vector<uint8_t> request(request_size);
+                win_emu.emu().read_memory(c.input_buffer, request.data(), request.size());
+
+                const auto function = read_request_field<uint32_t>(request, ksec_function_offset);
+                if (read_request_field<uint32_t>(request, 0) != ksec_request_signature)
+                {
+                    return STATUS_ILLEGAL_FUNCTION;
+                }
+
+                if ((function >> 16) == ksec_resolve_function_class)
+                {
+                    return resolve_providers(win_emu, c, request, function);
+                }
+
+                if (!is_unmodelled_function(function))
+                {
+                    return STATUS_ILLEGAL_FUNCTION;
+                }
+
+                // Registry and configuration functions are not modelled; they only report success.
+                const bool in_place = c.input_buffer == c.output_buffer;
+                if (c.input_buffer_length < ksec_strings_offset || (in_place && c.output_buffer_length < ksec_in_place_reply_threshold))
                 {
                     return complete_status_ioctl(win_emu, c, STATUS_SUCCESS);
                 }
 
-                const auto request_size = std::min<size_t>(c.input_buffer_length, 0x1000);
-                std::vector<uint8_t> request(request_size);
-                win_emu.emu().read_memory(c.input_buffer, request.data(), request.size());
-
-                uint16_t operation{};
-                std::memcpy(&operation, request.data() + ksec_operation_offset, sizeof(operation));
-
-                std::u16string algorithm_name;
-                if (operation == 2)
-                {
-                    algorithm_name = read_ksec_algorithm_name(std::span<const uint8_t>{request});
-                }
-
-                if (operation != 2)
-                {
-                    return STATUS_SUCCESS;
-                }
-
-                const auto write_response = [&](const auto& output_data) -> NTSTATUS {
-                    if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-
-                    win_emu.emu().write_memory(c.output_buffer, output_data);
-
-                    if (c.io_status_block)
-                    {
-                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                        block.Information = sizeof(output_data);
-                        c.io_status_block.write(block);
-                    }
-
-                    return STATUS_SUCCESS;
-                };
-
-                if (algorithm_name.empty())
-                {
-                    uint32_t interface_id{};
-                    std::memcpy(&interface_id, request.data() + ksec_interface_offset, sizeof(interface_id));
-                    if (interface_id == ksec_rng_interface)
-                    {
-                        return write_response(rng_output_data);
-                    }
-
-                    constexpr std::array<std::uint32_t, 2> overflow_response{
-                        static_cast<std::uint32_t>(STATUS_BUFFER_TOO_SMALL),
-                        static_cast<std::uint32_t>(ksecdd_data::provider_enumeration_response.size()),
-                    };
-                    if (!c.output_buffer || c.output_buffer_length < sizeof(overflow_response))
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-                    if (c.output_buffer_length < ksecdd_data::provider_enumeration_response.size())
-                    {
-                        win_emu.emu().write_memory(c.output_buffer, overflow_response);
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(overflow_response);
-                            c.io_status_block.write(block);
-                        }
-                        return STATUS_BUFFER_OVERFLOW;
-                    }
-
-                    return write_response(ksecdd_data::provider_enumeration_response);
-                }
-
-                if (algorithm_name == u"Microsoft Primitive Provider")
-                {
-                    if (!c.output_buffer || c.output_buffer_length < sizeof(NTSTATUS))
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-
-                    const NTSTATUS provider_status = STATUS_NOT_FOUND;
-                    win_emu.emu().write_memory(c.output_buffer, provider_status);
-                    if (c.io_status_block)
-                    {
-                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                        block.Information = sizeof(provider_status);
-                        c.io_status_block.write(block);
-                    }
-
-                    return STATUS_BUFFER_OVERFLOW;
-                }
-
-                if (algorithm_name == u"KEY_STORAGE")
-                {
-                    return write_response(ksecdd_data::key_storage_provider_response);
-                }
-
-                if (algorithm_name == u"Microsoft SSL Protocol Provider")
-                {
-                    return write_response(ssl_provider_output_data);
-                }
-
-                if (algorithm_name == u"AES")
-                {
-                    return write_response(aes_output_data);
-                }
-
-                if (const auto algorithm = find_provider_algorithm(algorithm_name))
-                {
-                    if (!c.output_buffer || c.output_buffer_length < algorithm->response.size())
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-
-                    std::vector<std::uint8_t> response{algorithm->response.begin(), algorithm->response.end()};
-                    patch_algorithm_response(response, *algorithm);
-
-                    win_emu.emu().write_memory(c.output_buffer, response.data(), response.size());
-
-                    if (c.io_status_block)
-                    {
-                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                        block.Information = response.size();
-                        c.io_status_block.write(block);
-                    }
-
-                    return STATUS_SUCCESS;
-                }
-
-                return write_response(rng_output_data);
+                return STATUS_SUCCESS;
             }
         };
     }
