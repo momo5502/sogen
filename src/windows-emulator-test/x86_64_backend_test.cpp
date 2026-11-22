@@ -263,6 +263,57 @@ namespace sogen::test
         EXPECT_EQ(machine->reg<uint32_t>(x86_register::eax), 9u);
     }
 
+    TEST_F(X8664BackendTest, VectorAndStackStoresToReadOnlyPagesAreReportedAsWrites)
+    {
+        ASSERT_TRUE(memory.allocate_memory(read_only_address, 0x1000, memory_permission::read));
+        // movups [rdx], xmm0; mov [rsp], rax; mov eax, 9; syscall
+        load_code(std::array<uint8_t, 14>{0x0F, 0x11, 0x02, 0x48, 0x89, 0x04, 0x24, 0xB8, 0x09, 0x00, 0x00, 0x00, 0x0F, 0x05});
+        machine->reg(x86_register::rdx, read_only_address);
+        machine->reg(x86_register::rsp, read_only_address + 0x100);
+
+        struct fault
+        {
+            uint64_t address;
+            uint64_t rip;
+            memory_operation operation;
+            memory_violation_type type;
+            bool operator==(const fault&) const = default;
+        };
+
+        std::vector<fault> faults{};
+        machine->hook_memory_violation(
+            [&](cpu_interface& raw, const uint64_t address, size_t, const memory_operation operation, const memory_violation_type type) {
+                auto& cpu = dynamic_cast<x86_64_cpu&>(raw);
+                const auto rip = cpu.read_instruction_pointer();
+                faults.push_back({.address = address, .rip = rip, .operation = operation, .type = type});
+                cpu.reg(x86_register::rip, rip + (faults.size() == 1 ? 3 : 4));
+                return memory_violation_continuation::resume;
+            });
+        bool done{};
+        machine->hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& cpu, uint64_t) {
+            done = true;
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        for (int runs = 0; !done && runs < 8; ++runs)
+        {
+            machine->start();
+        }
+        ASSERT_TRUE(done);
+        const std::vector<fault> expected{
+            {.address = read_only_address,
+             .rip = code_address,
+             .operation = memory_operation::write,
+             .type = memory_violation_type::protection},
+            {.address = read_only_address + 0x100,
+             .rip = code_address + 3,
+             .operation = memory_operation::write,
+             .type = memory_violation_type::protection},
+        };
+        EXPECT_EQ(faults, expected);
+    }
+
     TEST_F(X8664BackendTest, ExecutionRangeHooksSeeEachInstructionOnceAndCanBeRemoved)
     {
         // mov eax, 1; add eax, 1; add eax, 1; syscall

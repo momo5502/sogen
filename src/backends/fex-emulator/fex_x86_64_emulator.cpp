@@ -4931,7 +4931,7 @@ namespace sogen::fex
                 return false;
             }
 
-            return this->deliver_host_signal(cpu, signal, code, address);
+            return this->deliver_host_signal(cpu, signal, code, address, exception.syndrome);
         }
 
         void perform_host_call(arm64_cpu& cpu, const size_t index)
@@ -4963,7 +4963,7 @@ namespace sogen::fex
             cpu.reg(arm64_register::pc, cpu.reg(arm64_register::x30));
         }
 
-        bool deliver_host_signal(arm64_cpu& cpu, const int signal, const int code, const uint64_t address)
+        bool deliver_host_signal(arm64_cpu& cpu, const int signal, const int code, const uint64_t address, const uint64_t syndrome)
         {
             __darwin_mcontext64 machine{};
             ucontext_t context{};
@@ -4985,6 +4985,7 @@ namespace sogen::fex
             machine.__ns.__fpsr = cpu.reg<uint32_t>(arm64_register::fpsr);
             machine.__ns.__fpcr = cpu.reg<uint32_t>(arm64_register::fpcr);
             machine.__es.__far = address;
+            machine.__es.__esr = static_cast<uint32_t>(syndrome);
 
             siginfo_t info{};
             info.si_signo = signal;
