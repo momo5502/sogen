@@ -105,6 +105,37 @@ namespace sogen::test
                                                                       sizeof(ULONG));
             }
 
+            // TpSetPoolWorkerThreadIdleTimeout.
+            NTSTATUS set_idle_timeout(const int64_t value)
+            {
+                emulator_object<int64_t>{this->emu->memory, this->storage}.write(value);
+                return syscalls::handle_NtSetInformationWorkerFactory(this->context(), this->factory_handle, WorkerFactoryIdleTimeout,
+                                                                      this->storage, sizeof(int64_t));
+            }
+
+            // The worker's call into NtWaitForWorkViaWorkerFactory with nothing queued: it waits.
+            void wait_for_work(emulator_thread& worker)
+            {
+                this->emu->vcpu(0).active_thread = &worker;
+                ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+                    return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context(), this->factory_handle,
+                                                                          {this->emu->memory, this->storage + 0x100}, 1,
+                                                                          {this->emu->memory, this->storage + 0x80}, 0);
+                }));
+                ASSERT_TRUE(worker.await_io_completion.has_value());
+            }
+
+            void advance_time(const std::chrono::milliseconds duration)
+            {
+                auto& clock = this->emu->scheduling_clock();
+                clock.continue_time_at(clock.steady_now() + duration, clock.timestamp_counter());
+            }
+
+            bool is_ready(emulator_thread& thread)
+            {
+                return this->emu->synchronize([&] { return thread.is_thread_ready(*this->emu); });
+            }
+
             // TpAdjustBindingCount: a wait or a timer bound to the pool (1) or unbound from it (-1).
             NTSTATUS bind(const LONG delta)
             {
@@ -383,6 +414,98 @@ namespace sogen::test
         this->queue_packet();
         EXPECT_EQ(2u, this->pool().worker_threads.size());
         EXPECT_FALSE(this->pool().away_notification);
+    }
+
+    TEST_F(WorkerFactoryTest, IdleWorkersLeaveAfterTheIdleTimeoutDownToTheMinimum)
+    {
+        constexpr int64_t ten_seconds = -100'000'000;
+
+        struct row
+        {
+            ULONG thread_minimum;
+            ULONG thread_maximum;
+            ULONG workers;
+            ULONG busy_workers;
+            bool work_midway;
+            size_t retiring;
+        };
+
+        for (const auto& [thread_minimum, thread_maximum, workers, busy_workers, work_midway, retiring] :
+             {row{0, 512, 1, 0, false, 1}, row{0, 1, 1, 0, false, 1}, row{0, 512, 3, 0, false, 3}, row{1, 512, 1, 0, false, 0},
+              row{1, 512, 2, 0, false, 1}, row{2, 512, 3, 1, false, 1}, row{0, 512, 1, 0, true, 1}})
+        {
+            SCOPED_TRACE(testing::Message() << "minimum " << thread_minimum << ", maximum " << thread_maximum << ", workers " << workers
+                                            << ", busy " << busy_workers << ", work midway " << work_midway);
+
+            worker_factory factory{};
+            factory.stack_reserve = 0x100000;
+            factory.stack_commit = 0x1000;
+            this->factory_handle = this->emu->process.worker_factories.store(std::move(factory));
+            this->make_pool(thread_maximum);
+            ASSERT_EQ(STATUS_SUCCESS, this->set_idle_timeout(ten_seconds));
+            ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+
+            ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, workers));
+            for (ULONG i = 0; i < workers; ++i)
+            {
+                ASSERT_EQ(STATUS_SUCCESS, this->worker_ready());
+            }
+            if (thread_minimum != workers)
+            {
+                ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, thread_minimum));
+            }
+
+            const auto started = this->pool().worker_threads;
+            ASSERT_EQ(workers, started.size());
+            std::vector<emulator_thread*> idle_workers;
+            for (const auto worker_handle : started | std::views::drop(busy_workers))
+            {
+                auto* worker = this->emu->process.threads.get(worker_handle);
+                ASSERT_NE(nullptr, worker);
+                this->wait_for_work(*worker);
+                idle_workers.push_back(worker);
+            }
+
+            if (work_midway)
+            {
+                this->advance_time(std::chrono::seconds(6));
+                this->queue_packet();
+                ASSERT_FALSE(idle_workers.front()->await_io_completion.has_value());
+                this->wait_for_work(*idle_workers.front());
+                this->advance_time(std::chrono::seconds(6));
+                EXPECT_FALSE(this->is_ready(*idle_workers.front()));
+                this->advance_time(std::chrono::seconds(5));
+            }
+            else
+            {
+                this->advance_time(std::chrono::seconds(thread_minimum == 0 ? 11 : 21));
+            }
+
+            size_t retired = 0;
+            for (auto* worker : idle_workers)
+            {
+                if (this->is_ready(*worker))
+                {
+                    EXPECT_EQ(STATUS_TIMEOUT, worker->pending_status);
+                    worker->exit_status = STATUS_SUCCESS;
+                    ++retired;
+                }
+                else
+                {
+                    EXPECT_TRUE(worker->await_io_completion.has_value());
+                }
+            }
+
+            EXPECT_EQ(retiring, retired);
+            ASSERT_EQ(workers - retired, this->pool().worker_threads.size());
+
+            if (this->pool().worker_threads.empty())
+            {
+                this->queue_packet();
+                ASSERT_EQ(1u, this->pool().worker_threads.size());
+                EXPECT_EQ(std::ranges::end(started), std::ranges::find(started, this->pool().worker_threads.front()));
+            }
+        }
     }
 
     TEST_F(WorkerFactoryTest, ThreadMinimumRaisesTheMaximumAndStartsItsWorkers)
