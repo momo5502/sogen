@@ -154,4 +154,19 @@ namespace sogen::test
         system_call();
         EXPECT_EQ(interrupt_time(emu), start + 10'000);
     }
+
+    TEST(KusdRefreshTest, ClockTicksKeepTheCadenceOfTheClockInterval)
+    {
+        constexpr ULONG one_millisecond = 10'000;
+        constexpr std::chrono::steady_clock::time_point tick{};
+        const auto next_tick_after = [&](const int64_t wake_microseconds) {
+            const auto next = next_clock_tick(tick, tick + std::chrono::microseconds(wake_microseconds), one_millisecond);
+            return std::chrono::duration_cast<std::chrono::microseconds>(next - tick).count();
+        };
+
+        EXPECT_EQ(1'000, next_tick_after(0));
+        EXPECT_EQ(1'000, next_tick_after(700));
+        EXPECT_EQ(2'000, next_tick_after(1'000));
+        EXPECT_EQ(3'000, next_tick_after(2'500));
+    }
 }
