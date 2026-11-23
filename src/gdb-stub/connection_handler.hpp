@@ -7,6 +7,7 @@
 #include <thread>
 #include <functional>
 #include <condition_variable>
+#include <mutex>
 
 namespace sogen::gdb_stub
 {
@@ -27,7 +28,7 @@ namespace sogen::gdb_stub
         void send_reply(std::string_view data);
         void send_raw_data(std::string_view data);
 
-        void close() const;
+        void close();
 
         bool should_stop() const;
 
@@ -37,13 +38,15 @@ namespace sogen::gdb_stub
         stream_processor processor_{};
 
         std::mutex mutex_{};
+        std::timed_mutex send_mutex_{};
         std::atomic_bool stop_{};
+        std::atomic_bool closing_{};
         std::string output_stream_{};
         std::thread output_thread_{};
         std::condition_variable condition_variable_{};
 
         void transmission_loop();
-        void await_transmission(const std::function<void()>& handler);
-        std::string get_next_data_to_transmit();
+        void await_output();
+        std::string take_output();
     };
 } // namespace sogen::gdb_stub
