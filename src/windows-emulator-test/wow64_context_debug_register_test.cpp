@@ -143,6 +143,8 @@ namespace sogen::test
     TEST_F(Wow64ContextDebugRegisterTest, TheSavedContextNeverClaimsExtendedState)
     {
         const emulator_object<WOW64_CPURESERVED> reserved{this->emu->memory, this->storage + reserved_offset};
+        reserved.access([](WOW64_CPURESERVED& value) { value.Context.ContextFlags = CONTEXT32_ALL; });
+
         const emulator_object<WOW64_CONTEXT> buffer{this->emu->memory, this->storage};
         WOW64_CONTEXT update{};
         update.ContextFlags = CONTEXT_INTEGER_32 | CONTEXT_XSTATE_32;
@@ -150,6 +152,6 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationThread(this->context(), CURRENT_THREAD, ThreadWow64Context,
                                                                           buffer.value(), sizeof(WOW64_CONTEXT)));
 
-        EXPECT_EQ(CONTEXT_INTEGER_32, reserved.read().Context.ContextFlags);
+        EXPECT_EQ(static_cast<DWORD>(CONTEXT32_ALL), reserved.read().Context.ContextFlags);
     }
 }
