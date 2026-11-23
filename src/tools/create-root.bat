@@ -278,6 +278,11 @@ CALL :collect l_intl.nls
 CALL :collect c_1252.nls
 CALL :collect c_437.nls
 CALL :collect c_850.nls
+CALL :collect normidna.nls
+CALL :collect normnfc.nls
+CALL :collect normnfd.nls
+CALL :collect normnfkc.nls
+CALL :collect normnfkd.nls
 CALL :collect_file "%WINDIR%\Globalization\Sorting", sortdefault.nls, %EMU_SORTDIR%
 
 CALL :collect wdmaud.drv

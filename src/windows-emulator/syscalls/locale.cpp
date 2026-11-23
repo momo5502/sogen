@@ -141,7 +141,7 @@ namespace sogen
             }
 
             NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_name,
-                                  const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
+                                  const emulator_object<uint64_t> section_pointer, const emulator_object<uint64_t> section_size)
             {
                 const auto nls_file = c.win_emu.file_sys.read_file(get_system32_path(c, file_name));
                 if (nls_file.empty())
@@ -154,9 +154,28 @@ namespace sogen
                 c.emu.write_memory(section_memory, nls_file.data(), nls_file.size());
 
                 section_pointer.write_if_valid(section_memory);
-                section_size.write_if_valid(static_cast<ULONG>(size));
+                section_size.write_if_valid(size);
 
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS map_normalization_file(const syscall_context& c, const ULONG form, const emulator_object<uint64_t> section_pointer,
+                                            const emulator_object<uint64_t> section_size)
+            {
+                if (!section_pointer)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto file_name = registry_utils::read_registry_string(
+                    c.win_emu.registry, R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\Normalization)",
+                    utils::string::to_hex_number(form));
+                if (!file_name)
+                {
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
+                return map_nls_file(c, u16_to_u8(*file_name), section_pointer, section_size);
             }
         }
 
@@ -189,11 +208,16 @@ namespace sogen
 
         NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, const ULONG section_type, const ULONG section_data,
                                            emulator_pointer /*context_data*/, const emulator_object<uint64_t> section_pointer,
-                                           const emulator_object<ULONG> section_size)
+                                           const emulator_object<uint64_t> section_size)
         {
             if (section_type == 11)
             {
                 return map_nls_file(c, "C_" + std::to_string(section_data) + ".NLS", section_pointer, section_size);
+            }
+
+            if (section_type == 12)
+            {
+                return map_normalization_file(c, section_data, section_pointer, section_size);
             }
 
             // l_intl.nls: backs RtlUpcaseUnicodeChar/RtlDowncaseUnicodeChar beyond ASCII.
@@ -203,7 +227,7 @@ namespace sogen
             }
 
             c.win_emu.log.warn("Unsupported section type: %X\n", static_cast<uint32_t>(section_type));
-            return STATUS_NOT_SUPPORTED;
+            return STATUS_INVALID_PARAMETER_1;
         }
 
         NTSTATUS handle_NtGetMUIRegistryInfo()
