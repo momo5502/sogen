@@ -92,6 +92,8 @@ CALL :collect dbgcore.dll
 CALL :collect dciman32.dll
 CALL :collect ddraw.dll
 CALL :collect devobj.dll
+CALL :collect dhcpcsvc.dll
+CALL :collect dhcpcsvc6.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput.dll
 CALL :collect dinput8.dll
