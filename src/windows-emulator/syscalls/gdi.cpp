@@ -6832,6 +6832,11 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDIWaitForVerticalBlankEvent()
+        {
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu()
         {
             return STATUS_SUCCESS;

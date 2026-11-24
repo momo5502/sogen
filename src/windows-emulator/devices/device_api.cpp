@@ -4,6 +4,7 @@
 #include "../windows_emulator.hpp"
 #include "../syscall_utils.hpp"
 #include "../token.hpp"
+#include "../registry/registry_utils.hpp"
 
 namespace sogen
 {
@@ -17,6 +18,8 @@ namespace sogen
             {
                 constexpr ULONG ioctl_get_device_id_list = 0x470803;
                 constexpr ULONG ioctl_get_device_interface_list = 0x470807;
+                constexpr ULONG ioctl_get_object_property = 0x470813;
+                constexpr ULONG ioctl_get_device_interface_alias = 0x47083f;
                 constexpr ULONG ioctl_open_class_key = 0x470863;
 
                 switch (c.io_control_code)
@@ -27,6 +30,10 @@ namespace sogen
                     return get_device_interface_list(win_emu, c);
                 case ioctl_open_class_key:
                     return open_class_key(win_emu, c);
+                case ioctl_get_object_property:
+                    return get_object_property(win_emu, c);
+                case ioctl_get_device_interface_alias:
+                    return get_device_interface_alias(win_emu, c);
                 default:
                     return STATUS_SUCCESS;
                 }
@@ -176,7 +183,7 @@ namespace sogen
                 uint32_t size;
                 NTSTATUS status;
                 uint32_t data_bytes;
-                uint32_t reserved;
+                uint32_t property_type;
                 uint32_t data;
             };
 
@@ -216,7 +223,8 @@ namespace sogen
             // only copied on success. A reply that does not fit, or an output buffer the probe rejects, fails the ioctl
             // itself.
             static NTSTATUS return_buffer_result(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS status,
-                                                 const uint32_t data_bytes, const std::span<const uint8_t> data, const uint32_t result_size)
+                                                 const uint32_t data_bytes, const std::span<const uint8_t> data, const uint32_t result_size,
+                                                 const uint32_t property_type = 0)
             {
                 if (result_size != sizeof(buffer_result) || c.output_buffer_length < data.size() + sizeof(buffer_result))
                 {
@@ -229,9 +237,12 @@ namespace sogen
                 }
 
                 const buffer_result header{
-                    .size = sizeof(buffer_result), .status = status, .data_bytes = data_bytes, .reserved = 0, .data = 0};
+                    .size = sizeof(buffer_result), .status = status, .data_bytes = data_bytes, .property_type = property_type, .data = 0};
                 win_emu.memory.write_memory(c.output_buffer, &header, sizeof(header));
-                win_emu.memory.write_memory(c.output_buffer + offsetof(buffer_result, data), data.data(), data.size());
+                if (!data.empty())
+                {
+                    win_emu.memory.write_memory(c.output_buffer + offsetof(buffer_result, data), data.data(), data.size());
+                }
                 if (c.io_status_block)
                 {
                     c.io_status_block.access(
@@ -339,11 +350,19 @@ namespace sogen
                     for (size_t reference = 0; reference < win_emu.registry.get_sub_key_count(*interface_key); ++reference)
                     {
                         const auto reference_name = win_emu.registry.get_sub_key_name(*interface_key, reference);
-                        if (auto link =
-                                reference_name ? device_interface_link(interface_key_name, u8_to_u16(*reference_name)) : std::nullopt)
+                        if (!reference_name)
                         {
-                            links.push_back(std::move(*link));
+                            continue;
                         }
+
+                        const auto reference_key_name = u8_to_u16(*reference_name);
+                        auto link = device_interface_link(interface_key_name, reference_key_name);
+                        if (!link)
+                        {
+                            continue;
+                        }
+
+                        links.push_back(std::move(*link));
                     }
                 }
 
@@ -889,6 +908,488 @@ namespace sogen
                 const auto key =
                     device_key ? win_emu.registry.get_sub_key(*device_key, sub_key_path(u"Properties", property)) : std::nullopt;
                 return key ? win_emu.registry.get_value(*key, "") : std::nullopt;
+            }
+
+            // InitializeInputPropertyData and InitializeInputInterfaceAliasData embed a native-width string pointer.
+            template <typename Pointer>
+            struct property_input
+            {
+                uint32_t size;
+                uint32_t flags;
+                uint32_t object_type;
+                Pointer name;
+                uint32_t name_bytes;
+                std::array<uint8_t, 16> format;
+                uint32_t property_id;
+                uint32_t property_type;
+                Pointer data;
+                uint32_t data_bytes;
+                uint32_t result_size;
+            };
+
+            template <typename Pointer>
+            struct alias_input
+            {
+                uint32_t size;
+                uint32_t flags;
+                std::array<uint8_t, 16> interface_class;
+                Pointer name;
+                uint32_t name_bytes;
+                uint32_t result_size;
+            };
+
+            static_assert(sizeof(property_input<uint32_t>) == 56);
+            static_assert(sizeof(property_input<uint64_t>) == 72);
+            static_assert(sizeof(alias_input<uint32_t>) == 36);
+            static_assert(sizeof(alias_input<uint64_t>) == 40);
+
+            static constexpr std::u16string_view interface_classes_key =
+                uR"(\Registry\Machine\System\CurrentControlSet\Control\DeviceClasses)";
+
+            struct interface_registration
+            {
+                std::u16string key;
+                std::u16string reference_key;
+                std::array<uint8_t, 16> class_guid;
+            };
+
+            static std::optional<std::array<uint8_t, 16>> guid_bytes_from_string(const std::u16string_view name)
+            {
+                if (!is_guid_string(name))
+                {
+                    return std::nullopt;
+                }
+
+                const auto parse_hex = [name](const size_t start, const size_t length) {
+                    uint32_t value = 0;
+                    for (size_t index = start; index < start + length; ++index)
+                    {
+                        const auto character = name[index];
+                        uint32_t digit = 0;
+                        if (character >= u'0' && character <= u'9')
+                        {
+                            digit = static_cast<uint32_t>(character - u'0');
+                        }
+                        else if (character >= u'a' && character <= u'f')
+                        {
+                            digit = static_cast<uint32_t>(character - u'a' + 10);
+                        }
+                        else
+                        {
+                            digit = static_cast<uint32_t>(character - u'A' + 10);
+                        }
+                        value = value * 16 + digit;
+                    }
+                    return value;
+                };
+
+                std::array<uint8_t, 16> bytes{};
+                const auto data1 = parse_hex(1, 8);
+                const auto data2 = parse_hex(10, 4);
+                const auto data3 = parse_hex(15, 4);
+                for (size_t index = 0; index < sizeof(data1); ++index)
+                {
+                    bytes[index] = static_cast<uint8_t>(data1 >> (index * 8));
+                }
+                for (size_t index = 0; index < sizeof(uint16_t); ++index)
+                {
+                    bytes[index + 4] = static_cast<uint8_t>(data2 >> (index * 8));
+                }
+                for (size_t index = 0; index < sizeof(uint16_t); ++index)
+                {
+                    bytes[index + 6] = static_cast<uint8_t>(data3 >> (index * 8));
+                }
+                for (size_t index = 8; index < bytes.size(); ++index)
+                {
+                    const auto start = index < 10 ? 20 + (index - 8) * 2 : 25 + (index - 10) * 2;
+                    bytes[index] = static_cast<uint8_t>(parse_hex(start, 2));
+                }
+                return bytes;
+            }
+
+            static std::optional<interface_registration> parse_interface_link(const std::u16string_view link)
+            {
+                if (!link.starts_with(uR"(\\?\)") && !link.starts_with(uR"(\??\)"))
+                {
+                    return std::nullopt;
+                }
+
+                const auto separator = link.find(u'\\', 4);
+                const auto base = link.substr(4, separator == std::u16string_view::npos ? std::u16string_view::npos : separator - 4);
+                const auto reference = separator == std::u16string_view::npos ? std::u16string_view{} : link.substr(separator + 1);
+                constexpr size_t guid_length = 38;
+                if (base.size() <= guid_length || base[base.size() - guid_length - 1] != u'#' ||
+                    !is_guid_string(base.substr(base.size() - guid_length)) || base.find(u'/') != std::u16string_view::npos ||
+                    reference.find_first_of(u"\\/") != std::u16string_view::npos)
+                {
+                    return std::nullopt;
+                }
+
+                const auto class_guid = guid_bytes_from_string(base.substr(base.size() - guid_length));
+                if (!class_guid)
+                {
+                    return std::nullopt;
+                }
+
+                auto path = sub_key_path(interface_classes_key, base.substr(base.size() - guid_length));
+                path += u"\\##?#";
+                path += base;
+                return interface_registration{
+                    .key = std::move(path), .reference_key = u"#" + std::u16string{reference}, .class_guid = *class_guid};
+            }
+
+            static NTSTATUS return_property_or_alias(windows_emulator& win_emu, const io_device_context& c, NTSTATUS status,
+                                                     const uint32_t result_size, const std::span<const std::byte> bytes = {},
+                                                     const uint32_t property_type = 0)
+            {
+                const auto size = static_cast<uint32_t>(bytes.size());
+                if (status == STATUS_SUCCESS && c.output_buffer_length >= sizeof(buffer_result) &&
+                    bytes.size() > c.output_buffer_length - sizeof(buffer_result))
+                {
+                    status = STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto data = status == STATUS_SUCCESS ? std::span{reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()}
+                                                           : std::span<const uint8_t>{};
+                return return_buffer_result(win_emu, c, status, size, data, result_size, property_type);
+            }
+
+            static NTSTATUS capture_object_name(windows_emulator& win_emu, const uint64_t address, const uint32_t bytes,
+                                                std::u16string& name)
+            {
+                if (!address || bytes < sizeof(char16_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                return capture_name(win_emu, address, bytes, name);
+            }
+
+            static std::optional<registry_key> property_object_key(windows_emulator& win_emu, const uint32_t object_type,
+                                                                   const std::u16string_view name)
+            {
+                switch (object_type)
+                {
+                case 1: {
+                    const auto first = name.find(u'\\');
+                    const auto second = first == std::u16string_view::npos ? std::u16string_view::npos : name.find(u'\\', first + 1);
+                    if (second == std::u16string_view::npos || !is_device_id_part(name.substr(0, first)) ||
+                        !is_device_id_part(name.substr(first + 1, second - first - 1)) || !is_device_id_part(name.substr(second + 1)) ||
+                        name.find(u'/') != std::u16string_view::npos)
+                    {
+                        return std::nullopt;
+                    }
+                    return win_emu.registry.get_key({sub_key_path(enum_key, name)});
+                }
+                case 2:
+                case 3:
+                    return is_guid_string(name)
+                               ? win_emu.registry.get_key(
+                                     {sub_key_path(object_type == 2 ? installer_classes_key : interface_classes_key, name)})
+                               : std::nullopt;
+                case 4:
+                    if (const auto link = parse_interface_link(name))
+                    {
+                        return win_emu.registry.get_key({sub_key_path(link->key, link->reference_key)});
+                    }
+                    return std::nullopt;
+                default:
+                    return std::nullopt;
+                }
+            }
+
+            // Some DEVPKEY_Device properties still live directly under Enum as ordinary registry values.
+            static std::optional<registry_value> legacy_device_property(windows_emulator& win_emu, const registry_key& key,
+                                                                        const uint32_t id)
+            {
+                // clang-format off
+                static constexpr std::array<std::string_view, 38> names{
+                    "", "", "DeviceDesc", "HardwareID",
+                    "CompatibleIDs", "", "Service", "",
+                    "", "Class", "", "Driver",
+                    "ConfigFlags", "Mfg", "FriendlyName", "LocationInformation",
+                    "PhysicalDeviceObjectName", "Capabilities", "UINumber", "UpperFilters",
+                    "LowerFilters", "", "LegacyBusType", "BusNumber",
+                    "EnumeratorName", "Security", "", "DeviceType",
+                    "", "Characteristics", "Address", "UINumberDescFormat",
+                    "", "RemovalPolicy", "RemovalPolicyDefault", "RemovalPolicyOverride",
+                    "InstallState", "LocationPaths"
+                };
+                // clang-format on
+                if (id >= names.size() || names[id].empty())
+                {
+                    return std::nullopt;
+                }
+
+                auto value = win_emu.registry.get_value(key, names[id]);
+                if (!value)
+                {
+                    return std::nullopt;
+                }
+
+                switch (value->type)
+                {
+                case REG_SZ:
+                    value->type = 0x12;
+                    break;
+                case REG_MULTI_SZ:
+                    value->type = 0x2012;
+                    break;
+                case REG_DWORD:
+                    value->type = devprop_type_uint32;
+                    break;
+                case REG_BINARY:
+                    if (id != 25)
+                    {
+                        return std::nullopt;
+                    }
+                    value->type = devprop_type_security_descriptor;
+                    break;
+                default:
+                    return std::nullopt;
+                }
+                return value;
+            }
+
+            static std::optional<registry_value> legacy_interface_friendly_name(windows_emulator& win_emu, const registry_key& key)
+            {
+                const auto parameters = win_emu.registry.get_sub_key(key, u"Device Parameters");
+                auto value = parameters ? win_emu.registry.get_value(*parameters, "FriendlyName") : std::nullopt;
+                if (!value || value->type != REG_SZ)
+                {
+                    return std::nullopt;
+                }
+                value->type = 0x12;
+                return value;
+            }
+
+            struct builtin_interface_property_result
+            {
+                NTSTATUS status;
+                uint32_t type{};
+                std::vector<std::byte> data;
+            };
+
+            static std::vector<std::byte> string_property_data(std::u16string value)
+            {
+                value.push_back(u'\0');
+                const auto bytes = std::as_bytes(std::span{value});
+                return {bytes.begin(), bytes.end()};
+            }
+
+            static std::optional<builtin_interface_property_result> builtin_interface_property(windows_emulator& win_emu,
+                                                                                               const interface_registration& registration,
+                                                                                               const std::u16string_view name,
+                                                                                               const std::u16string_view format,
+                                                                                               const uint32_t property_id)
+            {
+                constexpr uint32_t devprop_type_guid = 0x0D;
+                constexpr uint32_t devprop_type_string = 0x12;
+                constexpr std::u16string_view interface_format = u"{026E516E-B814-414B-83CD-856D6FEF4822}";
+                constexpr std::u16string_view device_format = u"{78C34FC8-104A-4ACA-9EA4-524D52996E57}";
+
+                if (format == interface_format && property_id == 4)
+                {
+                    const auto bytes = std::as_bytes(std::span{registration.class_guid});
+                    return builtin_interface_property_result{
+                        .status = STATUS_SUCCESS, .type = devprop_type_guid, .data = {bytes.begin(), bytes.end()}};
+                }
+
+                if (format == interface_format && property_id == 3)
+                {
+                    // Windows queries the live PnP state through ZwPlugPlayControl; the emulator has no equivalent state source.
+                    return builtin_interface_property_result{.status = STATUS_NOT_FOUND, .type = 0, .data = {}};
+                }
+
+                if (format == device_format && property_id == 256)
+                {
+                    const auto parent_key = win_emu.registry.get_key({registration.key});
+                    const auto instance = parent_key ? win_emu.registry.get_value(*parent_key, "DeviceInstance") : std::nullopt;
+                    if (!instance)
+                    {
+                        return builtin_interface_property_result{.status = STATUS_OBJECT_NAME_NOT_FOUND, .type = 0, .data = {}};
+                    }
+
+                    auto value = registry_utils::decode_registry_string(*instance);
+                    if (!value)
+                    {
+                        return builtin_interface_property_result{.status = STATUS_OBJECT_TYPE_MISMATCH, .type = 0, .data = {}};
+                    }
+                    if (const auto terminator = value->find(u'\0'); terminator != std::u16string::npos)
+                    {
+                        value->resize(terminator);
+                    }
+
+                    return builtin_interface_property_result{
+                        .status = STATUS_SUCCESS, .type = devprop_type_string, .data = string_property_data(*value)};
+                }
+
+                if (format == interface_format && property_id == 5)
+                {
+                    const auto separator = name.find(u'\\', 4);
+                    if (separator == std::u16string_view::npos)
+                    {
+                        return builtin_interface_property_result{.status = STATUS_NOT_FOUND, .type = 0, .data = {}};
+                    }
+                    return builtin_interface_property_result{.status = STATUS_SUCCESS,
+                                                             .type = devprop_type_string,
+                                                             .data = string_property_data(std::u16string{name.substr(separator + 1)})};
+                }
+
+                return std::nullopt;
+            }
+
+            static NTSTATUS get_object_property(windows_emulator& win_emu, const io_device_context& c)
+            {
+                property_input<uint64_t> input{};
+                property_input<uint32_t> input32{};
+                if (const auto status = read_request(win_emu, c, input, input32); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                const auto lookup = [&](const auto& request) {
+                    std::u16string name;
+                    if (const auto status = capture_object_name(win_emu, request.name, request.name_bytes, name); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    if (request.flags || request.object_type < 1 || request.object_type > 4)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_INVALID_PARAMETER, request.result_size);
+                    }
+
+                    if (name.size() > max_name_length)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_NAME_TOO_LONG, request.result_size);
+                    }
+
+                    const auto registration = request.object_type == 4 ? parse_interface_link(name) : std::nullopt;
+
+                    std::optional<registry_key> key;
+                    if (request.object_type == 4 && registration)
+                    {
+                        key = win_emu.registry.get_key({sub_key_path(registration->key, registration->reference_key)});
+                    }
+                    else if (request.object_type != 4)
+                    {
+                        key = property_object_key(win_emu, request.object_type, name);
+                    }
+
+                    if (!key)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_OBJECT_NAME_NOT_FOUND, request.result_size);
+                    }
+
+                    const auto format = device_class_key_name(request.format);
+                    std::array<char, 9> id{};
+                    snprintf(id.data(), id.size(), "%04X", request.property_id);
+
+                    if (registration)
+                    {
+                        if (const auto value = builtin_interface_property(win_emu, *registration, name, format, request.property_id))
+                        {
+                            return return_property_or_alias(win_emu, c, value->status, request.result_size, value->data, value->type);
+                        }
+                    }
+
+                    if (const auto value = device_property(win_emu, key, sub_key_path(format, u8_to_u16(id.data())));
+                        value && (value->type >> 16) == 0xFFFF)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_SUCCESS, request.result_size, value->data,
+                                                        value->type & devprop_type_mask);
+                    }
+
+                    std::optional<registry_value> legacy_value;
+                    if (request.object_type == 1 && format == u"{A45C254E-DF1C-4EFD-8020-67D146A850E0}")
+                    {
+                        legacy_value = legacy_device_property(win_emu, *key, request.property_id);
+                    }
+                    else if (request.object_type == 4 && request.property_id == 2 && format == u"{026E516E-B814-414B-83CD-856D6FEF4822}")
+                    {
+                        legacy_value = legacy_interface_friendly_name(win_emu, *key);
+                    }
+
+                    if (legacy_value)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_SUCCESS, request.result_size, legacy_value->data,
+                                                        legacy_value->type);
+                    }
+
+                    return return_property_or_alias(win_emu, c, STATUS_NOT_FOUND, request.result_size);
+                };
+                return win_emu.process.is_wow64_process ? lookup(input32) : lookup(input);
+            }
+
+            static NTSTATUS get_device_interface_alias(windows_emulator& win_emu, const io_device_context& c)
+            {
+                alias_input<uint64_t> input{};
+                alias_input<uint32_t> input32{};
+                if (const auto status = read_request(win_emu, c, input, input32); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                const auto lookup = [&](const auto& request) {
+                    std::u16string name;
+                    if (const auto status = capture_object_name(win_emu, request.name, request.name_bytes, name); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    const auto link = parse_interface_link(name);
+                    if (request.flags || !link)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_INVALID_PARAMETER, request.result_size);
+                    }
+
+                    if (name.size() > max_name_length)
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_NAME_TOO_LONG, request.result_size);
+                    }
+
+                    const auto source = win_emu.registry.get_key({link->key});
+                    if (!source || !win_emu.registry.get_sub_key(*source, link->reference_key))
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_OBJECT_NAME_NOT_FOUND, request.result_size);
+                    }
+
+                    // Native CfgMgr32 returns the original interface link for same-class alias
+                    // queries, which this lookup also handles.
+                    const auto value = win_emu.registry.get_value(*source, "DeviceInstance");
+                    const auto instance = value ? value->as_string() : std::nullopt;
+                    if (instance && !instance->empty() &&
+                        !is_enumerable_for_caller(win_emu, property_object_key(win_emu, 1, *instance), caller_token(c)))
+                    {
+                        return return_property_or_alias(win_emu, c, STATUS_ACCESS_DENIED, request.result_size);
+                    }
+
+                    const auto target_class =
+                        win_emu.registry.get_key({sub_key_path(interface_classes_key, device_class_key_name(request.interface_class))});
+                    if (instance && !instance->empty() && target_class)
+                    {
+                        for (const auto& name_key : sub_key_names(win_emu, *target_class))
+                        {
+                            const auto target = win_emu.registry.get_sub_key(*target_class, name_key);
+                            const auto target_value = target ? win_emu.registry.get_value(*target, "DeviceInstance") : std::nullopt;
+                            const auto target_instance = target_value ? target_value->as_string() : std::nullopt;
+                            if (target_instance && utils::string::equals_ignore_case(*instance, *target_instance) &&
+                                win_emu.registry.get_sub_key(*target, link->reference_key))
+                            {
+                                if (auto alias = device_interface_link(name_key, link->reference_key))
+                                {
+                                    alias->push_back(u'\0');
+                                    return return_property_or_alias(win_emu, c, STATUS_SUCCESS, request.result_size,
+                                                                    std::as_bytes(std::span{*alias}));
+                                }
+                            }
+                        }
+                    }
+                    return return_property_or_alias(win_emu, c, STATUS_NOINTERFACE, request.result_size);
+                };
+
+                return win_emu.process.is_wow64_process ? lookup(input32) : lookup(input);
             }
 
             // PiPnpRtlApplyMandatoryDeviceFilters: a device stored with another session's DEVPKEY_Device_SessionId, or with a

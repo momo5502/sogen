@@ -1076,6 +1076,7 @@ namespace sogen
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromLuid(const syscall_context& c,
                                                       emulator_object<EMU_D3DKMT_OPENADAPTERFROMLUID> open_adapter);
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
+        NTSTATUS handle_NtGdiDdDDIWaitForVerticalBlankEvent();
         NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu();
         NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu(
             const syscall_context& c, emulator_object<EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU> wait_desc);
@@ -2323,6 +2324,7 @@ namespace sogen
         add_handler(NtGdiOpenDCW);
         add_handler(NtGdiDdDDIOpenAdapterFromLuid);
         add_handler(NtGdiDdDDIOpenAdapterFromHdc);
+        add_handler(NtGdiDdDDIWaitForVerticalBlankEvent);
         add_handler(NtGdiDdDDIWaitForSynchronizationObjectFromGpu);
         add_handler(NtGdiDdDDIWaitForSynchronizationObjectFromCpu);
         add_handler(NtGdiDdDDISignalSynchronizationObjectFromGpu);

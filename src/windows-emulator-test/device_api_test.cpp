@@ -250,8 +250,75 @@ namespace sogen::test
         }
 
         constexpr ULONG ioctl_get_device_interface_list = 0x470807;
+        constexpr ULONG ioctl_get_object_property = 0x470813;
+        constexpr ULONG ioctl_get_device_interface_alias = 0x47083f;
         constexpr std::array<uint8_t, 16> audio_interface_class{0x04, 0xad, 0x94, 0x69, 0xef, 0x93, 0xd0, 0x11,
                                                                 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96};
+        constexpr std::array<uint8_t, 16> interface_property_format{0x6e, 0x51, 0x6e, 0x02, 0x14, 0xb8, 0x4b, 0x41,
+                                                                    0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22};
+        constexpr std::array<uint8_t, 16> device_property_format{0xc8, 0x4f, 0xc3, 0x78, 0x4a, 0x10, 0xca, 0x4a,
+                                                                 0x9e, 0xa4, 0x52, 0x4d, 0x52, 0x99, 0x6e, 0x57};
+
+        struct object_property_input
+        {
+            uint32_t size{};
+            uint32_t flags{};
+            uint32_t object_type{4};
+            uint64_t name{};
+            uint32_t name_bytes{};
+            std::array<uint8_t, 16> format{};
+            uint32_t property_id{};
+            uint32_t property_type{};
+            uint64_t data{};
+            uint32_t data_bytes{};
+            uint32_t result_size{20};
+        };
+
+        static_assert(sizeof(object_property_input) == 72);
+
+        struct interface_alias_input
+        {
+            uint32_t size{};
+            uint32_t flags{};
+            std::array<uint8_t, 16> interface_class{};
+            uint64_t name{};
+            uint32_t name_bytes{};
+            uint32_t result_size{20};
+        };
+
+        static_assert(sizeof(interface_alias_input) == 40);
+
+        std::u16string interface_registration_path(const std::u16string_view class_guid)
+        {
+            const auto class_path = std::u16string{interface_classes_path} + std::u16string{class_guid};
+            std::u16string interface_name{u"##?#ROOT#SOGEN#0000#"};
+            interface_name += class_guid;
+            return class_path + u"\\" + interface_name;
+        }
+
+        void add_interface_registration(windows_emulator& emu, const std::u16string_view class_guid, const std::u16string_view reference,
+                                        const std::u16string_view device_instance)
+        {
+            const auto interface_path = interface_registration_path(class_guid);
+            const auto interface_key = emu.registry.create_key(std::filesystem::path{interface_path});
+            ASSERT_TRUE(interface_key.has_value());
+            set_string_value(emu, interface_path, "DeviceInstance", REG_SZ, std::u16string{device_instance});
+
+            const auto reference_key = std::u16string{u"#"} + std::u16string{reference};
+            ASSERT_TRUE(emu.registry.create_key(std::filesystem::path{interface_path + u"\\" + reference_key}).has_value());
+        }
+
+        std::u16string registered_interface_link(const std::u16string_view class_guid, const std::u16string_view reference)
+        {
+            std::u16string link{uR"(\\?\ROOT#SOGEN#0000#)"};
+            link += class_guid;
+            if (!reference.empty())
+            {
+                link += u'\\';
+                link += reference;
+            }
+            return link;
+        }
 
         // The request cfgmgr32 builds for CM_Get_Device_Interface_List, here for present KSCATEGORY_AUDIO interfaces.
         struct interface_list_input
@@ -310,9 +377,75 @@ namespace sogen::test
                 return device.execute_ioctl(this->emu, this->context);
             }
 
+            NTSTATUS get_object_property(const std::u16string_view name, const std::array<uint8_t, 16>& format, const uint32_t property_id)
+            {
+                const std::u16string terminated{name};
+                this->emu.memory.write_memory(this->storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
+
+                object_property_input input{};
+                input.size = sizeof(input);
+                input.name = this->storage + 0x100;
+                input.name_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
+                input.format = format;
+                input.property_id = property_id;
+                this->emu.memory.write_memory(this->storage, &input, sizeof(input));
+
+                this->context.io_control_code = ioctl_get_object_property;
+                this->context.io_status_block.set_address(this->storage + 0x300);
+                this->context.input_buffer = this->storage;
+                this->context.input_buffer_length = sizeof(input);
+                this->context.output_buffer = this->storage + 0x400;
+                this->context.output_buffer_length = 0x400;
+
+                io_device_container device{u"DeviceApi\\CMApi", this->emu, {}};
+                return device.execute_ioctl(this->emu, this->context);
+            }
+
+            NTSTATUS get_interface_alias(const std::u16string_view name, const std::array<uint8_t, 16>& interface_class_guid)
+            {
+                const std::u16string terminated{name};
+                this->emu.memory.write_memory(this->storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
+
+                interface_alias_input input{};
+                input.size = sizeof(input);
+                input.interface_class = interface_class_guid;
+                input.name = this->storage + 0x100;
+                input.name_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
+                this->emu.memory.write_memory(this->storage, &input, sizeof(input));
+
+                this->context.io_control_code = ioctl_get_device_interface_alias;
+                this->context.io_status_block.set_address(this->storage + 0x300);
+                this->context.input_buffer = this->storage;
+                this->context.input_buffer_length = sizeof(input);
+                this->context.output_buffer = this->storage + 0x400;
+                this->context.output_buffer_length = 0x400;
+
+                io_device_container device{u"DeviceApi\\CMApi", this->emu, {}};
+                return device.execute_ioctl(this->emu, this->context);
+            }
+
             buffer_result list_result()
             {
                 return this->emu.memory.read_memory<buffer_result>(this->storage + 0x200);
+            }
+
+            buffer_result property_or_alias_result()
+            {
+                return this->emu.memory.read_memory<buffer_result>(this->storage + 0x400);
+            }
+
+            std::vector<uint8_t> property_or_alias_data(const uint32_t size) const
+            {
+                std::vector<uint8_t> data(size);
+                this->emu.memory.read_memory(this->storage + 0x410, data.data(), data.size());
+                return data;
+            }
+
+            std::u16string property_or_alias_string(const uint32_t size) const
+            {
+                std::u16string data(size / sizeof(char16_t), u'\0');
+                this->emu.memory.read_memory(this->storage + 0x410, data.data(), size);
+                return data;
             }
 
             device_list_reply device_ids(const uint32_t flags, const std::optional<std::u16string_view> filter = {},
@@ -498,6 +631,108 @@ namespace sogen::test
         EXPECT_EQ(both, links(query(0, instance)));
         EXPECT_EQ(empty, query(0, uR"(ROOT\OTHER\0000)"));
         EXPECT_EQ(empty, query(0x10000, {}));
+    }
+
+    TEST_F(DeviceApiTest, InterfaceAliasUsesTheRequestedClassAndPreservesSameClassResults)
+    {
+        constexpr std::u16string_view source_guid = u"{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";
+        constexpr std::u16string_view target_guid = u"{AABBCCDD-1234-5678-8899-AABBCCDDEEFF}";
+        constexpr std::u16string_view device_instance = uR"(ROOT\SOGEN\0000)";
+        constexpr std::array<uint8_t, 16> source_class{0x4c, 0x3d, 0x2e, 0x1f, 0x6a, 0x5b, 0x78, 0x49,
+                                                       0x86, 0x95, 0xa4, 0xb3, 0xc2, 0xd1, 0xe0, 0xf0};
+        constexpr std::array<uint8_t, 16> target_class{0xdd, 0xcc, 0xbb, 0xaa, 0x34, 0x12, 0x78, 0x56,
+                                                       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+
+        add_interface_registration(this->emu, source_guid, u"Ref", device_instance);
+        add_interface_registration(this->emu, target_guid, u"Ref", device_instance);
+
+        const auto source_link = registered_interface_link(source_guid, u"Ref");
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, source_class));
+        auto reply = this->property_or_alias_result();
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        auto expected_link = source_link;
+        expected_link.push_back(u'\0');
+        EXPECT_EQ(expected_link, this->property_or_alias_string(reply.data_bytes));
+
+        const auto target_link = registered_interface_link(target_guid, u"Ref");
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, target_class));
+        reply = this->property_or_alias_result();
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        expected_link = target_link;
+        expected_link.push_back(u'\0');
+        EXPECT_EQ(expected_link, this->property_or_alias_string(reply.data_bytes));
+    }
+
+    TEST_F(DeviceApiTest, InterfaceAliasHonorsMandatoryDeviceFilters)
+    {
+        constexpr std::u16string_view source_guid = u"{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";
+        constexpr std::u16string_view target_guid = u"{AABBCCDD-1234-5678-8899-AABBCCDDEEFF}";
+        constexpr std::u16string_view device_instance = uR"(ROOT\SOGEN\0000)";
+        constexpr std::array<uint8_t, 16> target_class{0xdd, 0xcc, 0xbb, 0xaa, 0x34, 0x12, 0x78, 0x56,
+                                                       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+
+        this->emu.process.sid = {0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x01, 0x00,
+                                 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xE9, 0x03, 0x00, 0x00};
+        add_device(this->emu, {.id = std::u16string{device_instance}, .session = token_session_id + 1});
+        add_interface_registration(this->emu, source_guid, u"Ref", device_instance);
+        add_interface_registration(this->emu, target_guid, u"Ref", device_instance);
+
+        const auto source_link = registered_interface_link(source_guid, u"Ref");
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, target_class));
+        auto reply = this->property_or_alias_result();
+        EXPECT_EQ(STATUS_ACCESS_DENIED, reply.status);
+        EXPECT_EQ(0u, reply.data_bytes);
+
+        const auto device_path = std::u16string{enum_path} + std::u16string{device_instance};
+        constexpr uint32_t current_session = token_session_id;
+        set_property(this->emu, device_path + std::u16string{session_id_property}, devprop_type_uint32,
+                     std::as_bytes(std::span{&current_session, 1}));
+        const auto restricted_descriptor = descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, 0, enumerate_device_access, administrators_sid);
+        set_property(this->emu, device_path + std::u16string{restricted_sd_property}, devprop_type_security_descriptor,
+                     restricted_descriptor);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->get_interface_alias(source_link, target_class));
+        reply = this->property_or_alias_result();
+        EXPECT_EQ(STATUS_ACCESS_DENIED, reply.status);
+        EXPECT_EQ(0u, reply.data_bytes);
+    }
+
+    TEST_F(DeviceApiTest, InterfaceObjectPropertiesUseRegistrationData)
+    {
+        constexpr std::u16string_view class_guid = u"{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";
+        constexpr std::u16string_view device_instance = uR"(ROOT\SOGEN\0000)";
+        constexpr std::array<uint8_t, 16> class_guid_bytes{0x4c, 0x3d, 0x2e, 0x1f, 0x6a, 0x5b, 0x78, 0x49,
+                                                           0x86, 0x95, 0xa4, 0xb3, 0xc2, 0xd1, 0xe0, 0xf0};
+        add_interface_registration(this->emu, class_guid, u"Ref", device_instance);
+        add_interface_registration(this->emu, class_guid, {}, device_instance);
+
+        const auto reference_link = registered_interface_link(class_guid, u"Ref");
+        ASSERT_EQ(STATUS_SUCCESS, this->get_object_property(reference_link, interface_property_format, 4));
+        auto reply = this->property_or_alias_result();
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        EXPECT_EQ(0x0Du, reply.reserved);
+        ASSERT_EQ(class_guid_bytes.size(), reply.data_bytes);
+        EXPECT_EQ(std::vector<uint8_t>(class_guid_bytes.begin(), class_guid_bytes.end()), this->property_or_alias_data(reply.data_bytes));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->get_object_property(reference_link, device_property_format, 256));
+        reply = this->property_or_alias_result();
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        EXPECT_EQ(0x12u, reply.reserved);
+        std::u16string expected_instance{device_instance};
+        expected_instance.push_back(u'\0');
+        EXPECT_EQ(expected_instance, this->property_or_alias_string(reply.data_bytes));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->get_object_property(reference_link, interface_property_format, 5));
+        reply = this->property_or_alias_result();
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        EXPECT_EQ(0x12u, reply.reserved);
+        std::u16string expected_reference{u"Ref"};
+        expected_reference.push_back(u'\0');
+        EXPECT_EQ(expected_reference, this->property_or_alias_string(reply.data_bytes));
+
+        const auto link_without_reference = registered_interface_link(class_guid, {});
+        ASSERT_EQ(STATUS_SUCCESS, this->get_object_property(link_without_reference, interface_property_format, 5));
+        EXPECT_EQ(STATUS_NOT_FOUND, this->property_or_alias_result().status);
     }
 
     TEST_F(DeviceApiTest, OpensTheInterfaceClassRoot)

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstddef>
+#include <cstring>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
@@ -825,36 +827,88 @@ namespace sogen
                 }
             });
 
-            const auto ret = [&](const NTSTATUS status, size_t size = 0) {
+            const auto ret = [&](const NTSTATUS status, uint64_t size = 0) {
                 block->Status = status;
                 block->Information = size;
                 return status;
+            };
+
+            const auto write_information = [&](const uint64_t address, const void* information, const size_t information_size,
+                                               const NTSTATUS status = STATUS_SUCCESS) {
+                if (length < information_size)
+                {
+                    return ret(STATUS_INFO_LENGTH_MISMATCH);
+                }
+
+                c.emu.write_memory(address, information, information_size);
+                return ret(status, information_size);
+            };
+
+            const auto write_name_information = [&](const std::u16string_view name, const uint64_t address) {
+                if (length < sizeof(FILE_NAME_INFORMATION))
+                {
+                    return ret(STATUS_INFO_LENGTH_MISMATCH);
+                }
+
+                constexpr auto name_offset = offsetof(FILE_NAME_INFORMATION, FileName);
+                const auto name_length = static_cast<ULONG>(name.size() * sizeof(char16_t));
+                const auto copy_length = std::min<size_t>(name_length, length - name_offset);
+                std::vector<std::byte> information(name_offset + copy_length);
+                std::memcpy(information.data(), &name_length, sizeof(name_length));
+                if (copy_length)
+                {
+                    std::memcpy(information.data() + name_offset, name.data(), copy_length);
+                }
+
+                const auto status = copy_length == name_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW;
+                return write_information(address, information.data(), information.size(), status);
             };
 
             if (const auto* container = c.proc.devices.get(file_handle))
             {
                 if (const auto* pipe = container->get_internal_device<named_pipe>())
                 {
-                    const auto write_information = [&](const auto& information) {
-                        if (length < sizeof(information))
+                    switch (info_class)
+                    {
+                    case FileModeInformation: {
+                        const auto information = FILE_MODE_INFORMATION{pipe->create_options & FILE_MODE_MASK};
+                        return write_information(file_information, &information, sizeof(information));
+                    }
+                    case FileAccessInformation: {
+                        const auto information = FILE_ACCESS_INFORMATION{container->granted_access};
+                        return write_information(file_information, &information, sizeof(information));
+                    }
+                    case FilePipeInformation: {
+                        const auto information = std::array<ULONG, 2>{pipe->read_mode, pipe->completion_mode};
+                        return write_information(file_information, &information, sizeof(information));
+                    }
+                    case FileNameInformation: {
+                        if (length < sizeof(FILE_NAME_INFORMATION))
                         {
                             return ret(STATUS_INFO_LENGTH_MISMATCH);
                         }
-                        c.emu.write_memory(file_information, information);
-                        return ret(STATUS_SUCCESS, sizeof(information));
-                    };
-                    switch (info_class)
-                    {
-                    case FileModeInformation:
-                        return write_information(FILE_MODE_INFORMATION{pipe->create_options & FILE_MODE_MASK});
-                    case FileAccessInformation:
-                        return write_information(FILE_ACCESS_INFORMATION{container->granted_access});
-                    case FilePipeInformation:
-                        return write_information(std::array<ULONG, 2>{pipe->read_mode, pipe->completion_mode});
+                        if (pipe->is_directory())
+                        {
+                            return ret(STATUS_INVALID_PARAMETER);
+                        }
+                        if (!pipe->server_end && pipe->is_disconnected())
+                        {
+                            return ret(STATUS_PIPE_DISCONNECTED);
+                        }
+
+                        constexpr std::u16string_view prefix = u"\\Device\\NamedPipe\\";
+                        std::u16string_view name = pipe->name;
+                        if (utils::string::starts_with_ignore_case(name, prefix))
+                        {
+                            name.remove_prefix(prefix.size() - 1);
+                        }
+
+                        return write_name_information(name, file_information);
+                    }
                     case FileStandardInformation: {
                         FILE_STANDARD_INFORMATION information{};
                         information.NumberOfLinks = 1;
-                        return write_information(information);
+                        return write_information(file_information, &information, sizeof(information));
                     }
                     default:
                         return ret(STATUS_INVALID_INFO_CLASS);
@@ -1322,42 +1376,13 @@ namespace sogen
             if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation || all_info)
             {
                 const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
-                const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
-
-                if (length < sizeof(FILE_NAME_INFORMATION))
+                const auto address = file_information + (all_info ? offsetof(FILE_ALL_INFORMATION, NameInformation) : 0);
+                const auto status = write_name_information(relative_path, address);
+                if (all_info && (status == STATUS_SUCCESS || status == STATUS_BUFFER_OVERFLOW))
                 {
-                    return ret(STATUS_INFO_LENGTH_MISMATCH);
+                    return ret(STATUS_SUCCESS, all_length + block->Information);
                 }
-
-                const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
-
-                auto address = file_information;
-                if (all_info)
-                {
-                    address += offsetof(FILE_ALL_INFORMATION, NameInformation);
-                }
-
-                c.emu.write_memory(address, FILE_NAME_INFORMATION{
-                                                .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
-                                                .FileName = {},
-                                            });
-
-                c.emu.write_memory(address + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
-
-                const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
-
-                if (!all_info)
-                {
-                    return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
-                }
-
-                length -= total_copied;
-                all_length += total_copied;
-            }
-
-            if (all_info)
-            {
-                return ret(STATUS_SUCCESS, all_length);
+                return status;
             }
 
             if (info_class == FileIoCompletionNotificationInformation)

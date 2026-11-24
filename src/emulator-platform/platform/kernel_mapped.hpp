@@ -1340,9 +1340,17 @@ namespace sogen
         ULONGLONG LastSleepCounter; // Win11
         ULONG SpinCallCount;
         ULONGLONG ExtendedFeatureDisableMask;
+        std::uint32_t SchedulerSharedDataSlot; // 24H2
+        std::uint32_t HeapWalkContext;
+        EMU_GROUP_AFFINITY32 PrimaryGroupAffinity;
+        ARRAY_CONTAINER<ULONG, 2> Rcu;
     } TEB32, *PTEB32;
 
-    static_assert(sizeof(TEB32) == 4120, "sizeof(TEB32) is incorrect");
+    static_assert(offsetof(TEB32, SchedulerSharedDataSlot) == 0x1018);
+    static_assert(offsetof(TEB32, HeapWalkContext) == 0x101C);
+    static_assert(offsetof(TEB32, PrimaryGroupAffinity) == 0x1020);
+    static_assert(offsetof(TEB32, Rcu) == 0x102C);
+    static_assert(sizeof(TEB32) == 0x1038, "sizeof(TEB32) is incorrect");
 
 #pragma pack(push, 4)
 

@@ -32,6 +32,9 @@ namespace sogen::syscalls
                                emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG share_access,
                                ULONG open_options);
+    NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, handle file_handle,
+                                           emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                           uint64_t file_information, uint32_t length, uint32_t info_class);
 }
 
 namespace sogen::test
@@ -536,6 +539,30 @@ namespace sogen::test
             EXPECT_EQ(this->pipe(output.read()).name, u"\\Device\\NamedPipe\\");
             EXPECT_FALSE(this->pipe(output.read()).endpoint);
             EXPECT_EQ(this->close(output.read()), STATUS_SUCCESS);
+        }
+    }
+
+    TEST_F(NamedPipeTest, FileNameInformationReturnsTheNameRelativeToNpfs)
+    {
+        this->pipe(this->reader).name = u"\\Device\\NamedPipe\\msys-1234-pty0-from-master";
+        constexpr std::u16string_view expected = u"\\msys-1234-pty0-from-master";
+        constexpr auto name_offset = offsetof(FILE_NAME_INFORMATION, FileName);
+        const syscall_context syscall{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> iosb{this->emu->memory, this->storage};
+        const auto output = this->storage + 0x100;
+
+        for (const size_t chars_to_copy : {size_t{8}, expected.size()})
+        {
+            const auto length = static_cast<ULONG>(name_offset + chars_to_copy * sizeof(char16_t));
+            const auto status = chars_to_copy == expected.size() ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW;
+            ASSERT_EQ(status, syscalls::handle_NtQueryInformationFile(syscall, this->reader, iosb, output, length, FileNameInformation));
+            EXPECT_EQ(status, iosb.read().Status);
+            EXPECT_EQ(length, iosb.read().Information);
+            EXPECT_EQ(expected.size() * sizeof(char16_t), this->emu->memory.read_memory<ULONG>(output));
+            std::array<char16_t, expected.size()> name{};
+            this->emu->memory.read_memory(output + name_offset, name.data(), length - name_offset);
+            EXPECT_EQ(expected.substr(0, chars_to_copy), std::u16string_view(name.data(), chars_to_copy));
         }
     }
 

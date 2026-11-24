@@ -6,6 +6,8 @@ namespace sogen::test
 {
     namespace
     {
+        constexpr std::array<uint8_t, 16> mmdevice_interface_26100{0xb3, 0x85, 0x3f, 0x92, 0xee, 0xbb, 0xdf, 0x4e,
+                                                                   0x80, 0x59, 0xf5, 0x69, 0xfa, 0x64, 0xa0, 0x27};
         constexpr std::array<uint8_t, 16> mmdevice_interface_20348{0x1f, 0x17, 0xbe, 0xa3, 0x25, 0xa5, 0xa3, 0x47,
                                                                    0xb7, 0x5a, 0x93, 0xda, 0x9d, 0x64, 0x5d, 0x1c};
         constexpr std::array<uint8_t, 16> mmdevice_interface_19041{0x79, 0xbd, 0x71, 0x8b, 0xbb, 0xcc, 0xab, 0x47,
@@ -341,14 +343,36 @@ namespace sogen::test
         };
     }
 
-    TEST_F(AudioServiceTest, ServesServer2022EndpointEnumerator)
+    TEST_F(AudioServiceTest, ReportsInitialPnpChange)
     {
-        this->bind(u"\\RPC Control\\Audiosrv", mmdevice_interface_20348, 8);
-        const auto reply = this->call(0, {});
-        ASSERT_EQ(STATUS_SUCCESS, reply.status);
-        ASSERT_TRUE(reply.payload.has_value());
-        EXPECT_EQ(0u, read<uint64_t>(*reply.payload, reply_header_size));
-        EXPECT_EQ(0u, trailing_hresult(*reply.payload));
+        for (const auto& interface_id : {mmdevice_interface_20348, mmdevice_interface_26100})
+        {
+            for (const size_t width : {size_t{4}, size_t{8}})
+            {
+                this->bind(u"\\RPC Control\\Audiosrv", interface_id, width);
+                const auto reply = this->call(0, {});
+                ASSERT_EQ(STATUS_SUCCESS, reply.status);
+                ASSERT_TRUE(reply.payload.has_value());
+                const auto& payload = *reply.payload;
+                const auto pointer_offset = reply_header_size + width;
+                const auto data_offset = pointer_offset + 2 * width;
+                ASSERT_EQ(data_offset + 16, payload.size()) << width;
+                EXPECT_EQ(12u, read<uint32_t>(payload, reply_header_size)) << width;
+                if (width == 4)
+                {
+                    EXPECT_NE(0u, read<uint32_t>(payload, pointer_offset));
+                    EXPECT_EQ(12u, read<uint32_t>(payload, pointer_offset + width));
+                }
+                else
+                {
+                    EXPECT_NE(0u, read<uint64_t>(payload, pointer_offset));
+                    EXPECT_EQ(12u, read<uint64_t>(payload, pointer_offset + width));
+                }
+                EXPECT_EQ(12u, read<uint32_t>(payload, data_offset)) << width;
+                EXPECT_NE(0u, read<uint32_t>(payload, data_offset + 4)) << width;
+                EXPECT_EQ(0u, trailing_hresult(payload)) << width;
+            }
+        }
     }
 
     // AudiosrvGetDefaultAudioEndpoint (opnum 25) on the 19041 interface, decoded as 19041's mmdevapi unmarshals it (procedure
@@ -446,6 +470,7 @@ namespace sogen::test
 
         this->emu->memory.write_memory(header + 0x10, uint64_t{4096});
         EXPECT_TRUE(this->play_cursor_reaches(header + 0x18, 4096));
+        EXPECT_TRUE(this->play_cursor_reaches(header + 0x98, 4096));
     }
 
     TEST_F(AudioServiceTest, ReadsWindows10IsFormatSupportedFormat)
@@ -473,6 +498,7 @@ namespace sogen::test
 
         this->emu->memory.write_memory(header + 0x10, uint64_t{4096});
         EXPECT_TRUE(this->play_cursor_reaches(header + 0x18, 4096));
+        EXPECT_TRUE(this->play_cursor_reaches(header + 0x98, 4096));
     }
 
     TEST_F(AudioServiceTest, PlacesWindows10RenderSectionAfterItsThirdStreamI64)
@@ -512,6 +538,7 @@ namespace sogen::test
 
         this->emu->memory.write_memory(header + 0x18, uint64_t{4096});
         EXPECT_TRUE(this->play_cursor_reaches(header + 0x20, 4096));
+        EXPECT_TRUE(this->play_cursor_reaches(header + 0xA0, 4096));
     }
 
     // The Windows audio engine mixes every stream of a process. Games such as Hogwarts Legacy keep a device watcher
