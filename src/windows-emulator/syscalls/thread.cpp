@@ -99,11 +99,10 @@ namespace sogen
                 return debug_registers;
             }
 
-            // Takes the parts of new_wow64_context that its ContextFlags select, as SetThreadContext does.
+            // Takes the parts of new_wow64_context that its ContextFlags select, as SetThreadContext does. The saved
+            // ContextFlags stay as they are, as in PspWow64SetContextThread and RtlpWow64SetContextOnAmd64.
             void merge_wow64_context(WOW64_CONTEXT& merged_context, const WOW64_CONTEXT& new_wow64_context)
             {
-                merged_context.ContextFlags = new_wow64_context.ContextFlags;
-
                 // PspWow64SetContextThread sets them through PspSetContextThreadInternal, as a 64-bit context's
                 // (cpu_context::restore); a 32-bit breakpoint address is always a user one.
                 if ((new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)

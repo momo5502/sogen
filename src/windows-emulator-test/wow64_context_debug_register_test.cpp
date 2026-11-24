@@ -2,6 +2,8 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtSetInformationThread(const syscall_context& c, handle thread_handle, THREADINFOCLASS info_class,
+                                           uint64_t thread_information, uint32_t thread_information_length);
     NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, handle thread_handle, uint32_t info_class,
                                              uint64_t thread_information, uint32_t thread_information_length,
                                              emulator_object<uint32_t> return_length);
@@ -112,5 +114,44 @@ namespace sogen::test
         EXPECT_EQ(0u, context.Dr3);
         EXPECT_EQ(held_dr6, context.Dr6);
         EXPECT_EQ(dr7_l0, context.Dr7);
+    }
+
+    // A ThreadWow64Context write updates only the parts its flags name; the saved context stays complete. wow64.dll builds
+    // later exception contexts from it with RtlCopyContext, which copies only the parts the saved flags claim.
+    TEST_F(Wow64ContextDebugRegisterTest, APartialWriteKeepsTheSavedContextComplete)
+    {
+        constexpr DWORD complete = CONTEXT_CONTROL_32 | CONTEXT_INTEGER_32 | CONTEXT_SEGMENTS_32 | CONTEXT_FLOATING_POINT_32 |
+                                   CONTEXT_DEBUG_REGISTERS_32 | CONTEXT_EXTENDED_REGISTERS_32;
+        const emulator_object<WOW64_CPURESERVED> reserved{this->emu->memory, this->storage + reserved_offset};
+        reserved.access([&](WOW64_CPURESERVED& value) { value.Context.ContextFlags = complete; });
+
+        const emulator_object<WOW64_CONTEXT> buffer{this->emu->memory, this->storage};
+        WOW64_CONTEXT update{};
+        update.ContextFlags = CONTEXT_INTEGER_32;
+        update.Eax = 0x1234;
+        buffer.write(update);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationThread(this->context(), CURRENT_THREAD, ThreadWow64Context,
+                                                                          buffer.value(), sizeof(WOW64_CONTEXT)));
+
+        const auto saved = reserved.read().Context;
+        EXPECT_EQ(complete, saved.ContextFlags);
+        EXPECT_EQ(0x1234u, saved.Eax);
+    }
+
+    // The saved context has no CONTEXT_EX and XSAVE area behind it, so it must never claim CONTEXT_XSTATE. If it does,
+    // RtlCopyContext from it fails with STATUS_BUFFER_OVERFLOW and wow64.dll drops every guest NtRaiseException.
+    TEST_F(Wow64ContextDebugRegisterTest, TheSavedContextNeverClaimsExtendedState)
+    {
+        const emulator_object<WOW64_CPURESERVED> reserved{this->emu->memory, this->storage + reserved_offset};
+        reserved.access([](WOW64_CPURESERVED& value) { value.Context.ContextFlags = CONTEXT32_ALL; });
+
+        const emulator_object<WOW64_CONTEXT> buffer{this->emu->memory, this->storage};
+        WOW64_CONTEXT update{};
+        update.ContextFlags = CONTEXT_INTEGER_32 | CONTEXT_XSTATE_32;
+        buffer.write(update);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationThread(this->context(), CURRENT_THREAD, ThreadWow64Context,
+                                                                          buffer.value(), sizeof(WOW64_CONTEXT)));
+
+        EXPECT_EQ(static_cast<DWORD>(CONTEXT32_ALL), reserved.read().Context.ContextFlags);
     }
 }
