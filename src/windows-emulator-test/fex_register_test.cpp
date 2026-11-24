@@ -221,6 +221,85 @@ namespace sogen::test
     }
 
 #ifdef SOGEN_ENABLE_FEX
+    TEST(FexMultiVcpuTest, HookedInstructionsRunOnTheVcpuThatExecutedThem)
+    {
+        struct hooked_instruction
+        {
+            x86_hookable_instructions type;
+            std::array<uint8_t, 2> code;
+            bool deletes_itself;
+        };
+
+        constexpr std::array<hooked_instruction, 3> instructions{{
+            {.type = x86_hookable_instructions::cpuid, .code = {0x0F, 0xA2}, .deletes_itself = false},
+            {.type = x86_hookable_instructions::rdtsc, .code = {0x0F, 0x31}, .deletes_itself = true},
+            {.type = x86_hookable_instructions::invalid, .code = {0x0F, 0x0B}, .deletes_itself = true},
+        }};
+        constexpr uint64_t hook_result = 0x1122334455667788;
+        constexpr uint64_t idle_rax = 0xAAAA;
+        constexpr uint64_t idle_rip = 0x1000;
+
+        for (const auto& instruction : instructions)
+        {
+            const auto emu = fex::create_x86_64_emulator(2);
+
+            memory_manager memory{*emu};
+            memory.reserve_host_memory_ranges();
+            constexpr size_t page_size = 0x1000;
+            const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+            const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+            ASSERT_NE(code, 0u);
+            ASSERT_NE(gdt, 0u);
+
+            constexpr uint16_t long_mode_code_selector = 0x08;
+            constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+            emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+
+            auto& first = emu->get_cpu(0);
+            auto& second = emu->get_cpu(1);
+            second.load_gdt(gdt, page_size);
+            second.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+
+            std::optional<size_t> hooked_vcpu{};
+            size_t hook_runs = 0;
+            emulator_hook* hook = nullptr;
+            hook = emu->hook_instruction(instruction.type, [&](cpu_interface& raw, uint64_t) {
+                auto& cpu = dynamic_cast<x86_64_cpu&>(raw);
+                hooked_vcpu = cpu.index();
+                cpu.reg(x86_register::rax, hook_result);
+                if (++hook_runs > 1)
+                {
+                    second.stop();
+                }
+                if (instruction.deletes_itself)
+                {
+                    emu->delete_hook(hook);
+                }
+                return instruction_hook_continuation::skip_instruction;
+            });
+            emu->hook_instruction(x86_hookable_instructions::syscall, [](cpu_interface& cpu, uint64_t) {
+                cpu.stop();
+                return instruction_hook_continuation::skip_instruction;
+            });
+            emu->hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+            const std::array<uint8_t, 4> guest_code = {instruction.code[0], instruction.code[1], 0x0F, 0x05};
+            memory.write_memory(code, guest_code.data(), guest_code.size());
+            ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+            first.reg(x86_register::rip, idle_rip);
+            first.reg(x86_register::rax, idle_rax);
+            second.reg(x86_register::rip, code);
+            second.start(0);
+
+            EXPECT_EQ(hooked_vcpu, std::optional<size_t>{1});
+            EXPECT_EQ(second.reg(x86_register::rax), hook_result);
+            EXPECT_EQ(second.reg(x86_register::rip), code + guest_code.size());
+            EXPECT_EQ(first.reg(x86_register::rip), idle_rip);
+            EXPECT_EQ(first.reg(x86_register::rax), idle_rax);
+        }
+    }
+
     TEST(FexMultiVcpuTest, CodeRewrittenAfterASecondVcpuRanItRunsAsTheNewBytes)
     {
         const auto emu = fex::create_x86_64_emulator(2);

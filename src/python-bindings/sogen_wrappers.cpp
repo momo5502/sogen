@@ -65,9 +65,19 @@ namespace sogen::py
 
     hook_handle hook_registry::instruction(x86_hookable_instructions instruction_type, nb::object callback)
     {
-        auto* hook = this->emu->x64_emu().hook_instruction(instruction_type, [cb = std::move(callback)](cpu_interface&, uint64_t data) {
+        // The backend copies the callback while it runs without the GIL, so a copy must not touch the reference count.
+        const std::shared_ptr<nb::object> shared_callback{
+            new nb::object(std::move(callback)),
+            [](nb::object* value) {
+                nb::gil_scoped_acquire gil{};
+                delete value;
+            },
+        };
+
+        auto* hook = this->emu->x64_emu().hook_instruction(instruction_type, [cb = shared_callback](cpu_interface&, uint64_t data) {
             nb::gil_scoped_acquire gil{};
-            return coerce_instruction_continuation(cb(data));
+            const nb::object& python_callback = *cb;
+            return coerce_instruction_continuation(python_callback(data));
         });
         return make_hook(hook);
     }
