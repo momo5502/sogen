@@ -36,7 +36,7 @@ namespace sogen::test
 #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
         GTEST_SKIP() << "Requires host threads";
 #endif
-        const auto path = std::filesystem::temp_directory_path() / "sogen-queued-file-writer-test.log";
+        const auto path = std::filesystem::temp_directory_path() / ("sogen-queued-file-writer-test-" + std::to_string(getpid()) + ".log");
         auto* stream = std::fopen(path.string().c_str(), "wb");
         ASSERT_NE(stream, nullptr);
 
@@ -68,7 +68,8 @@ namespace sogen::test
 #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
         GTEST_SKIP() << "Requires host threads";
 #endif
-        const auto path = std::filesystem::temp_directory_path() / "sogen-queued-file-writer-flush-test.log";
+        const auto path =
+            std::filesystem::temp_directory_path() / ("sogen-queued-file-writer-flush-test-" + std::to_string(getpid()) + ".log");
         auto* stream = std::fopen(path.string().c_str(), "wb");
         ASSERT_NE(stream, nullptr);
 
@@ -93,7 +94,8 @@ namespace sogen::test
 #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
         GTEST_SKIP() << "Requires host threads";
 #endif
-        const auto path = std::filesystem::temp_directory_path() / "sogen-queued-file-writer-deferred-test.log";
+        const auto path =
+            std::filesystem::temp_directory_path() / ("sogen-queued-file-writer-deferred-test-" + std::to_string(getpid()) + ".log");
         auto* stream = std::fopen(path.string().c_str(), "wb");
         ASSERT_NE(stream, nullptr);
 
