@@ -42,11 +42,20 @@ elseif(UNIX AND NOT APPLE)
   endif()
 endif()
 
+# stubgen appends the module name to OUTPUT_PATH for recursive extension-module stubs,
+# so OUTPUT_PATH sogen would put them in sogen/sogen.
 nanobind_add_stub(
   sogen_stub
   MODULE sogen
-  OUTPUT sogen.pyi
+  RECURSIVE
+  OUTPUT_PATH stubs
+  OUTPUT
+    stubs/sogen/__init__.pyi
+    stubs/sogen/arm64.pyi
+    stubs/sogen/linux.pyi
+    stubs/sogen/windows.pyi
   MARKER_FILE py.typed
+  PATTERN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/stub-patterns.nb"
   PYTHON_PATH $<TARGET_FILE_DIR:sogen>
   DEPENDS sogen
 )
@@ -58,7 +67,9 @@ else()
 endif()
 
 install(TARGETS sogen LIBRARY DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}" RUNTIME DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}/sogen")
+# The stub directory has no __init__.py, so the extension module next to it still wins on import.
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/stubs/sogen" DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}" FILES_MATCHING PATTERN "*.pyi")
 
 # fexcore (see deps/CMakeLists.txt) is built by an ExternalProject and never becomes a normal
 # install()-able CMake target of its own; sogen only ever links it in as fex-emulator's transitive
