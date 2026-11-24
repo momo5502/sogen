@@ -12,7 +12,7 @@ namespace sogen::test
         // The controller starts its watcher thread on construction.
         GTEST_SKIP() << "Requires host threads";
 #endif
-        const auto directory = std::filesystem::temp_directory_path() / "sogen-snapshot-controller-test";
+        const auto directory = std::filesystem::temp_directory_path() / ("sogen-snapshot-controller-test-" + std::to_string(getpid()));
         std::filesystem::remove_all(directory);
 
         for (const bool keep_running : {true, false})
