@@ -1768,6 +1768,61 @@ namespace sogen
         }
     }
 
+    emulator_hook* windows_emulator::hook_timestamp_counter(x86_64_emulator& emu, const x86_hookable_instructions instruction,
+                                                            const emulator_callbacks::opt_func<void()>& observer)
+    {
+        return emu.hook_instruction(instruction, [this, instruction, &observer](cpu_interface& cpu, uint64_t) {
+            const std::scoped_lock lock(this->kernel_lock_);
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto& acting = vcpu.x64_cpu();
+            observer();
+
+            if (this->use_native_timestamp_counter_)
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
+            const auto ticks = this->clock_->timestamp_counter();
+            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+
+            if (instruction == x86_hookable_instructions::rdtscp)
+            {
+                // Windows keeps the processor number in IA32_TSC_AUX.
+                acting.reg(x86_register::rcx, static_cast<uint64_t>(vcpu.cpu.index()));
+            }
+
+            return instruction_hook_continuation::skip_instruction;
+        });
+    }
+
+    void windows_emulator::update_timestamp_counter_hooks()
+    {
+        auto* emu = dynamic_cast<x86_64_emulator*>(this->emu_.get());
+        if (!emu)
+        {
+            return;
+        }
+
+        const bool observed = static_cast<bool>(this->callbacks.on_rdtsc) || static_cast<bool>(this->callbacks.on_rdtscp);
+        const bool wanted = !this->use_native_timestamp_counter_ || (this->intercept_rdtsc_ && observed);
+        if (wanted == (this->rdtsc_hook_ != nullptr))
+        {
+            return;
+        }
+
+        if (!wanted)
+        {
+            emu->delete_hook(std::exchange(this->rdtscp_hook_, nullptr));
+            emu->delete_hook(std::exchange(this->rdtsc_hook_, nullptr));
+            return;
+        }
+
+        this->rdtscp_hook_ = this->hook_timestamp_counter(*emu, x86_hookable_instructions::rdtscp, this->callbacks.on_rdtscp);
+        this->rdtsc_hook_ = this->hook_timestamp_counter(*emu, x86_hookable_instructions::rdtsc, this->callbacks.on_rdtsc);
+    }
+
     void windows_emulator::setup_x64_hooks(x86_64_emulator& emu)
     {
         emu.hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& cpu, uint64_t) {
@@ -1778,52 +1833,7 @@ namespace sogen
             return instruction_hook_continuation::skip_instruction;
         });
 
-        // rdtsc/rdtscp are intercepted only when timing must stay exact (the analyzer). Otherwise the
-        // guest reads the host TSC natively - the WHP backend serves the exit with the real TSC and no
-        // kernel lock - removing a hot VM-exit path for games.
-        if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
-        {
-            emu.hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
-                const std::scoped_lock lock(this->kernel_lock_);
-                auto& vcpu = this->vcpu(cpu.index());
-                const scoped_dispatch dispatch(*this, vcpu);
-                auto& acting = vcpu.x64_cpu();
-                this->callbacks.on_rdtscp();
-
-                if (this->use_native_timestamp_counter_)
-                {
-                    return instruction_hook_continuation::run_instruction;
-                }
-
-                const auto ticks = this->clock_->timestamp_counter();
-                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
-
-                // Windows keeps the processor number in IA32_TSC_AUX.
-                acting.reg(x86_register::rcx, static_cast<uint64_t>(vcpu.cpu.index()));
-
-                return instruction_hook_continuation::skip_instruction;
-            });
-
-            emu.hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
-                const std::scoped_lock lock(this->kernel_lock_);
-                auto& vcpu = this->vcpu(cpu.index());
-                const scoped_dispatch dispatch(*this, vcpu);
-                auto& acting = vcpu.x64_cpu();
-                this->callbacks.on_rdtsc();
-
-                if (this->use_native_timestamp_counter_)
-                {
-                    return instruction_hook_continuation::run_instruction;
-                }
-
-                const auto ticks = this->clock_->timestamp_counter();
-                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
-
-                return instruction_hook_continuation::skip_instruction;
-            });
-        }
+        this->update_timestamp_counter_hooks();
 
         // TODO: Unicorn needs this - This should be handled in the backend
         emu.hook_instruction(x86_hookable_instructions::invalid, [&](cpu_interface& cpu, uint64_t) {

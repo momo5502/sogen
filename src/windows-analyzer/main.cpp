@@ -182,6 +182,7 @@ namespace sogen
                 add_flag("--very-concise", options.skip_generic_activity);
                 add_flag("--concise", options.concise_logging);
                 add_flag("--verbose", options.verbose_logging);
+                add_flag("--watch-rdtsc", options.watch_rdtsc);
                 const auto add_output = [&](const std::string_view option, std::filesystem::path path) {
                     if (!path.empty())
                     {
@@ -1299,6 +1300,8 @@ namespace sogen
             app.add_flag("-t,--tenet-trace", options.tenet_trace, "Enable Tenet tracer");
             app.add_flag("--first-exec", options.log_first_section_execution, "Print first executions of sections");
             app.add_flag("--inst-summary", options.instruction_summary, "Print a summary of executed instructions of the analyzed modules");
+            app.add_flag("--watch-rdtsc", options.watch_rdtsc,
+                         "Report RDTSC and RDTSCP in the analyzed modules; each one then exits to the analyzer");
             app.add_flag("--skip-syscalls", options.skip_syscalls, "Skip the logging of regular syscalls");
             auto* const reproducible_option =
                 app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");

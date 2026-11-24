@@ -698,6 +698,9 @@ namespace sogen
             return this->intercept_rdtsc_;
         }
 
+        // Runs at construction; call it again after registering or clearing an on_rdtsc or on_rdtscp observer.
+        void update_timestamp_counter_hooks();
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -909,8 +912,13 @@ namespace sogen
 
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
 
+        emulator_hook* rdtsc_hook_{};
+        emulator_hook* rdtscp_hook_{};
+
         void setup_hooks();
         void setup_x64_hooks(x86_64_emulator& emu);
+        emulator_hook* hook_timestamp_counter(x86_64_emulator& emu, x86_hookable_instructions instruction,
+                                              const emulator_callbacks::opt_func<void()>& observer);
         void setup_arm64_hooks(arm64_emulator& emu);
         void handle_arm64_breakpoint(vcpu_context& vcpu);
         void setup_process();

@@ -19,6 +19,16 @@ namespace sogen::py
             cb(std::forward<Args>(args)...);
         }
 
+        emulator_callbacks::opt_func<void()> observer_of(const nb::object& cb)
+        {
+            if (cb.is_none())
+            {
+                return {};
+            }
+
+            return [callback = &cb] { invoke_callback(*callback); };
+        }
+
         // Maps user-facing slot name to the corresponding nb::object member
         // pointer. Single source of truth for both `set` and the property
         // bindings in sogen_bindings_runtime.cpp.
@@ -113,8 +123,6 @@ namespace sogen::py
             const auto result = this->memory_violate_cb(address, length, operation, type);
             return coerce_memory_violation_continuation(result);
         };
-        this->emu->callbacks.on_rdtsc = [this] { invoke_callback(this->rdtsc_cb); };
-        this->emu->callbacks.on_rdtscp = [this] { invoke_callback(this->rdtscp_cb); };
         this->emu->callbacks.on_ioctrl = [this](io_device&, std::u16string_view device_name, ULONG code) {
             invoke_callback(this->ioctrl_cb, u16_to_u8(device_name), static_cast<uint32_t>(code));
         };
@@ -152,6 +160,13 @@ namespace sogen::py
         }
 
         this->*member = std::move(callable);
+
+        if (member == &callback_registry::rdtsc_cb || member == &callback_registry::rdtscp_cb)
+        {
+            this->emu->callbacks.on_rdtsc = observer_of(this->rdtsc_cb);
+            this->emu->callbacks.on_rdtscp = observer_of(this->rdtscp_cb);
+            this->emu->update_timestamp_counter_hooks();
+        }
     }
 
     void callback_registry::clear(const std::string_view name)
