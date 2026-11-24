@@ -1836,7 +1836,7 @@ namespace sogen
             if (wait.type == io_completion_wait_type::remove_single)
             {
                 io_completion_message message{};
-                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion, message))
+                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion, message, wait.worker_factory))
                 {
                     return false;
                 }
@@ -1848,7 +1848,8 @@ namespace sogen
 
             if (wait.type == io_completion_wait_type::remove_multiple)
             {
-                const auto messages = io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion, wait.max_entries);
+                const auto messages =
+                    io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion, wait.max_entries, wait.worker_factory);
                 if (messages.empty())
                 {
                     return false;

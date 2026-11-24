@@ -35,12 +35,15 @@ namespace sogen
         NTSTATUS probe_completion_entries(memory_manager& memory, const emulator_thread* thread, uint64_t entries, ULONG count,
                                           uint64_t entries_removed);
 
+        // The worker factory whose worker takes the packets, if the thread taking them is one: it is still counted as waiting while the
+        // factory's shutdown packet decides whether to be posted again.
         bool dequeue_io_completion_message(windows_emulator& win_emu, const object_reference& io_completion,
-                                           io_completion_message& out_message);
+                                           io_completion_message& out_message, const object_reference& waiting_worker_factory = {});
         bool dequeue_io_completion_message(windows_emulator& win_emu, handle io_completion_handle, io_completion_message& out_message);
         // Takes up to max_count packets off the port, as KeRemoveQueueEx does for an entry array.
         std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, const object_reference& io_completion,
-                                                                         ULONG max_count);
+                                                                         ULONG max_count,
+                                                                         const object_reference& waiting_worker_factory = {});
         std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, handle io_completion_handle,
                                                                          ULONG max_count);
 
