@@ -8,7 +8,13 @@
 option(SOGEN_ENABLE_STEAM "Build the Steam bridge (fetches Proton SDK snapshots; needs the libclang pip package)" ON)
 set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
     CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
-set(SOGEN_STEAMWORKS_PROTON_TAG "proton_11.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
+# A release tag, not a branch: Valve force-pushes its proton_* branches, and FetchContent's update step then
+# rebases an existing checkout's old commits onto the rewritten history. Build trees that still cache the former
+# proton_11.0 branch default move to the tag.
+if(SOGEN_STEAMWORKS_PROTON_TAG STREQUAL "proton_11.0")
+  unset(SOGEN_STEAMWORKS_PROTON_TAG CACHE)
+endif()
+set(SOGEN_STEAMWORKS_PROTON_TAG "proton-11.0-3" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
 
 # Answers the guest's Steam calls from a provider inside the emulator instead of a host Steam client, for
 # hosts without one (Android).
