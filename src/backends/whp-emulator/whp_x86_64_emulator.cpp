@@ -3326,8 +3326,12 @@ namespace sogen::whp
 
                     this->expire_mmio_read_grace_pages(vcpu);
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
+                    // stop(), flush_virtual_address_mappings and an exits change set their flag, then cancel a vCPU
+                    // they see running; a vCPU that set run_active_ after they looked finds the flag here and leaves
+                    // before the run.
                     vcpu.run_active_ = true;
-                    if (vcpu.pending_tlb_flush_.load() || this->exits_changing_.load())
+                    if (vcpu.pending_tlb_flush_.load() || this->exits_changing_.load() ||
+                        (vcpu.stop_requested_ && !this->own_step_waits(vcpu)))
                     {
                         vcpu.run_active_ = false;
                         continue;
