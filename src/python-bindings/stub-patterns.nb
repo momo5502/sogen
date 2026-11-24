@@ -1,0 +1,15 @@
+# api_call returns a decorator that stores metadata on the function and returns it unchanged.
+# Declaring that shape lets type checkers keep the decorated function's own signature.
+sogen\.__prefix__:
+    \from typing import Callable, TypeVar
+    _F = TypeVar("_F", bound=Callable[..., object])
+
+sogen\.windows\.__prefix__:
+    \from typing import Callable, TypeVar
+    _F = TypeVar("_F", bound=Callable[..., object])
+
+sogen\.api_call:
+    def api_call(cc: CallingConvention, params: object | None = None, restype: object | None = None) -> Callable[[_F], _F]: ...
+
+sogen\.windows\.api_call:
+    def api_call(cc: sogen.CallingConvention, params: object | None = None, restype: object | None = None) -> Callable[[_F], _F]: ...
