@@ -6793,8 +6793,12 @@ namespace sogen
 
     void vulkan_host::capture_references(const uint64_t command_buffer)
     {
-        const auto cb = this->impl_->command_buffers.find(command_buffer);
-        this->impl_->recording_references = cb == this->impl_->command_buffers.end() ? nullptr : &cb->second.references;
+        // Looking the command buffer up would note it in the recording that ends here.
+        this->impl_->recording_references = nullptr;
+        if (const auto cb = this->impl_->command_buffers.find(command_buffer); cb != this->impl_->command_buffers.end())
+        {
+            this->impl_->recording_references = &cb->second.references;
+        }
     }
 
     std::vector<std::byte> vulkan_host::recorded_commands(const uint64_t command_buffer) const
