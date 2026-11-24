@@ -1933,9 +1933,16 @@ namespace sogen::whp
             {
                 std::unique_lock lock(this->partition_mutex_);
 
+                // The exits change first, so a change that throws leaves no hook behind.
+                const auto type = static_cast<x86_hookable_instructions>(instruction_type);
+                if (type == x86_hookable_instructions::rdtsc || type == x86_hookable_instructions::rdtscp)
+                {
+                    this->update_rdtsc_exit(true);
+                }
+
                 auto* hook = this->make_hook();
                 auto& entry = this->instruction_hooks_[hook];
-                entry.type = static_cast<x86_hookable_instructions>(instruction_type);
+                entry.type = type;
                 entry.callback = std::move(callback);
 
                 if (entry.type == x86_hookable_instructions::syscall)
@@ -1943,7 +1950,6 @@ namespace sogen::whp
                     this->syscall_hook_ = &entry;
                 }
 
-                this->update_rdtsc_exit();
                 return hook;
             }
 
@@ -2187,6 +2193,7 @@ namespace sogen::whp
             WHV_EXTENDED_VM_EXITS enabled_exits_{};
             // Whether RDTSC/RDTSCP exits can follow the hooks after setup; see update_rdtsc_exit().
             bool rdtsc_exit_switchable_ = false;
+            std::atomic_bool exits_changing_{false};
             WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
             bool has_supported_xsave_features_ = false;
 
@@ -2302,16 +2309,17 @@ namespace sogen::whp
                 }
             }
 
-            void update_rdtsc_exit()
+            void update_rdtsc_exit(const bool adding_rdtsc_hook = false)
             {
                 if (!this->rdtsc_exit_switchable_)
                 {
                     return;
                 }
 
-                const bool wanted = std::ranges::any_of(this->instruction_hooks_, [](const auto& hook) {
-                    return hook.second.type == x86_hookable_instructions::rdtsc || hook.second.type == x86_hookable_instructions::rdtscp;
-                });
+                const bool wanted = adding_rdtsc_hook || std::ranges::any_of(this->instruction_hooks_, [](const auto& hook) {
+                                        return hook.second.type == x86_hookable_instructions::rdtsc ||
+                                               hook.second.type == x86_hookable_instructions::rdtscp;
+                                    });
                 if (wanted == (this->enabled_exits_.X64RdtscExit != 0))
                 {
                     return;
@@ -2319,8 +2327,35 @@ namespace sogen::whp
 
                 auto exits = this->enabled_exits_;
                 exits.X64RdtscExit = wanted ? 1 : 0;
+
+                // WHvSetPartitionProperty(ExtendedVmExits) fails with WHV_E_INVALID_VP_STATE while a vCPU runs the guest, and so
+                // does a run that starts while the exits change.
+                this->exits_changing_ = true;
+                const auto exits_changed = utils::finally([this] { this->exits_changing_ = false; });
+                this->wait_until_no_vcpu_runs_the_guest();
                 WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &exits, sizeof(exits)));
                 this->enabled_exits_ = exits;
+            }
+
+            // Assumes partition_mutex_ is held exclusively and exits_changing_ is set.
+            void wait_until_no_vcpu_runs_the_guest()
+            {
+                auto cancel_at = std::chrono::steady_clock::time_point{};
+                while (std::ranges::any_of(this->vcpus_, [](const auto& vcpu) { return vcpu->run_active_.load(); }))
+                {
+                    if (std::chrono::steady_clock::now() >= cancel_at)
+                    {
+                        for (const auto& vcpu : this->vcpus_)
+                        {
+                            if (vcpu->run_active_)
+                            {
+                                (void)WHvCancelRunVirtualProcessor(this->partition_, vcpu->vp_index_, 0);
+                            }
+                        }
+                        cancel_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+                    }
+                    YieldProcessor();
+                }
             }
 
             void initialize_virtual_processor_state(whp_vcpu& vcpu)
@@ -3832,7 +3867,7 @@ namespace sogen::whp
                     this->expire_mmio_read_grace_pages(vcpu);
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
                     vcpu.run_active_ = true;
-                    if (vcpu.pending_tlb_flush_.load())
+                    if (vcpu.pending_tlb_flush_.load() || this->exits_changing_.load())
                     {
                         vcpu.run_active_ = false;
                         continue;
@@ -3853,9 +3888,10 @@ namespace sogen::whp
                         }
 
                         // A cancel without a stop request comes from flush_virtual_address_mappings
-                        // (another vCPU changed the shared page tables) - never from a real stop, which
-                        // always sets stop_requested_ first. Re-enter so the pending TLB flush is applied
-                        // at the loop top; do not treat it as a stop regardless of whether rip advanced.
+                        // (another vCPU changed the shared page tables) or update_rdtsc_exit (the exits
+                        // change) - never from a real stop, which always sets stop_requested_ first. Re-enter
+                        // so the pending TLB flush is applied, or the exits change is waited out, at the loop
+                        // top; do not treat it as a stop regardless of whether rip advanced.
                         // A stop with a step of the backend's own on its way re-enters too, to make the step first.
                         continue;
                     }
