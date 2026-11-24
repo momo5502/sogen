@@ -8837,10 +8837,76 @@ namespace sogen
 
         namespace
         {
-            constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;
-            constexpr uint32_t k_spi_get_nonclientmetrics = 0x29;
-            constexpr uint32_t k_spi_get_workarea = 0x30;
+            namespace spi_action
+            {
+                constexpr uint32_t geticontitlelogfont = 0x001F;
+                constexpr uint32_t getnonclientmetrics = 0x0029;
+                constexpr uint32_t geticonmetrics = 0x002D;
+                constexpr uint32_t getworkarea = 0x0030;
+            }
+
             constexpr uint32_t k_default_dpi = 96;
+            constexpr DWORD k_error_success = 0;
+            constexpr DWORD k_error_invalid_parameter = 87;
+            constexpr DWORD k_error_noaccess = 998;
+            constexpr uint16_t k_flat_border_subsystem_version = 6;
+
+            BOOL fail_with(const syscall_context& c, const DWORD error)
+            {
+                set_guest_last_error(c, error);
+                return FALSE;
+            }
+
+            BOOL write_output(const syscall_context& c, const emulator_pointer value, const void* data, const size_t size)
+            {
+                if (!is_writable_range(c.win_emu, value, size) || !c.win_emu.memory.try_write_memory(value, data, size))
+                {
+                    return fail_with(c, k_error_noaccess);
+                }
+
+                return TRUE;
+            }
+
+            DWORD check_for_dpi_output(const syscall_context& c, const emulator_pointer value, const uint32_t param, const size_t size,
+                                       const bool has_struct_size)
+            {
+                if (param != size)
+                {
+                    return k_error_invalid_parameter;
+                }
+
+                if (!is_writable_range(c.win_emu, value, size))
+                {
+                    return k_error_noaccess;
+                }
+
+                if (!has_struct_size)
+                {
+                    return k_error_success;
+                }
+
+                uint32_t struct_size{};
+                if (!c.win_emu.memory.try_read_memory(value, &struct_size, sizeof(struct_size)))
+                {
+                    return k_error_noaccess;
+                }
+
+                if (struct_size == size)
+                {
+                    return k_error_success;
+                }
+
+                // Windows copies its zeroed output buffer back even though the call fails.
+                std::vector<std::byte> zeroed(size);
+                std::memcpy(zeroed.data(), &struct_size, sizeof(struct_size));
+                return c.win_emu.memory.try_write_memory(value, zeroed.data(), zeroed.size()) ? k_error_invalid_parameter
+                                                                                              : k_error_noaccess;
+            }
+
+            LONG scale_to_dpi(const LONG value, const uint32_t dpi)
+            {
+                return static_cast<LONG>((static_cast<int64_t>(value) * dpi + k_default_dpi / 2) / k_default_dpi);
+            }
 
             // The metrics and logfonts a Windows 11 desktop reports at 96 DPI.
             void fill_ui_logfont(EMU_LOGFONTW& font, const uint32_t dpi)
@@ -8851,88 +8917,123 @@ namespace sogen
                 std::ranges::copy(u"Segoe UI", font.lfFaceName);
             }
 
+            BOOL write_icontitle_logfont(const syscall_context& c, const emulator_pointer value, const uint32_t dpi)
+            {
+                EMU_LOGFONTW font{};
+                fill_ui_logfont(font, dpi);
+                return write_output(c, value, &font, sizeof(font));
+            }
+
+            BOOL write_icon_metrics(const syscall_context& c, const emulator_pointer value, const uint32_t dpi)
+            {
+                EMU_ICONMETRICS metrics{};
+                metrics.cbSize = sizeof(metrics);
+                metrics.iHorzSpacing = scale_to_dpi(75, dpi);
+                metrics.iVertSpacing = scale_to_dpi(75, dpi);
+                metrics.iTitleWrap = TRUE;
+                fill_ui_logfont(metrics.lfFont, dpi);
+                return write_output(c, value, &metrics, sizeof(metrics));
+            }
+
+            BOOL write_nonclient_metrics(const syscall_context& c, const emulator_pointer value, const uint32_t size, const uint32_t dpi,
+                                         const LONG border_width, const LONG padded_border_width)
+            {
+                constexpr auto min_size = offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW);
+                if (size < min_size)
+                {
+                    return fail_with(c, k_error_invalid_parameter);
+                }
+
+                const auto length = std::min<size_t>(size, sizeof(EMU_NONCLIENTMETRICS));
+
+                EMU_NONCLIENTMETRICS metrics{};
+                metrics.cbSize = static_cast<uint32_t>(length);
+                metrics.iBorderWidth = border_width;
+                metrics.iScrollWidth = scale_to_dpi(17, dpi);
+                metrics.iScrollHeight = scale_to_dpi(17, dpi);
+                metrics.iCaptionWidth = scale_to_dpi(22, dpi);
+                metrics.iCaptionHeight = scale_to_dpi(22, dpi);
+                metrics.iSmCaptionWidth = scale_to_dpi(22, dpi);
+                metrics.iSmCaptionHeight = scale_to_dpi(22, dpi);
+                metrics.iMenuWidth = scale_to_dpi(19, dpi);
+                metrics.iMenuHeight = scale_to_dpi(19, dpi);
+                metrics.iPaddedBorderWidth = padded_border_width;
+                fill_ui_logfont(metrics.lfCaptionFont, dpi);
+                fill_ui_logfont(metrics.lfSmCaptionFont, dpi);
+                fill_ui_logfont(metrics.lfMenuFont, dpi);
+                fill_ui_logfont(metrics.lfStatusFont, dpi);
+                fill_ui_logfont(metrics.lfMessageFont, dpi);
+
+                return write_output(c, value, &metrics, length);
+            }
+
             BOOL get_primary_work_area(const syscall_context& c, const emulator_pointer value)
             {
                 const emulator_object<USER_MONITOR> monitor(c.emu, c.proc.user_handles.get_display_info().read().pPrimaryMonitor);
-                if (value == 0 || !monitor)
+                if (!monitor)
                 {
                     return FALSE;
                 }
 
                 const auto work_area = monitor.read().rcWork;
-                if (!is_writable_range(c.win_emu, value, sizeof(work_area)))
-                {
-                    return FALSE;
-                }
-
-                return c.win_emu.memory.try_write_memory(value, &work_area, sizeof(work_area)) ? TRUE : FALSE;
+                return write_output(c, value, &work_area, sizeof(work_area));
             }
         }
 
         BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, const uint32_t action, const uint32_t param,
                                                      const emulator_pointer value, const uint32_t /*win_ini*/, const uint32_t dpi)
         {
-            const auto effective_dpi = dpi != 0 ? dpi : k_default_dpi;
-
-            if (action == k_spi_get_icontitle_logfont)
+            if (dpi == 0 || value == 0)
             {
-                if (value == 0 || (param != 0 && param < sizeof(EMU_LOGFONTW)))
-                {
-                    return FALSE;
-                }
-
-                EMU_LOGFONTW font{};
-                fill_ui_logfont(font, effective_dpi);
-                emulator_object<EMU_LOGFONTW>{c.emu, value}.write(font);
-                return TRUE;
+                return fail_with(c, k_error_invalid_parameter);
             }
 
-            if (action == k_spi_get_nonclientmetrics)
+            switch (action)
             {
-                if (value == 0)
+            case spi_action::geticontitlelogfont:
+                if (const auto error = check_for_dpi_output(c, value, param, sizeof(EMU_LOGFONTW), false))
                 {
-                    return FALSE;
+                    return fail_with(c, error);
                 }
 
-                const auto cb_size = emulator_object<uint32_t>{c.emu, value}.read();
-                const auto length = std::min(cb_size, param != 0 ? param : cb_size);
-                if (cb_size < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW) ||
-                    length < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW))
+                return write_icontitle_logfont(c, value, dpi);
+            case spi_action::geticonmetrics:
+                if (const auto error = check_for_dpi_output(c, value, param, sizeof(EMU_ICONMETRICS), true))
                 {
-                    return FALSE;
+                    return fail_with(c, error);
                 }
 
-                EMU_NONCLIENTMETRICS metrics{};
-                metrics.cbSize = cb_size;
-                metrics.iBorderWidth = 5;
-                metrics.iScrollWidth = 17;
-                metrics.iScrollHeight = 17;
-                metrics.iCaptionWidth = 22;
-                metrics.iCaptionHeight = 22;
-                metrics.iSmCaptionWidth = 22;
-                metrics.iSmCaptionHeight = 22;
-                fill_ui_logfont(metrics.lfCaptionFont, effective_dpi);
-                fill_ui_logfont(metrics.lfSmCaptionFont, effective_dpi);
-                fill_ui_logfont(metrics.lfMenuFont, effective_dpi);
-                fill_ui_logfont(metrics.lfStatusFont, effective_dpi);
-                fill_ui_logfont(metrics.lfMessageFont, effective_dpi);
+                return write_icon_metrics(c, value, dpi);
+            case spi_action::getnonclientmetrics:
+                if (const auto error = check_for_dpi_output(c, value, param, sizeof(EMU_NONCLIENTMETRICS), true))
+                {
+                    return fail_with(c, error);
+                }
 
-                c.emu.write_memory(value, &metrics, std::min(length, static_cast<uint32_t>(sizeof(metrics))));
-                return TRUE;
+                return write_nonclient_metrics(c, value, param, dpi, scale_to_dpi(1, dpi), scale_to_dpi(4, dpi));
+            default:
+                return fail_with(c, k_error_invalid_parameter);
             }
-
-            return FALSE;
         }
 
         BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
-                                               const emulator_pointer value, const uint32_t win_ini)
+                                               const emulator_pointer value, const uint32_t /*win_ini*/)
         {
-            if (action == k_spi_get_workarea)
+            switch (action)
             {
+            case spi_action::getworkarea:
                 return get_primary_work_area(c, value);
+            case spi_action::geticontitlelogfont:
+                return write_icontitle_logfont(c, value, k_default_dpi);
+            case spi_action::geticonmetrics:
+                return write_icon_metrics(c, value, k_default_dpi);
+            case spi_action::getnonclientmetrics: {
+                const auto flat_borders = c.win_emu.mod_manager.executable->subsystem_major_version >= k_flat_border_subsystem_version;
+                return write_nonclient_metrics(c, value, param, k_default_dpi, flat_borders ? 1 : 5, flat_borders ? 4 : 0);
             }
-
-            return handle_NtUserSystemParametersInfoForDpi(c, action, param, value, win_ini, k_default_dpi);
+            default:
+                return FALSE;
+            }
         }
 
         uint32_t handle_NtUserGetClipboardSequenceNumber()

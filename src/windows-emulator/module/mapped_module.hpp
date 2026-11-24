@@ -54,6 +54,7 @@ namespace sogen
         uint16_t machine{};
         uint16_t characteristics{};
         uint16_t dll_characteristics{};
+        uint16_t subsystem_major_version{};
         uint64_t size_of_stack_reserve{};
         uint64_t size_of_stack_commit{};
         uint64_t size_of_heap_reserve{};
