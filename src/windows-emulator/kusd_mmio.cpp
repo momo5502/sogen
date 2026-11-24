@@ -193,6 +193,14 @@ namespace sogen
         return tsc_high * scale_high + (high_low >> 32) + (middle >> 32);
     }
 
+    std::chrono::steady_clock::time_point next_clock_tick(const std::chrono::steady_clock::time_point last_tick,
+                                                          const std::chrono::steady_clock::time_point now, const ULONG clock_interval)
+    {
+        const std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>> interval{clock_interval};
+        const auto ticks_passed = now > last_tick ? (now - last_tick) / interval : 0;
+        return last_tick + (ticks_passed + 1) * interval;
+    }
+
     namespace utils
     {
         static void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
@@ -512,7 +520,8 @@ namespace sogen
 
     kusd_clock::kusd_clock(kusd_mmio& kusd, const bool instruction_precision, const bool relative_time, guest_machine& emu)
         : kusd_(&kusd),
-          keeps_time_(!kusd.traps_reads() && interrupt_thread_keeps_kusd_time(instruction_precision, relative_time, emu))
+          keeps_time_(!kusd.traps_reads() && interrupt_thread_keeps_kusd_time(instruction_precision, relative_time, emu)),
+          clock_tick_(std::chrono::steady_clock::now())
     {
 #ifdef OS_WINDOWS
         this->timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -522,18 +531,21 @@ namespace sogen
 
     void kusd_clock::wait_until(const std::chrono::steady_clock::time_point until, const ULONG clock_interval)
     {
-        const std::chrono::duration<int64_t, std::ratio<1, HUNDRED_NANOSECONDS_IN_ONE_SECOND>> interval{clock_interval};
         while (true)
         {
-            const auto wake = this->keeps_time_ ? (std::min)(until, std::chrono::steady_clock::now() + interval) : until;
-            this->sleep_until(wake);
+            this->sleep_until(this->keeps_time_ ? (std::min)(until, this->clock_tick_) : until);
 
-            if (this->stopped_ || !this->keeps_time_ || std::chrono::steady_clock::now() >= until)
+            const auto now = std::chrono::steady_clock::now();
+            if (this->stopped_ || !this->keeps_time_ || now >= until)
             {
                 return;
             }
 
-            this->kusd_->refresh(clock_interval);
+            if (now >= this->clock_tick_)
+            {
+                this->kusd_->refresh();
+                this->clock_tick_ = next_clock_tick(this->clock_tick_, now, clock_interval);
+            }
         }
     }
 

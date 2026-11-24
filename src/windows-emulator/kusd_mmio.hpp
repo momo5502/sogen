@@ -33,6 +33,11 @@ namespace sogen
     // Reference time in 100 ns units for a TSC value, as Hyper-V defines it: (tsc * tsc_scale) >> 64, before the page's TscOffset.
     uint64_t reference_time(uint64_t tsc, uint64_t tsc_scale);
 
+    // A clock interrupt's next tick: one clock interval (100 ns units) after the last, or the first tick still ahead when
+    // the last was handled later than that, since the hardware keeps its cadence while a handler runs late.
+    std::chrono::steady_clock::time_point next_clock_tick(std::chrono::steady_clock::time_point last_tick,
+                                                          std::chrono::steady_clock::time_point now, ULONG clock_interval);
+
     // A TSC the guest reads natively: vCPU 0's value now and the rate the host's TSC runs at.
     struct native_tsc
     {
@@ -138,16 +143,17 @@ namespace sogen
     bool intercepts_kusd(const emulator_settings& settings, bool instruction_precision, guest_machine& emu);
 
     // The interrupt thread's wait for its next preemption, which stop() ends early. Where the thread keeps a plain KUSD's
-    // time, the wait rewrites the page at every clock interval on the way, as KeClockInterruptNotify has KiUpdateTime do
-    // whatever the CPUs run. It takes no kernel lock for that: the KUSD's mutex keeps its rewrites apart from the vCPUs',
-    // which would otherwise queue behind each of them.
+    // time, the wait rewrites the page at every clock tick on the way, one clock interval after the last, as
+    // KeClockInterruptNotify has KiUpdateTime do whatever the CPUs run, whether or not a vCPU rewrote the page since. It
+    // takes no kernel lock for that: the KUSD's mutex keeps its rewrites apart from the vCPUs', which would otherwise queue
+    // behind each of them.
     class kusd_clock
     {
       public:
         kusd_clock(kusd_mmio& kusd, bool instruction_precision, bool relative_time, guest_machine& emu);
 
-        // Returns at until, or once stop() was called; until then it rewrites a plain KUSD whose time it keeps every
-        // clock_interval (100 ns units).
+        // Returns at until, or once stop() was called; until then it rewrites a plain KUSD whose time it keeps at every
+        // clock tick, clock_interval (100 ns units) apart.
         void wait_until(std::chrono::steady_clock::time_point until, ULONG clock_interval);
 
         // Ends the current wait and every later one.
@@ -156,6 +162,7 @@ namespace sogen
       private:
         kusd_mmio* kusd_{};
         bool keeps_time_{};
+        std::chrono::steady_clock::time_point clock_tick_{};
 
         std::atomic_bool stopped_{false};
         std::mutex mutex_{};
