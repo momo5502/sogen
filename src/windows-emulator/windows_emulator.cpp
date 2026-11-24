@@ -920,7 +920,7 @@ namespace sogen
               intercepts_kusd(settings, runs_with_instruction_precision(settings, *this->emu_), *this->emu_),
               guest_architecture_of(*this->emu_),
               [this]() -> std::optional<native_tsc> {
-                  // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
+                  // vCPUs share one TSC, which the guest reads natively, its intercepted RDTSC exits included.
                   const auto frequency = this->native_timestamp_counter_frequency();
                   const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
                   if (!value)
@@ -3353,6 +3353,8 @@ namespace sogen
             this->process.move_absolute_deadlines(system_time_ahead);
         }
 
+        // The guest's TSC went on meanwhile, or starts over in a restored partition.
+        this->process.kusd.follow_steady_clock();
         this->process.kusd.refresh();
     }
 
