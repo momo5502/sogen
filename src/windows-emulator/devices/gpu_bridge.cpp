@@ -92,14 +92,18 @@ namespace sogen
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
-                // The bridge thread runs the command ring without the kernel lock; vulkan_ is shared with it under this.
-                const std::scoped_lock bridge(this->bridge_mutex_);
-                this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
-                this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
-
-                // A call answers as of everything the guest did before it, including the records it queued.
+                // The bridge thread runs the command ring without the kernel lock; vulkan_ is shared with it under this. A call
+                // that only reads a fence's or a semaphore's state shares nothing with the records, which never touch either
+                // nor the tables they are looked up in, so it neither waits for the bridge thread nor runs the queued records:
+                // a failed record is reported at the next submission. The call that made the fence or semaphore loaded vulkan_.
+                std::unique_lock bridge(this->bridge_mutex_, std::defer_lock);
                 if (queued_records_can_change_the_answer(context.io_control_code))
                 {
+                    bridge.lock();
+                    this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+                    this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
+
+                    // A call answers as of everything the guest did before it, including the records it queued.
                     this->run_command_ring(win_emu);
                 }
 
@@ -1215,6 +1219,14 @@ namespace sogen
                 }
             }
 
+            // A fence or semaphore poll runs without bridge_mutex_ (see io_control), yet the imported memory it invalidates is
+            // shared with the bridge thread.
+            void invalidate_imported_memory_after_poll(windows_emulator& win_emu)
+            {
+                const std::scoped_lock bridge(this->bridge_mutex_);
+                this->invalidate_imported_memory(win_emu);
+            }
+
             template <typename Predicate>
             void release_imported_memory(windows_emulator& win_emu, const Predicate& released)
             {
@@ -2086,7 +2098,7 @@ namespace sogen
                     if (value > observed.value)
                     {
                         observed = {.device = request.device, .value = value};
-                        this->invalidate_imported_memory(win_emu);
+                        this->invalidate_imported_memory_after_poll(win_emu);
                     }
                 }
                 return write_output(win_emu, context,
@@ -2132,7 +2144,7 @@ namespace sogen
                 {
                     if (poll == vk_success)
                     {
-                        this->invalidate_imported_memory(win_emu);
+                        this->invalidate_imported_memory_after_poll(win_emu);
                     }
                     return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = poll, .reserved = 0});
                 }
@@ -2358,7 +2370,7 @@ namespace sogen
                 const int32_t result = this->vulkan_.get_fence_status(request.fence);
                 if (result == vk_success)
                 {
-                    this->invalidate_imported_memory(win_emu);
+                    this->invalidate_imported_memory_after_poll(win_emu);
                 }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
