@@ -463,11 +463,9 @@ namespace sogen
                                attributes.RootDirectory == KNOWN_DLLS_DIRECTORY ||
                                utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls\\"sv);
 
-            if (!is_knowndll && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
+            if (!is_knowndll && !attributes.RootDirectory && !filename_sv.starts_with(u'\\'))
             {
-                c.win_emu.log.error("Unsupported section: %s\n", u16_to_u8(filename_sv).c_str());
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                return STATUS_OBJECT_PATH_SYNTAX_BAD;
             }
 
             if (is_knowndll)
@@ -496,6 +494,11 @@ namespace sogen
                 section->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 section_handle.write(c.proc.sections.store(std::move(*section)));
                 return STATUS_SUCCESS;
+            }
+
+            if (attributes.RootDirectory && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
             for (auto& [handle, section] : c.proc.sections)
