@@ -3,6 +3,7 @@
 #include <utils/string.hpp>
 
 #include <thread>
+#include <utility>
 
 using namespace std::literals;
 
@@ -10,6 +11,8 @@ namespace sogen::gdb_stub
 {
     namespace
     {
+        constexpr auto close_timeout = 100ms;
+
         bool read_from_socket(stream_processor& processor, network::tcp_client_socket& client)
         {
             const auto data = client.receive();
@@ -148,46 +151,47 @@ namespace sogen::gdb_stub
         return this->stop_ || !this->client_.is_valid();
     }
 
-    void connection_handler::close() const
+    void connection_handler::close()
     {
+        std::unique_lock send_lock{this->send_mutex_, std::defer_lock};
+        if (!send_lock.try_lock_for(close_timeout))
+        {
+            this->closing_ = true;
+            send_lock.lock();
+        }
+
+        this->closing_ = true;
+        (void)this->client_.send(this->take_output(), std::chrono::steady_clock::now() + close_timeout);
         this->client_.close();
+        this->condition_variable_.notify_one();
     }
 
-    void connection_handler::await_transmission(const std::function<void()>& handler)
+    void connection_handler::await_output()
     {
         std::unique_lock lock{this->mutex_};
-
-        const auto can_run = [this] {
-            return this->should_stop() //
+        this->condition_variable_.wait_for(lock, 100ms, [this] {
+            return this->stop_ || this->closing_ //
                    || !this->output_stream_.empty();
-        };
-
-        const auto run = this->condition_variable_.wait_for(lock, 100ms, can_run);
-
-        if (run && !this->should_stop())
-        {
-            handler();
-        }
+        });
     }
 
-    std::string connection_handler::get_next_data_to_transmit()
+    std::string connection_handler::take_output()
     {
-        std::string transmit_data{};
-
-        this->await_transmission([&] {
-            transmit_data = std::move(this->output_stream_);
-            this->output_stream_ = {};
-        });
-
-        return transmit_data;
+        const std::scoped_lock lock{this->mutex_};
+        return std::exchange(this->output_stream_, {});
     }
 
     void connection_handler::transmission_loop()
     {
-        while (!this->should_stop())
+        while (!this->stop_ && !this->closing_)
         {
-            const auto data = this->get_next_data_to_transmit();
-            (void)this->client_.send(data);
+            this->await_output();
+
+            const std::scoped_lock send_lock{this->send_mutex_};
+            if (!this->stop_ && !this->closing_)
+            {
+                (void)this->client_.send(this->take_output(), std::chrono::steady_clock::time_point::max(), &this->closing_);
+            }
         }
     }
 } // namespace sogen::gdb_stub
