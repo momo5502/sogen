@@ -718,7 +718,7 @@ namespace sogen
 
 #ifdef __APPLE__
         // KUSER_SHARED_DATA lies inside the __PAGEZERO segment of every 64-bit macOS process, so it cannot be mapped as plain
-        // memory and every read has to be emulated; there --native-timing only drops the rdtsc trap, as in the sandbox.
+        // memory and every read has to be emulated, as in the sandbox.
         constexpr bool kusd_needs_intercept = true;
 #else
         constexpr bool kusd_needs_intercept = false;
@@ -736,7 +736,8 @@ namespace sogen
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = uses_instruction_precision(options, machine),
                 .intercept_rdtsc = options.native_timing ? std::optional{false} : std::nullopt,
-                .intercept_kusd = kusd_needs_intercept || backend == backend_type::seccomp || !options.native_timing,
+                // Elsewhere the emulator keeps the page plain where its interrupt thread can keep the time current.
+                .intercept_kusd = (kusd_needs_intercept || backend == backend_type::seccomp) ? std::optional{true} : std::nullopt,
                 .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
@@ -1290,9 +1291,7 @@ namespace sogen
             auto* const reproducible_option =
                 app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
             app.add_flag("--native-timing", options.native_timing,
-                         "Let the guest read the host timestamp counter and a periodically refreshed KUSER_SHARED_DATA without "
-                         "trapping (faster, timing is no longer exact); on macOS and seccomp KUSER_SHARED_DATA stays trapped and "
-                         "only the counter runs natively")
+                         "Let the guest read the host timestamp counter without trapping (faster, timing is no longer exact)")
                 ->excludes(reproducible_option);
             app.add_flag("--keep-guest-time", options.keep_guest_time,
                          "Keep the guest's time across snapshots: its clocks stand still while the process is saved or loaded "

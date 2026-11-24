@@ -1920,6 +1920,13 @@ namespace sogen
         return this->accumulated_thread_cycles;
     }
 
+    ULONG process_context::current_timer_resolution() const
+    {
+        // In 100 ns units: the resolution without this process' request.
+        constexpr ULONG default_timer_resolution = 0x00002710;
+        return std::min(this->timer_resolution_request.value_or(default_timer_resolution), default_timer_resolution);
+    }
+
     size_t process_context::get_live_thread_count() const
     {
         return std::count_if(threads.begin(), threads.end(), [](auto& item) { return !item.second.is_terminated(); });

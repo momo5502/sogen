@@ -1640,6 +1640,13 @@ namespace sogen::whp
                 return true;
             }
 
+            // try_write_memory copies into the host pages behind the guest pages under partition_mutex_, which every remap
+            // holds as well, while the vCPUs keep running.
+            bool supports_concurrent_memory_writes() const override
+            {
+                return true;
+            }
+
             bool map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
                                  const memory_permission permissions) override
             {

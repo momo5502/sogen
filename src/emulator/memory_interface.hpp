@@ -94,6 +94,13 @@ namespace sogen
             return true;
         }
 
+        // Whether another host thread may write guest memory while a vCPU runs guest code: guest memory is host memory
+        // that the backend's writes reach under the same lock as its remaps, so a write never meets a remap half done.
+        virtual bool supports_concurrent_memory_writes() const
+        {
+            return false;
+        }
+
         // Whether an access to a page faults whenever the page's protection denies it, also when the host page that
         // holds it is larger and stays accessible for the pages beside it.
         virtual bool supports_page_granular_protection() const
