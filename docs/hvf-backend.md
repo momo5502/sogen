@@ -81,6 +81,12 @@ address. Masking every load and store to 47 bits in FEX's address generation cos
 (1MB CRC32 table lookups plus 500M xorshift rounds), close to run-to-run noise, and left `test-sample`'s output
 unchanged. Moving FEX's pages is not done yet.
 
+**Memory ordering.** x86 orders loads and stores more strongly than ARM64, so FEX normally emits ordered
+accesses and barriers around guest memory operations. Hypervisor.framework can give a vCPU a TSO memory model
+through `ACTLR_EL1.EnTSO` (macOS 15 and later); the backend sets it on the VM's vCPU and tells FEX through
+`SetHardwareTSOSupport`, which drops that emulation from generated code. When the host cannot provide it, FEX
+keeps emulating the ordering in software.
+
 **Performance.** On the same loop, HVF-FEX takes 3.3 s, in-process FEX 3.3 s and Unicorn 32.7 s; all three
 compute the same result. The VM only costs time at exits, so instruction precision, which makes FEX call the
 host before every instruction, is about 90 times slower inside it (46 s against 0.6 s for `test-sample`). The
