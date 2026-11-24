@@ -262,6 +262,88 @@ namespace sogen::test
     }
 #endif
 
+#ifdef __APPLE__
+    TEST(FexSelfModifyingCodeTest, GuestStoreIntoExecutedCodeIsSeenByTheNextCall)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        memory_manager memory{*emu};
+        constexpr size_t page_size = 0x1000;
+        constexpr size_t host_page_size = 0x4000;
+        const uint64_t code = memory.allocate_memory(2 * host_page_size, memory_permission::all);
+        const uint64_t data = memory.allocate_memory(page_size, memory_permission::read_write);
+        const uint64_t stack = memory.allocate_memory(page_size, memory_permission::read_write);
+        const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+        ASSERT_NE(code, 0u);
+        ASSERT_EQ(code % host_page_size, 0u);
+        ASSERT_NE(data, 0u);
+        ASSERT_NE(stack, 0u);
+        ASSERT_NE(gdt, 0u);
+
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+        emu->load_gdt(gdt, page_size);
+        emu->reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+        emu->hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+        using namespace std::string_view_literals;
+
+        // xor edx, edx; call f; mov byte [rdi], 2; call f; mov [rsi], rbx; mov [r8], rbx; call h; hlt
+        constexpr std::string_view caller =
+            "\x31\xD2\xE8\x39\x00\x00\x00\xC6\x07\x02\xE8\x31\x00\x00\x00\x48\x89\x1E\x49\x89\x18\xE8\x66\x00\x00\x00\xF4"sv;
+        // f: mov eax, 1; add edx, eax; ret
+        constexpr std::string_view callee = "\xB8\x01\x00\x00\x00\x01\xC2\xC3"sv;
+        // h: xor ecx, ecx; call g; mov r9d, ecx; mov eax, 0xC302B190; xchg [r10], eax; call g; ret
+        constexpr std::string_view exchanger =
+            "\x31\xC9\xE8\x79\x3F\x00\x00\x41\x89\xC9\xB8\x90\xB1\x02\xC3\x41\x87\x02\xE8\x69\x3F\x00\x00\xC3"sv;
+        // g, on the second host page: mov cl, 1; ret
+        constexpr std::string_view second_page_callee = "\xB1\x01\xC3"sv;
+        constexpr size_t callee_offset = 0x40;
+        constexpr size_t exchanger_offset = 0x80;
+        constexpr size_t immediate_offset = callee_offset + 1;
+        constexpr size_t second_page_callee_offset = host_page_size;
+        constexpr uint32_t original_immediate = 1;
+        constexpr uint32_t rewritten_immediate = 2;
+
+        std::array<char, second_page_callee_offset + second_page_callee.size()> guest_code{};
+        std::ranges::copy(caller, guest_code.begin());
+        std::ranges::copy(callee, guest_code.begin() + callee_offset);
+        std::ranges::copy(exchanger, guest_code.begin() + exchanger_offset);
+        std::ranges::copy(second_page_callee, guest_code.begin() + second_page_callee_offset);
+        memory.write_memory(code, guest_code.data(), guest_code.size());
+
+        constexpr uint64_t crossing_offset = second_page_callee_offset - 1;
+        constexpr uint32_t original_crossing_dword = 0xC301B1CC;
+        constexpr uint32_t exchanged_crossing_dword = 0xC302B190;
+        emu->write_memory<uint32_t>(code + crossing_offset, original_crossing_dword);
+
+        constexpr uint64_t stored_value = 0x1122334455667788ULL;
+        constexpr uint64_t misaligned_offset = 0xC;
+        constexpr uint64_t unused_code_offset = 0x100;
+        emu->reg(x86_register::rip, code);
+        emu->reg(x86_register::rsp, stack + page_size - 0x100);
+        emu->reg(x86_register::rdi, code + immediate_offset);
+        emu->reg(x86_register::rsi, data + misaligned_offset);
+        emu->reg(x86_register::r8, code + unused_code_offset + misaligned_offset);
+        emu->reg(x86_register::r10, code + crossing_offset);
+        emu->reg(x86_register::rbx, stored_value);
+        emu->start(0);
+
+        EXPECT_EQ(emu->reg<uint32_t>(x86_register::edx), original_immediate + rewritten_immediate);
+        EXPECT_EQ(emu->read_memory<uint64_t>(data + misaligned_offset), stored_value);
+        EXPECT_EQ(emu->read_memory<uint64_t>(code + unused_code_offset + misaligned_offset), stored_value);
+        EXPECT_EQ(emu->reg<uint32_t>(x86_register::eax), original_crossing_dword);
+        EXPECT_EQ(emu->read_memory<uint32_t>(code + crossing_offset), exchanged_crossing_dword);
+        EXPECT_EQ(emu->reg<uint32_t>(x86_register::r9d), 1u);
+        EXPECT_EQ(emu->reg<uint8_t>(x86_register::cl), 2u);
+    }
+#endif
+
     namespace
     {
         constexpr size_t recommit_region_size = 0x4000;
