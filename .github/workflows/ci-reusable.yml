@@ -1508,16 +1508,20 @@ jobs:
           }
           EOF
 
-      # Some plugin markers (org.gradle.kotlin.kotlin-dsl) are only on the Plugin Portal, which intermittently answers 404.
-      # A retry refreshes dependencies, since Gradle otherwise reuses the cached miss.
+      # Some plugin markers (org.gradle.kotlin.kotlin-dsl) are only on the Plugin Portal, which intermittently answers 404,
+      # often for minutes at a time. Only a failed resolution is retried, after a growing pause, and with refreshed
+      # dependencies, since Gradle otherwise reuses the cached miss.
       - name: Build APK
         working-directory: app
         run: |
-          for attempt in 1 2 3; do
-            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} && exit 0
+          set -o pipefail
+          for pause in 30 60 120 240 none; do
+            flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }} 2>&1 | tee "$RUNNER_TEMP/apk-build.log" && exit 0
+            grep -q -E "was not found in any of the following sources|Could not resolve" "$RUNNER_TEMP/apk-build.log" || exit 1
+            [ "$pause" = none ] && exit 1
+            sleep "$pause"
             export SOGEN_GRADLE_REFRESH_DEPENDENCIES=1
           done
-          exit 1
 
       - name: Verify Bundled Guest Shims
         run: |
