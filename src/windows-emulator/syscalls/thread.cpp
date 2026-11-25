@@ -74,6 +74,36 @@ namespace sogen
                            : STATUS_UNSUCCESSFUL;
             }
 
+            // KxContextToKframes writes a context into the thread's trap frame, whose values its context shows until
+            // it returns to user mode. PspSetContextThreadInternal writes the calling thread's own context inline, and
+            // its system call then returns to user mode, so the system calls keep no frame for the calling thread.
+            void keep_trap_frame(const syscall_context& c, emulator_thread& thread, const CONTEXT64& context)
+            {
+                auto& cpu = c.x64_cpu();
+                auto frame = thread.trap_frame.value_or(trap_frame_registers{
+                    .eflags = cpu.reg<uint32_t>(x86_register::eflags),
+                    .dr6 = cpu.reg(x86_register::dr6),
+                    .dr7 = cpu.reg(x86_register::dr7),
+                });
+
+                if ((context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
+                {
+                    frame.eflags = (context.EFlags & cpu_context::eflags_user_legal) | cpu_context::eflags_interrupt;
+                }
+
+                if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
+                {
+                    frame.dr6 = 0;
+                    frame.dr7 = static_cast<uint32_t>(context.Dr7) & cpu_context::dr7_legal;
+                }
+
+                thread.trap_frame = frame;
+            }
+
+            void keep_trap_frame(const syscall_context&, emulator_thread&, const arm64_context&)
+            {
+            }
+
             // RtlpWow64CtxToAmd64 widens a 32-bit context's debug registers and sets DR7.LE when DR7 enables none of L0-L3
             // while DR0-DR3 hold an address, so a breakpoint staged before it is enabled reads back: RtlpWow64CtxFromAmd64
             // reports them only while DR7 sets an L, LE or GE bit.
@@ -284,7 +314,12 @@ namespace sogen
                         thread->restore(c.emu, c.proc.gdt_base);
                     }
 
-                    cpu_context::restore(c.x64_cpu(), widened_wow64_debug_registers(new_wow64_context), c.proc.is_wow64_process);
+                    const auto debug_registers = widened_wow64_debug_registers(new_wow64_context);
+                    cpu_context::restore(c.x64_cpu(), debug_registers, c.proc.is_wow64_process);
+                    if (thread != c.vcpu.active_thread)
+                    {
+                        keep_trap_frame(c, *thread, debug_registers);
+                    }
 
                     if (needs_switch)
                     {
@@ -1431,14 +1466,31 @@ namespace sogen
             cpu_context::restore(dynamic_cast<arm64_cpu&>(c.emu), context);
         }
 
-        void store_context(guest_cpu& cpu, CONTEXT64& context)
+        // KeContextFromKframes reads the thread's trap frame, which keeps a context write's values until the thread runs.
+        void store_context(const syscall_context& c, const emulator_thread& thread, CONTEXT64& context)
         {
-            cpu_context::save(dynamic_cast<x86_64_cpu&>(cpu), context);
+            cpu_context::save(c.x64_cpu(), context);
+            if (!thread.trap_frame)
+            {
+                return;
+            }
+
+            if ((context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
+            {
+                context.EFlags = thread.trap_frame->eflags;
+            }
+
+            if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
+            {
+                const auto active = (thread.trap_frame->dr7 & cpu_context::dr7_active) != 0;
+                context.Dr6 = active ? thread.trap_frame->dr6 : 0;
+                context.Dr7 = active ? thread.trap_frame->dr7 : 0;
+            }
         }
 
-        void store_context(guest_cpu& cpu, arm64_context& context)
+        void store_context(const syscall_context& c, const emulator_thread&, arm64_context& context)
         {
-            cpu_context::save(dynamic_cast<arm64_cpu&>(cpu), context);
+            cpu_context::save(dynamic_cast<arm64_cpu&>(c.emu), context);
         }
 
         bool is_saved_in_syscall(windows_emulator& win_emu, const emulator_thread& thread)
@@ -1530,7 +1582,7 @@ namespace sogen
             if (initial_context)
             {
                 auto record = c.emu.read_memory<Context>(*initial_context);
-                store_context(c.emu, record);
+                store_context(c, thread, record);
                 c.emu.write_memory(*initial_context, record);
             }
             else
@@ -1546,7 +1598,7 @@ namespace sogen
             CONTEXT64 native{};
             native.ContextFlags = CONTEXT_DEBUG_REGISTERS_64;
             const auto accessed = access_thread_context<CONTEXT64>(c, thread, [&] {
-                store_context(c.emu, native);
+                store_context(c, thread, native);
                 return false;
             });
             if (!accessed)
@@ -1586,7 +1638,7 @@ namespace sogen
                 }
 
                 const auto accessed = access_thread_context<arm64_context>(c, *thread, [&] {
-                    store_context(c.emu, context);
+                    store_context(c, *thread, context);
                     return false;
                 });
                 if (!accessed)
@@ -1605,7 +1657,7 @@ namespace sogen
             }
 
             const auto accessed = access_thread_context<CONTEXT64>(c, *thread, [&] {
-                store_context(c.emu, context);
+                store_context(c, *thread, context);
                 return false;
             });
             if (!accessed)
@@ -1662,6 +1714,10 @@ namespace sogen
             const auto context = thread_context.read();
             const auto accessed = access_thread_context<CONTEXT64>(c, *thread, [&] {
                 load_context(c, context);
+                if (thread != c.vcpu.active_thread)
+                {
+                    keep_trap_frame(c, *thread, context);
+                }
                 return true;
             });
             if (!accessed)
@@ -1947,7 +2003,7 @@ namespace sogen
         const syscall_context c{.win_emu = win_emu, .emu = vcpu.cpu, .vcpu = vcpu, .proc = win_emu.process};
         const auto capture = [&]<typename Context>(Context context) {
             syscalls::access_thread_context<Context>(c, thread, [&] {
-                syscalls::store_context(c.emu, context);
+                syscalls::store_context(c, thread, context);
                 return false;
             });
             std::vector<uint8_t> bytes(sizeof(context));
@@ -1978,6 +2034,7 @@ namespace sogen
             memcpy(&context, bytes.data(), sizeof(context));
             syscalls::access_thread_context<Context>(c, thread, [&] {
                 syscalls::load_context(c, context);
+                syscalls::keep_trap_frame(c, thread, context);
                 if constexpr (std::is_same_v<Context, arm64_context>)
                 {
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
@@ -2025,7 +2082,7 @@ namespace sogen
             {
                 CONTEXT64 native{};
                 native.ContextFlags = CONTEXT64_ALL;
-                syscalls::store_context(c.emu, native);
+                syscalls::store_context(c, thread, native);
                 context = make_wow64_context(native);
             }
             return false;
@@ -2064,13 +2121,15 @@ namespace sogen
                     return false;
                 }
 
-                cpu_context::restore(c.x64_cpu(), syscalls::widened_wow64_debug_registers(update), c.proc.is_wow64_process);
+                const auto debug_registers = syscalls::widened_wow64_debug_registers(update);
+                cpu_context::restore(c.x64_cpu(), debug_registers, c.proc.is_wow64_process);
+                syscalls::keep_trap_frame(c, thread, debug_registers);
                 return true;
             }
 
             CONTEXT64 native{};
             native.ContextFlags = CONTEXT64_ALL;
-            syscalls::store_context(c.emu, native);
+            syscalls::store_context(c, thread, native);
             auto merged = make_wow64_context(native);
             syscalls::merge_wow64_context(merged, update);
 
@@ -2091,6 +2150,7 @@ namespace sogen
             native.Dr6 = merged.Dr6;
             native.Dr7 = merged.Dr7;
             syscalls::load_context(c, native);
+            syscalls::keep_trap_frame(c, thread, native);
             in_registers = true;
             return true;
         });

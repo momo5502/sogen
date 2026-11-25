@@ -1949,6 +1949,13 @@ namespace sogen
         {
             this->setup_registers(emu, context);
             this->setup_done = true;
+
+            // Until it runs, a new thread's context is the trap frame KiInitializeContextThread built: EFlags with IF
+            // only, and no debug registers.
+            if (dynamic_cast<x86_64_cpu*>(&emu))
+            {
+                this->trap_frame = trap_frame_registers{.eflags = cpu_context::eflags_interrupt};
+            }
         }
         if (this->pending_status.has_value())
         {

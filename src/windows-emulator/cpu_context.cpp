@@ -139,7 +139,6 @@ namespace sogen
             {
                 // KeContextFromKframes reports the debug registers only while DR7 enables a breakpoint (DR7_ACTIVE: L0-L3,
                 // LE, GE), and KeCopyLastBranchInformation the last-branch records only once DR7.LE recorded some.
-                constexpr uint64_t dr7_active = 0x355;
                 const auto dr7 = emu.reg(x86_register::dr7);
                 const auto active = (dr7 & dr7_active) != 0;
                 context.Dr0 = active ? emu.reg(x86_register::dr0) : 0;
