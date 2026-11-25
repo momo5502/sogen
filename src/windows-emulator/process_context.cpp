@@ -846,6 +846,23 @@ namespace sogen
         return this->working_device_list;
     }
 
+    void process_context::release_update_lock(const hwnd window)
+    {
+        if (this->update_locked_window == window)
+        {
+            this->update_locked_window = 0;
+            this->update_lock_thread_id = 0;
+        }
+    }
+
+    void process_context::release_update_lock_of_thread(const uint32_t locking_thread_id)
+    {
+        if (this->update_locked_window != 0 && this->update_lock_thread_id == locking_thread_id)
+        {
+            this->release_update_lock(this->update_locked_window);
+        }
+    }
+
     void process_context::terminate_job_processes(windows_emulator& win_emu, const job_object& job)
     {
         constexpr uint32_t kill_on_job_close = 0x2000;
@@ -1212,6 +1229,8 @@ namespace sogen
         buffer.write(this->dxgk);
         buffer.write_optional(this->etw_notification_event);
         buffer.write(this->mouse_capture_window);
+        buffer.write(this->update_locked_window);
+        buffer.write(this->update_lock_thread_id);
         buffer.write(this->foreground_window);
         buffer.write_optional(this->timer_resolution_request);
         buffer.write_optional(this->cursor_clip);
@@ -1350,6 +1369,8 @@ namespace sogen
         buffer.read(this->dxgk);
         buffer.read_optional(this->etw_notification_event);
         buffer.read(this->mouse_capture_window);
+        buffer.read(this->update_locked_window);
+        buffer.read(this->update_lock_thread_id);
         buffer.read(this->foreground_window);
         buffer.read_optional(this->timer_resolution_request);
         buffer.read_optional(this->cursor_clip);
@@ -2122,6 +2143,8 @@ namespace sogen
             entry.abandon_if_owned_by(mutant::make_owner(this->process_id, thread.id));
         }
 
+        this->release_update_lock_of_thread(thread.id);
+
         for (auto i = this->windows.begin(); i != this->windows.end();)
         {
             if (i->second.thread_id != thread.id)
@@ -2132,6 +2155,7 @@ namespace sogen
 
             i->second.ref_count = 1;
             this->release_mouse_capture(i->second.handle);
+            this->release_update_lock(i->second.handle);
             this->gdi_window_surfaces.erase(static_cast<uint32_t>(i->second.handle));
             i = this->windows.erase(i).first;
         }
