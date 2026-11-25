@@ -1249,6 +1249,7 @@ namespace sogen
         buffer.write(this->managed_threads);
         buffer.write(this->debug_objects);
         buffer.write_map(this->atoms);
+        buffer.write(this->clipboard);
         buffer.write_map(this->classes);
 
         buffer.write_map(this->apiset);
@@ -1387,6 +1388,7 @@ namespace sogen
         buffer.read(this->managed_threads);
         buffer.read(this->debug_objects);
         buffer.read_map(this->atoms);
+        buffer.read(this->clipboard);
         buffer.read_map(this->classes);
 
         buffer.read_map(this->apiset);
