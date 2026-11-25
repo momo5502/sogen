@@ -2,6 +2,10 @@
 
 #include <queued_file_writer.hpp>
 
+#ifdef OS_WINDOWS
+#include <io.h>
+#endif
+
 namespace sogen::test
 {
     namespace
@@ -29,7 +33,55 @@ namespace sogen::test
         {
             out += "value " + std::to_string(value) + "\n";
         }
+
+#ifdef OS_WINDOWS
+        std::string with_crlf(const std::string_view text)
+        {
+            std::string written{};
+            for (const auto c : text)
+            {
+                if (c == '\n')
+                {
+                    written += '\r';
+                }
+                written += c;
+            }
+            return written;
+        }
+#endif
     }
+
+#ifdef OS_WINDOWS
+    TEST(QueuedFileWriterTest, KeepsEveryLineWhenAnotherHolderOfTheFileSetsItsPositionBack)
+    {
+        const auto path =
+            std::filesystem::temp_directory_path() / ("sogen-queued-file-writer-set-back-test-" + std::to_string(getpid()) + ".log");
+        auto* stream = std::fopen(path.string().c_str(), "w");
+        ASSERT_NE(stream, nullptr);
+        auto* const file = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream)));
+
+        std::string expected{};
+        {
+            queued_file_writer writer{stream};
+            expected += write_lines(writer, 0, 100);
+            writer.flush();
+
+            LARGE_INTEGER read_position{};
+            ASSERT_TRUE(SetFilePointerEx(file, {}, &read_position, FILE_CURRENT));
+            expected += write_lines(writer, 100, 100);
+            writer.flush();
+            ASSERT_TRUE(SetFilePointerEx(file, read_position, nullptr, FILE_BEGIN));
+
+            expected += write_lines(writer, 200, 100);
+        }
+
+        (void)std::fclose(stream);
+        const auto written = read_file(path);
+        std::filesystem::remove(path);
+
+        EXPECT_EQ(written, with_crlf(expected));
+    }
+#endif
 
     TEST(QueuedFileWriterTest, WritesEveryLineInOrderAndAWaitedLineBeforeReturning)
     {
