@@ -7,6 +7,7 @@
 #include "worker_factory_support.hpp"
 #include "debug_object.hpp"
 #include "syscall_utils.hpp"
+#include "window_hooks.hpp"
 
 namespace sogen
 {
@@ -25,6 +26,7 @@ namespace sogen
     namespace
     {
         constexpr uint32_t k_client_thread_info_sending_message = 0x2;
+        constexpr size_t k_client_info_fs_hooks_offset = 7 * sizeof(uint64_t);
 
         enum class wait_state
         {
@@ -1042,7 +1044,7 @@ namespace sogen
             return true;
         }
 
-        if (this->get_message_hook)
+        if (this->newest_hook(k_wh_getmessage))
         {
             const auto& wait = *this->await_msg;
             return this->peek_pending_message(win_emu, wait.hwnd_filter, wait.filter_min, wait.filter_max).has_value();
@@ -1490,6 +1492,117 @@ namespace sogen
         this->publish_client_thread_info();
     }
 
+    const user_thread_hook* emulator_thread::newest_hook(const int hook_id) const
+    {
+        for (const auto& hook : this->thread_hooks | std::views::reverse)
+        {
+            if (hook.id == hook_id && !hook.destroyed)
+            {
+                return &hook;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool emulator_thread::chains_hooks(const int hook_id) const
+    {
+        return std::ranges::find(this->thread_hooks, hook_id, &user_thread_hook::id) != this->thread_hooks.end();
+    }
+
+    const user_thread_hook* emulator_thread::find_hook(const uint64_t handle) const
+    {
+        const auto it = std::ranges::find(this->thread_hooks, handle, &user_thread_hook::handle);
+        return it != this->thread_hooks.end() ? &*it : nullptr;
+    }
+
+    const user_thread_hook* emulator_thread::next_older_hook(const user_thread_hook& hook) const
+    {
+        const std::span older(this->thread_hooks.data(), static_cast<size_t>(&hook - this->thread_hooks.data()));
+        for (const auto& candidate : older | std::views::reverse)
+        {
+            if (candidate.id == hook.id && !candidate.destroyed)
+            {
+                return &candidate;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool emulator_thread::runs_hook(const uint64_t handle) const
+    {
+        return std::ranges::find(this->running_hooks, handle, &running_hook::handle) != this->running_hooks.end();
+    }
+
+    void emulator_thread::publish_hook_flags() const
+    {
+        if (!this->teb64)
+        {
+            return;
+        }
+
+        ULONG flags = 0;
+        for (const auto& hook : this->thread_hooks)
+        {
+            if (hook.id == k_wh_msgfilter && !hook.destroyed)
+            {
+                flags |= 1u << (hook.id + 1);
+            }
+        }
+
+        this->teb64->field<ULONG>(offsetof(TEB64, Win32ClientInfo) + k_client_info_fs_hooks_offset).write(flags);
+    }
+
+    void emulator_thread::destroy_hook(const uint64_t handle)
+    {
+        const auto hook = std::ranges::find(this->thread_hooks, handle, &user_thread_hook::handle);
+        if (hook == this->thread_hooks.end())
+        {
+            return;
+        }
+
+        // A hook whose procedure is running stays in its chain until the procedure returns, so that CallNextHookEx still
+        // continues from it.
+        if (this->runs_hook(handle))
+        {
+            hook->destroyed = true;
+        }
+        else
+        {
+            this->thread_hooks.erase(hook);
+        }
+
+        this->publish_hook_flags();
+    }
+
+    void emulator_thread::erase_destroyed_hook(const uint64_t handle)
+    {
+        if (this->runs_hook(handle))
+        {
+            return;
+        }
+
+        std::erase_if(this->thread_hooks, [&](const user_thread_hook& hook) { return hook.destroyed && hook.handle == handle; });
+    }
+
+    void emulator_thread::destroy_hooks_installed_by(const uint32_t installer)
+    {
+        std::vector<uint64_t> handles{};
+        for (const auto& hook : this->thread_hooks)
+        {
+            if (hook.installer == installer && !hook.destroyed)
+            {
+                handles.push_back(hook.handle);
+            }
+        }
+
+        for (const auto handle : handles)
+        {
+            this->destroy_hook(handle);
+        }
+    }
+
     void emulator_thread::forget_window(const hwnd window)
     {
         if (this->active_window == window)
@@ -1866,7 +1979,7 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
-            if (this->get_message_hook || !this->pending_sent_messages.empty())
+            if (this->newest_hook(k_wh_getmessage) || !this->pending_sent_messages.empty())
             {
                 return false;
             }

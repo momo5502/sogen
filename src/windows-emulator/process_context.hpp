@@ -693,7 +693,7 @@ namespace sogen
 
         std::vector<low_level_input> pending_low_level_input{};
         uint64_t next_low_level_input_id{1};
-        uint64_t next_hook_handle{1};
+        uint32_t next_hook_uniqueness{1};
         // The host sends the character of a key as its own event, so it has to be dropped with a swallowed key press.
         bool drop_low_level_characters{};
 

@@ -429,6 +429,25 @@ namespace sogen
         }
     };
 
+    struct hook_call_state : completion_state
+    {
+        int hook_id{};
+        std::vector<uint64_t> converted_text{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->hook_id);
+            buffer.write_vector(this->converted_text);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->hook_id);
+            buffer.read_vector(this->converted_text);
+        }
+    };
+
     class windows_emulator;
     struct vcpu_context;
 
