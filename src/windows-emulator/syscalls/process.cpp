@@ -1092,7 +1092,7 @@ namespace sogen
                     buffer = params.CommandLine.Buffer;
                 }
 
-                if (length == 0 || length > max_length || buffer == 0)
+                if (length == 0 || length > max_length || buffer == 0 || (length % 2) != 0 || (max_length % 2) != 0)
                 {
                     return STATUS_NOT_FOUND;
                 }
@@ -1113,7 +1113,14 @@ namespace sogen
                 UNICODE_STRING<EmulatorTraits<Emu64>> info = {.Length = length, .MaximumLength = max_length, .Buffer = buffer_start};
 
                 c.emu.write_memory(process_information, info);
-                c.emu.move_memory(buffer_start, buffer, max_length);
+                try
+                {
+                    c.emu.move_memory(buffer_start, buffer, max_length);
+                }
+                catch (...)
+                {
+                    return STATUS_PARTIAL_COPY;
+                }
 
                 return STATUS_SUCCESS;
             }
