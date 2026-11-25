@@ -243,7 +243,7 @@ namespace sogen
                 if (attributes.ObjectName)
                 {
                     emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> name{c.emu, attributes.ObjectName};
-                    port_name = std::u16string(read_unicode_string(c.emu, name));
+                    port_name = read_unicode_string(c.emu, name);
                 }
             }
 

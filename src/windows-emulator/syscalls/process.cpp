@@ -1039,13 +1039,8 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                const auto buffer = process_information + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
-                c.emu.write_memory(buffer, image_path.c_str(), string_length + sizeof(char16_t));
-                emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, process_information}.write({
-                    .Length = static_cast<USHORT>(string_length),
-                    .MaximumLength = static_cast<USHORT>(string_length + sizeof(char16_t)),
-                    .Buffer = buffer,
-                });
+                write_unicode_string(c.emu, process_information, image_path);
+
                 return STATUS_SUCCESS;
             }
 
@@ -1062,18 +1057,70 @@ namespace sogen
 
                 if (process_information_length < length)
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> info{c.emu, process_information};
-                info.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
-                    const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
-                    const auto string = read_unicode_string(c.emu, params.ImagePathName);
-                    c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
-                    str.Length = params.ImagePathName.Length;
-                    str.MaximumLength = str.Length;
-                    str.Buffer = buffer_start;
-                });
+                const auto image_name = read_unicode_string(c.emu, params.ImagePathName);
+                write_unicode_string(c.emu, process_information, image_name);
+
+                return STATUS_SUCCESS;
+            }
+
+            case ProcessCommandLineInformation: {
+                USHORT length = 0;
+                USHORT max_length = 0;
+                uint64_t buffer = 0;
+
+                if (c.proc.is_wow64_process && c.proc.peb32.has_value())
+                {
+                    const auto peb = c.proc.peb32->read();
+                    emulator_object<RTL_USER_PROCESS_PARAMETERS32> proc_params{c.emu, peb.ProcessParameters};
+                    const auto params = proc_params.read();
+
+                    length = params.CommandLine.Length;
+                    max_length = params.CommandLine.MaximumLength;
+                    buffer = params.CommandLine.Buffer;
+                }
+                else
+                {
+                    const auto peb = c.proc.peb64.read();
+                    emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
+                    const auto params = proc_params.read();
+
+                    length = params.CommandLine.Length;
+                    max_length = params.CommandLine.MaximumLength;
+                    buffer = params.CommandLine.Buffer;
+                }
+
+                if (length == 0 || length > max_length || buffer == 0 || (length % 2) != 0 || (max_length % 2) != 0)
+                {
+                    return STATUS_NOT_FOUND;
+                }
+
+                const auto required_length = static_cast<uint32_t>(max_length + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>));
+
+                if (return_length)
+                {
+                    return_length.write(required_length);
+                }
+
+                if (process_information_length < required_length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto buffer_start = process_information + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                UNICODE_STRING<EmulatorTraits<Emu64>> info = {.Length = length, .MaximumLength = max_length, .Buffer = buffer_start};
+
+                c.emu.write_memory(process_information, info);
+                try
+                {
+                    c.emu.move_memory(buffer_start, buffer, max_length);
+                }
+                catch (...)
+                {
+                    return STATUS_PARTIAL_COPY;
+                }
 
                 return STATUS_SUCCESS;
             }
