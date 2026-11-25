@@ -442,6 +442,24 @@ namespace sogen
         return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string}, index);
     }
 
+    inline void write_unicode_string(memory_interface& emu, const uint64_t guest_addr, std::u16string_view string)
+    {
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> guest_string{emu, guest_addr};
+
+        guest_string.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+            str.Length = static_cast<USHORT>(string.length() * sizeof(char16_t));
+            str.MaximumLength = str.Length + sizeof(char16_t);
+            str.MaximumLength = std::max(str.MaximumLength, str.Length);
+            str.Buffer = guest_addr + sizeof(str);
+
+            emu.write_memory(str.Buffer, string.data(), str.Length);
+            if (str.MaximumLength > str.Length)
+            {
+                emu.write_memory(str.Buffer + str.Length, u'\0');
+            }
+        });
+    }
+
     inline std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj, const size_t index = 0)
     {
         if (!str_obj)

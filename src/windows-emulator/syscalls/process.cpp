@@ -1078,6 +1078,25 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case ProcessCommandLineInformation: {
+                const auto command_line = c.win_emu.get_command_line();
+                const auto length = (command_line.length() + 1) * 2 + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+
+                if (return_length)
+                {
+                    return_length.write(static_cast<uint32_t>(length));
+                }
+
+                if (process_information_length < length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                write_unicode_string(c.emu, process_information, command_line);
+
+                return STATUS_SUCCESS;
+            }
+
             default:
                 c.win_emu.log.error("Unsupported process info class: 0x%X\n", info_class);
                 c.emu.stop();
