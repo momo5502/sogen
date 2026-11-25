@@ -509,6 +509,55 @@ namespace sogen::fex
             return (value + host_page_size_apple - 1) & ~(host_page_size_apple - 1);
         }
 
+        // Host code copies through this to memory the guest declared inaccessible, which leaves the protection that every
+        // vCPU runs under untouched. Hardware watchpoints match virtual addresses, so the guest's watched pages do not
+        // trigger on it.
+        class private_host_alias_apple
+        {
+          public:
+            private_host_alias_apple(const uint64_t host_address, const size_t size)
+                : source_(host_page_align_down_apple(host_address)),
+                  size_(static_cast<size_t>(host_page_align_up_apple(host_address + size) - this->source_)),
+                  offset_(static_cast<size_t>(host_address - this->source_))
+            {
+                vm_prot_t current_protection = VM_PROT_NONE;
+                vm_prot_t max_protection = VM_PROT_NONE;
+                mach_vm_address_t alias = 0;
+                if (::mach_vm_remap(mach_task_self(), &alias, this->size_, 0, VM_FLAGS_ANYWHERE, mach_task_self(), this->source_, FALSE,
+                                    &current_protection, &max_protection, VM_INHERIT_NONE) != KERN_SUCCESS)
+                {
+                    throw std::runtime_error("FEX backend failed to alias host memory for a copy");
+                }
+
+                if (::mach_vm_protect(mach_task_self(), alias, this->size_, FALSE, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
+                {
+                    ::mach_vm_deallocate(mach_task_self(), alias, this->size_);
+                    throw std::runtime_error("FEX backend failed to make the alias of host memory accessible");
+                }
+
+                this->alias_ = alias;
+            }
+
+            ~private_host_alias_apple()
+            {
+                ::mach_vm_deallocate(mach_task_self(), this->alias_, this->size_);
+            }
+
+            private_host_alias_apple(const private_host_alias_apple&) = delete;
+            private_host_alias_apple& operator=(const private_host_alias_apple&) = delete;
+
+            void* data() const
+            {
+                return reinterpret_cast<void*>(this->alias_ + this->offset_);
+            }
+
+          private:
+            uint64_t source_{};
+            size_t size_{};
+            size_t offset_{};
+            mach_vm_address_t alias_{};
+        };
+
         void report_missing_watchpoints_once()
         {
             static std::once_flag reported;
@@ -2301,13 +2350,19 @@ namespace sogen::fex
 
             // Host-side reads, e.g. of a snapshot, also cover memory the guest made inaccessible to itself.
             const bool needs_temporary_read = !this->range_has_permission(address, size, memory_permission::read);
+#ifdef __APPLE__
+            if (needs_temporary_read && !this->hypervisor_)
+            {
+                this->read_through_alias_apple(address, data, size);
+                return true;
+            }
+
+            this->disarm_watchpoints_over_apple(address, size);
+#else
             if (needs_temporary_read)
             {
                 this->set_temporary_access(address, size, memory_permission::read, true);
             }
-
-#ifdef __APPLE__
-            this->disarm_watchpoints_over_apple(address, size);
 #endif
 
             // memmove, not memcpy: callers (e.g. the PE loader's section copy) can hand this a source
@@ -2317,10 +2372,12 @@ namespace sogen::fex
                 std::memmove(static_cast<std::byte*>(data) + offset, reinterpret_cast<const void*>(host_address), span_size);
             });
 
+#ifndef __APPLE__
             if (needs_temporary_read)
             {
                 this->set_temporary_access(address, size, memory_permission::read, false);
             }
+#endif
             return true;
         }
 
@@ -2369,7 +2426,7 @@ namespace sogen::fex
             // sogen's loader writes guest memory it has already declared read-only (a PE section's raw
             // file bytes, regardless of the section's final protection). Unlike Unicorn's uc_mem_write,
             // this backend's guest VA == host VA is backed by real host mprotect state, so the write
-            // needs a temporary permission bump. Every page must be checked, not just the first: a write
+            // needs more access than the range grants. Every page must be checked, not just the first: a write
             // straddling into a read-only region would otherwise fault mid-memmove.
 #ifdef __APPLE__
             const bool needs_temporary_write =
@@ -2378,13 +2435,19 @@ namespace sogen::fex
             const bool needs_temporary_write = !this->range_is_writable(address, size);
 #endif
 
+#ifdef __APPLE__
+            if (needs_temporary_write && !this->hypervisor_)
+            {
+                this->write_through_alias_apple(address, data, size);
+                return true;
+            }
+
+            this->disarm_watchpoints_over_apple(address, size);
+#else
             if (needs_temporary_write)
             {
                 this->set_temporary_access(address, size, memory_permission::write, true);
             }
-
-#ifdef __APPLE__
-            this->disarm_watchpoints_over_apple(address, size);
 #endif
 
             // memmove, not memcpy: see try_read_memory - the source may overlap the guest destination.
@@ -2392,10 +2455,12 @@ namespace sogen::fex
                 std::memmove(reinterpret_cast<void*>(host_address), static_cast<const std::byte*>(data) + offset, span_size);
             });
 
+#ifndef __APPLE__
             if (needs_temporary_write)
             {
                 this->set_temporary_access(address, size, memory_permission::write, false);
             }
+#endif
             return true;
         }
 
@@ -3782,27 +3847,63 @@ namespace sogen::fex
             return std::nullopt;
         }
 
+#ifdef __APPLE__
+        bool host_buffer_overlaps_guest_range_apple(const void* buffer, const size_t size, const uint64_t address) const
+        {
+            const auto buffer_start = reinterpret_cast<uint64_t>(buffer);
+            bool overlaps = false;
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                overlaps = overlaps || (buffer_start < host_address + span_size && host_address < buffer_start + size);
+            });
+            return overlaps;
+        }
+
+        // memmove cannot tell that the alias and a host buffer inside the guest range are the same pages, so such a
+        // buffer is staged outside the range first.
+        void write_through_alias_apple(const uint64_t address, const void* data, const size_t size) const
+        {
+            std::vector<std::byte> staged{};
+            if (this->host_buffer_overlaps_guest_range_apple(data, size, address))
+            {
+                const auto* bytes = static_cast<const std::byte*>(data);
+                staged.assign(bytes, bytes + size);
+                data = staged.data();
+            }
+
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
+                const private_host_alias_apple alias(host_address, span_size);
+                std::memcpy(alias.data(), static_cast<const std::byte*>(data) + offset, span_size);
+            });
+        }
+
+        void read_through_alias_apple(const uint64_t address, void* data, const size_t size) const
+        {
+            std::vector<std::byte> staged{};
+            auto* destination = static_cast<std::byte*>(data);
+            const bool overlaps = this->host_buffer_overlaps_guest_range_apple(data, size, address);
+            if (overlaps)
+            {
+                staged.resize(size);
+                destination = staged.data();
+            }
+
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
+                const private_host_alias_apple alias(host_address, span_size);
+                std::memcpy(destination + offset, alias.data(), span_size);
+            });
+
+            if (overlaps)
+            {
+                std::memmove(data, staged.data(), size);
+            }
+        }
+#else
         // For loader-privileged writes: sogen itself writing guest memory it declared read-only, such as
         // a PE section's initial file content before its final permission is locked in. Needed because
         // this backend enforces the declared permission through real host protection, unlike Unicorn's
         // uc_mem_write, which operates on emulated memory independent of any host mprotect state.
         void set_temporary_access(uint64_t address, size_t size, const memory_permission added, bool enable) const
         {
-#ifdef __APPLE__
-            if (this->hypervisor_)
-            {
-                return;
-            }
-            const uint64_t start = host_page_align_down_apple(address);
-            const uint64_t end = host_page_align_up_apple(address + size);
-            for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
-            {
-                // The page stays claimed while it is accessible, so only its protection changes.
-                const auto declared = this->host_permission_apple(host_page).value_or(memory_permission::none);
-                ::mprotect(reinterpret_cast<void*>(this->to_host_address(host_page)), host_page_size_apple,
-                           to_prot_apple(enable ? declared | added : declared));
-            }
-#else
             // The range can span several regions_ entries with different declared permissions, so
             // both the bump and the restore work per intersecting entry.
             const uint64_t end = address + size;
@@ -3829,8 +3930,8 @@ namespace sogen::fex
                                              ::mprotect(reinterpret_cast<void*>(host_address), span_size, to_prot(perm));
                                          });
             }
-#endif
         }
+#endif
 
         // Keeps regions_ non-overlapping, the invariant is_range_mapped/range_is_writable rely on. The
         // guest memory manager commits a reserved region in gap-filling sub-ranges (several map_memory
@@ -4187,18 +4288,15 @@ namespace sogen::fex
                 const auto host_permission = this->host_permission_apple(host_page).value_or(memory_permission::none);
                 const bool needs_temporary_write = (host_permission & memory_permission::write) == memory_permission::none;
 
-                if (needs_temporary_write)
+                if (needs_temporary_write && !this->hypervisor_)
                 {
-                    this->set_temporary_access(zero_start, zero_size, memory_permission::write, true);
+                    const private_host_alias_apple alias(this->to_host_address(zero_start), zero_size);
+                    std::memset(alias.data(), 0, zero_size);
+                    continue;
                 }
 
                 this->disarm_watchpoints_over_apple(zero_start, zero_size);
                 std::memset(reinterpret_cast<void*>(this->to_host_address(zero_start)), 0, zero_size);
-
-                if (needs_temporary_write)
-                {
-                    this->set_temporary_access(zero_start, zero_size, memory_permission::write, false);
-                }
             }
         }
 
