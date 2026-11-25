@@ -26,6 +26,8 @@ real per-vCPU objects (docs/multi-vcpu-design.md).
 #include "x86_register.hpp"
 #include "arm64_register.hpp"
 
+#include <array>
+#include <cstddef>
 #include <stdexcept>
 
 namespace sogen
@@ -116,6 +118,59 @@ namespace sogen
         virtual bool supports_x87_registers() const
         {
             return true;
+        }
+
+        // The x87 and SSE state a context's floating-point part holds, with FXSAVE's abridged tag word and ST0-ST7 in
+        // stack order.
+        struct floating_point_state
+        {
+            uint16_t control_word{};
+            uint16_t status_word{};
+            uint16_t tag_word{};
+            uint32_t mxcsr{};
+            std::array<std::array<std::byte, 16>, 8> st{};
+            std::array<std::array<std::byte, 16>, 16> xmm{};
+        };
+
+        // The state in one call, for backends that pay for each register access on its own.
+        virtual void read_floating_point_state(floating_point_state& state)
+        {
+            this->read_register(register_type::fpcw, &state.control_word, sizeof(state.control_word));
+            this->read_register(register_type::fpsw, &state.status_word, sizeof(state.status_word));
+            this->read_register(register_type::fptag, &state.tag_word, sizeof(state.tag_word));
+            this->read_register(register_type::mxcsr, &state.mxcsr, sizeof(state.mxcsr));
+            for (size_t i = 0; i < state.st.size(); ++i)
+            {
+                this->read_register(static_cast<register_type>(static_cast<size_t>(register_type::st0) + i), state.st[i].data(),
+                                    state.st[i].size());
+            }
+
+            for (size_t i = 0; i < state.xmm.size(); ++i)
+            {
+                this->read_register(static_cast<register_type>(static_cast<size_t>(register_type::xmm0) + i), state.xmm[i].data(),
+                                    state.xmm[i].size());
+            }
+        }
+
+        // The status word goes before ST0-ST7: its TOP field decides which physical registers they are. The tag word goes
+        // after them: a backend that keeps FSAVE's full tag word classifies the values they now hold.
+        virtual void write_floating_point_state(const floating_point_state& state)
+        {
+            this->write_register(register_type::fpcw, &state.control_word, sizeof(state.control_word));
+            this->write_register(register_type::fpsw, &state.status_word, sizeof(state.status_word));
+            this->write_register(register_type::mxcsr, &state.mxcsr, sizeof(state.mxcsr));
+            for (size_t i = 0; i < state.st.size(); ++i)
+            {
+                this->write_register(static_cast<register_type>(static_cast<size_t>(register_type::st0) + i), state.st[i].data(),
+                                     state.st[i].size());
+            }
+
+            this->write_register(register_type::fptag, &state.tag_word, sizeof(state.tag_word));
+            for (size_t i = 0; i < state.xmm.size(); ++i)
+            {
+                this->write_register(static_cast<register_type>(static_cast<size_t>(register_type::xmm0) + i), state.xmm[i].data(),
+                                     state.xmm[i].size());
+            }
         }
     };
 

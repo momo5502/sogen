@@ -528,6 +528,49 @@ namespace sogen::whp
             }};
         }
 
+        // x86_64_cpu::floating_point_state's registers: the x87 and SSE control registers, then ST0-ST7 and XMM0-XMM15.
+        constexpr std::array<WHV_REGISTER_NAME, 2> floating_point_control_names{{
+            WHvX64RegisterFpControlStatus,
+            WHvX64RegisterXmmControlStatus,
+        }};
+        constexpr size_t floating_point_first_st = floating_point_control_names.size();
+        constexpr size_t floating_point_first_xmm = floating_point_first_st + 8;
+
+        constexpr std::array<WHV_REGISTER_NAME, 26> floating_point_register_names()
+        {
+            return std::array<WHV_REGISTER_NAME, 26>{{
+                WHvX64RegisterFpControlStatus,
+                WHvX64RegisterXmmControlStatus,
+                WHvX64RegisterFpMmx0,
+                WHvX64RegisterFpMmx1,
+                WHvX64RegisterFpMmx2,
+                WHvX64RegisterFpMmx3,
+                WHvX64RegisterFpMmx4,
+                WHvX64RegisterFpMmx5,
+                WHvX64RegisterFpMmx6,
+                WHvX64RegisterFpMmx7,
+                WHvX64RegisterXmm0,
+                WHvX64RegisterXmm1,
+                WHvX64RegisterXmm2,
+                WHvX64RegisterXmm3,
+                WHvX64RegisterXmm4,
+                WHvX64RegisterXmm5,
+                WHvX64RegisterXmm6,
+                WHvX64RegisterXmm7,
+                WHvX64RegisterXmm8,
+                WHvX64RegisterXmm9,
+                WHvX64RegisterXmm10,
+                WHvX64RegisterXmm11,
+                WHvX64RegisterXmm12,
+                WHvX64RegisterXmm13,
+                WHvX64RegisterXmm14,
+                WHvX64RegisterXmm15,
+            }};
+        }
+
+        // The MXCSR mask the backend writes with every MXCSR.
+        constexpr UINT32 written_mxcsr_mask = 0xFFFFFFFF;
+
         register_mapping map_register(const x86_register reg)
         {
             switch (reg)
@@ -1092,7 +1135,7 @@ namespace sogen::whp
                 case register_kind::xmm_control:
                     std::memcpy(&current.XmmControlStatus.XmmStatusControl, value,
                                 (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
-                    current.XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFF;
+                    current.XmmControlStatus.XmmStatusControlMask = written_mxcsr_mask;
                     break;
                 case register_kind::zero:
                     break;
@@ -1208,6 +1251,51 @@ namespace sogen::whp
                 table.base = value.Base;
                 table.limit = value.Limit;
                 return true;
+            }
+
+            // One hypercall for the whole state: an x87 or SSE register on its own costs one.
+            void read_floating_point_state(floating_point_state& state) override
+            {
+                const auto values = this->get_registers(floating_point_register_names());
+                const auto& x87 = values[0].FpControlStatus;
+                state.control_word = x87.FpControl;
+                state.status_word = x87.FpStatus;
+                state.tag_word = x87.FpTag;
+                state.mxcsr = values[1].XmmControlStatus.XmmStatusControl;
+                for (size_t i = 0; i < state.st.size(); ++i)
+                {
+                    std::memcpy(state.st[i].data(), &values[floating_point_first_st + i].Fp.AsUINT128, state.st[i].size());
+                }
+
+                for (size_t i = 0; i < state.xmm.size(); ++i)
+                {
+                    std::memcpy(state.xmm[i].data(), &values[floating_point_first_xmm + i].Reg128, state.xmm[i].size());
+                }
+            }
+
+            // The control registers also hold the last x87 instruction and operand, which stay as they are.
+            void write_floating_point_state(const floating_point_state& state) override
+            {
+                const auto controls = this->get_registers(floating_point_control_names);
+                std::array<WHV_REGISTER_VALUE, floating_point_register_names().size()> values{};
+                values[0] = controls[0];
+                values[0].FpControlStatus.FpControl = state.control_word;
+                values[0].FpControlStatus.FpStatus = state.status_word;
+                values[0].FpControlStatus.FpTag = static_cast<UINT8>(state.tag_word);
+                values[1] = controls[1];
+                values[1].XmmControlStatus.XmmStatusControl = state.mxcsr;
+                values[1].XmmControlStatus.XmmStatusControlMask = written_mxcsr_mask;
+                for (size_t i = 0; i < state.st.size(); ++i)
+                {
+                    std::memcpy(&values[floating_point_first_st + i].Fp.AsUINT128, state.st[i].data(), state.st[i].size());
+                }
+
+                for (size_t i = 0; i < state.xmm.size(); ++i)
+                {
+                    std::memcpy(&values[floating_point_first_xmm + i].Reg128, state.xmm[i].data(), state.xmm[i].size());
+                }
+
+                this->set_registers(floating_point_register_names(), values);
             }
 
             std::vector<std::byte> save_registers() const override
@@ -1461,6 +1549,16 @@ namespace sogen::whp
             bool read_descriptor_table(const int reg, descriptor_table_register& table) override
             {
                 return this->vcpus_[0]->read_descriptor_table(reg, table);
+            }
+
+            void read_floating_point_state(floating_point_state& state) override
+            {
+                this->vcpus_[0]->read_floating_point_state(state);
+            }
+
+            void write_floating_point_state(const floating_point_state& state) override
+            {
+                this->vcpus_[0]->write_floating_point_state(state);
             }
 
             std::vector<std::byte> save_registers() const override
