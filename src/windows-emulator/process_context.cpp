@@ -86,6 +86,38 @@ namespace sogen
             return emulator_allocator{memory, base, size};
         }
 
+        void append_command_line_argument(std::u16string& command_line, const std::u16string_view argument)
+        {
+            if (!argument.empty() && argument.find_first_of(u" \t\"") == std::u16string_view::npos)
+            {
+                command_line.append(argument);
+                return;
+            }
+
+            command_line.push_back(u'"');
+            size_t backslashes{};
+            for (const auto character : argument)
+            {
+                if (character == u'\\')
+                {
+                    ++backslashes;
+                    continue;
+                }
+                if (character == u'"')
+                {
+                    command_line.append(backslashes * 2 + 1, u'\\');
+                }
+                else
+                {
+                    command_line.append(backslashes, u'\\');
+                }
+                backslashes = 0;
+                command_line.push_back(character);
+            }
+            command_line.append(backslashes * 2, u'\\');
+            command_line.push_back(u'"');
+        }
+
         // Above 4 GiB, where backends sharing the address space with the guest keep memory they can claim again in a
         // new process; nothing reads the GDT through a 32-bit address.
         uint64_t setup_gdt(x86_64_emulator& emu, memory_manager& memory)
@@ -367,16 +399,30 @@ namespace sogen
             {
                 std::u16string entry;
                 entry += name;
-                entry += u'=';
+                entry += u"=";
                 entry += value;
                 allocator.copy_string(entry);
             }
 
             allocator.copy_string(u"");
 
-            allocator.make_unicode_string(proc_params.CommandLine, win_emu.get_command_line());
+            const auto application_str = app_settings.application.u16string();
+
+            const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
+            auto command_line = app_settings.command_line.value_or(std::u16string{});
+            if (!app_settings.command_line)
+            {
+                append_command_line_argument(command_line, argument0);
+                for (const auto& arg : app_settings.arguments)
+                {
+                    command_line.push_back(u' ');
+                    append_command_line_argument(command_line, arg);
+                }
+            }
+
+            allocator.make_unicode_string(proc_params.CommandLine, command_line);
             allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, app_settings.working_directory.u16string() + u"\\", 1024);
-            allocator.make_unicode_string(proc_params.ImagePathName, app_settings.application.u16string());
+            allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - this->process_params64.value();
 

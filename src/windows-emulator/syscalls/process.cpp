@@ -1067,20 +1067,53 @@ namespace sogen
             }
 
             case ProcessCommandLineInformation: {
-                const auto command_line = c.win_emu.get_command_line();
-                const auto length = (command_line.length() + 1) * 2 + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                USHORT length = 0;
+                USHORT max_length = 0;
+                uint64_t buffer = 0;
+
+                if (c.proc.is_wow64_process && c.proc.peb32.has_value())
+                {
+                    const auto peb = c.proc.peb32->read();
+                    emulator_object<RTL_USER_PROCESS_PARAMETERS32> proc_params{c.emu, peb.ProcessParameters};
+                    const auto params = proc_params.read();
+
+                    length = params.CommandLine.Length;
+                    max_length = params.CommandLine.MaximumLength;
+                    buffer = params.CommandLine.Buffer;
+                }
+                else
+                {
+                    const auto peb = c.proc.peb64.read();
+                    emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
+                    const auto params = proc_params.read();
+
+                    length = params.CommandLine.Length;
+                    max_length = params.CommandLine.MaximumLength;
+                    buffer = params.CommandLine.Buffer;
+                }
+
+                if (length == 0 || length > max_length || buffer == 0)
+                {
+                    return STATUS_NOT_FOUND;
+                }
+
+                const auto required_length = static_cast<uint32_t>(max_length + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>));
 
                 if (return_length)
                 {
-                    return_length.write(static_cast<uint32_t>(length));
+                    return_length.write(required_length);
                 }
 
-                if (process_information_length < length)
+                if (process_information_length < required_length)
                 {
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                write_unicode_string(c.emu, process_information, command_line);
+                const auto buffer_start = process_information + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                UNICODE_STRING<EmulatorTraits<Emu64>> info = {.Length = length, .MaximumLength = max_length, .Buffer = buffer_start};
+
+                c.emu.write_memory(process_information, info);
+                c.emu.move_memory(buffer_start, buffer, max_length);
 
                 return STATUS_SUCCESS;
             }

@@ -1016,57 +1016,6 @@ namespace sogen
         this->process.abandon_shared_mutants();
     }
 
-    void append_command_line_argument(std::u16string& command_line, const std::u16string_view argument)
-    {
-        if (!argument.empty() && argument.find_first_of(u" \t\"") == std::u16string_view::npos)
-        {
-            command_line.append(argument);
-            return;
-        }
-
-        command_line.push_back(u'"');
-        size_t backslashes{};
-        for (const auto character : argument)
-        {
-            if (character == u'\\')
-            {
-                ++backslashes;
-                continue;
-            }
-            if (character == u'"')
-            {
-                command_line.append(backslashes * 2 + 1, u'\\');
-            }
-            else
-            {
-                command_line.append(backslashes, u'\\');
-            }
-            backslashes = 0;
-            command_line.push_back(character);
-        }
-        command_line.append(backslashes * 2, u'\\');
-        command_line.push_back(u'"');
-    }
-
-    std::u16string windows_emulator::get_command_line() const
-    {
-        const auto application_str = this->application_settings_.application.u16string();
-        const auto& argument0 = this->application_settings_.argument0.empty() ? application_str : this->application_settings_.argument0;
-        auto command_line = this->application_settings_.command_line.value_or(std::u16string{});
-
-        if (!this->application_settings_.command_line)
-        {
-            append_command_line_argument(command_line, argument0);
-            for (const auto& arg : this->application_settings_.arguments)
-            {
-                command_line.push_back(u' ');
-                append_command_line_argument(command_line, arg);
-            }
-        }
-
-        return command_line;
-    }
-
     void windows_emulator::initialize_process_manager()
     {
         if (this->process_manager_ && this->setup_completed_)

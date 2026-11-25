@@ -319,8 +319,6 @@ namespace sogen
 
         ~windows_emulator();
 
-        std::u16string get_command_line() const;
-
         const device_registry& device_factories() const
         {
             return this->device_registry_;
