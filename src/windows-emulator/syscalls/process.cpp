@@ -1057,7 +1057,7 @@ namespace sogen
 
                 if (process_information_length < length)
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
                 const auto image_name = read_unicode_string(c.emu, params.ImagePathName);
