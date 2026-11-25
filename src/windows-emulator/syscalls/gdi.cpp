@@ -1502,7 +1502,7 @@ namespace sogen
                 constexpr uint32_t color_btnface_index = 15; // COLOR_BTNFACE in k_default_system_colors
 
                 uint64_t background = 0;
-                if (const auto it = c.proc.classes.find(win.class_name); it != c.proc.classes.end())
+                if (const auto it = c.proc.classes.find(win.class_key); it != c.proc.classes.end())
                 {
                     background = it->second.wnd_class.hbrBackground;
                 }

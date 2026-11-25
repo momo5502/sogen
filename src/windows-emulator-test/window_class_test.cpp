@@ -94,7 +94,7 @@ namespace sogen::test
             handle create_window()
             {
                 auto [handle, window] = this->emu.process.windows.create(this->emu.memory);
-                window.class_name = class_name;
+                window.class_key = class_name;
                 return handle;
             }
 

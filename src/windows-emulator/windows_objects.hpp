@@ -468,6 +468,7 @@ namespace sogen
         hwnd owner_handle{};
         std::u16string name{};
         std::u16string class_name{};
+        std::u16string class_key{};
         int32_t width{};
         int32_t height{};
         int32_t x{};
@@ -602,6 +603,7 @@ namespace sogen
             buffer.write(this->owner_handle);
             buffer.write(this->name);
             buffer.write(this->class_name);
+            buffer.write(this->class_key);
             buffer.write(this->width);
             buffer.write(this->height);
             buffer.write(this->x);
@@ -633,6 +635,7 @@ namespace sogen
             buffer.read(this->owner_handle);
             buffer.read(this->name);
             buffer.read(this->class_name);
+            buffer.read(this->class_key);
             buffer.read(this->width);
             buffer.read(this->height);
             buffer.read(this->x);

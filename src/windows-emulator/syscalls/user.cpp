@@ -350,8 +350,12 @@ namespace sogen
             wnd_class.lpfnWndProc = wnd_proc;
             wnd_class.cbWndExtra = wnd_extra;
 
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, {}, builtin_window_class_atom(c.proc, normalized_name)};
+            auto entry = process_context::class_entry{
+                cls_ptr, wnd_class, {}, builtin_window_class_atom(c.proc, normalized_name), std::u16string{normalized_name}};
+            entry.synthesised = true;
             publish_class_to_guest(c.win_emu.memory, entry);
+            emulator_object<USER_CLASS>{c.win_emu.memory, cls_ptr}.access(
+                [&](USER_CLASS& cls) { cls.fnid = get_builtin_window_fnid(normalized_name); });
             c.proc.classes.insert_or_assign(std::u16string{normalized_name}, entry);
             c.proc.classes.insert_or_assign(std::u16string{class_name}, entry);
             return &c.proc.classes.find(class_name)->second;
@@ -3576,7 +3580,8 @@ namespace sogen
                     continue;
                 }
 
-                if (filter_class && candidate.class_name != want_class)
+                if (filter_class &&
+                    !utils::string::equals_ignore_case(std::u16string_view{candidate.class_name}, std::u16string_view{want_class}))
                 {
                     continue;
                 }
@@ -3894,7 +3899,7 @@ namespace sogen
 
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
+                                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
                                                  const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name,
                                                  const DWORD function_id, const DWORD flags, const emulator_pointer /*wow*/)
         {
@@ -3920,19 +3925,53 @@ namespace sogen
             }
 
             const auto class_name_str = read_unicode_string(c.emu, class_name);
-            const auto cls_ptr =
-                class_size <= desktop_heap_size
-                    ? process_context::allocate_user_class(c.win_emu.memory, class_name_str, static_cast<uint32_t>(wnd_class.cbClsExtra))
-                    : 0;
+            const auto class_version_str = class_version ? read_unicode_string(c.emu, class_version) : std::u16string{};
+            const auto& class_key = class_version_str.empty() ? class_name_str : class_version_str;
+            const auto existing = c.proc.classes.find(class_key);
+            const auto replaces_synthesised = existing != c.proc.classes.end() && existing->second.synthesised;
+            if (existing != c.proc.classes.end() && !replaces_synthesised)
+            {
+                // InternalRegisterClassEx first searches the process's local classes for the same hInstance, whatever the style,
+                // and only after a miss searches the global classes, for a CS_GLOBALCLASS registration. The table keeps one
+                // class per key, so a class of another module or scope replaces the earlier one.
+                constexpr uint32_t cs_globalclass = 0x4000;
+                const auto& existing_class = existing->second.wnd_class;
+                const auto collides = (existing_class.style & cs_globalclass) != 0 ? (wnd_class.style & cs_globalclass) != 0
+                                                                                   : existing_class.hInstance == wnd_class.hInstance;
+                if (collides)
+                {
+                    set_guest_last_error(c, 1410); // ERROR_CLASS_ALREADY_EXISTS
+                    return 0;
+                }
+            }
+
+            emulator_pointer cls_ptr{};
+            if (replaces_synthesised && wnd_class.cbClsExtra == 0)
+            {
+                cls_ptr = existing->second.guest_obj_addr;
+            }
+            else if (class_size <= desktop_heap_size)
+            {
+                cls_ptr =
+                    process_context::allocate_user_class(c.win_emu.memory, class_name_str, static_cast<uint32_t>(wnd_class.cbClsExtra));
+            }
+
             if (!cls_ptr)
             {
                 return 0;
             }
 
             const auto index = c.proc.add_or_find_atom(class_name_str);
+            if (replaces_synthesised)
+            {
+                const auto synthesised_object = existing->second.guest_obj_addr;
+                c.proc.delete_atom(existing->second.atom);
+                std::erase_if(c.proc.classes, [&](const auto& item) { return item.second.guest_obj_addr == synthesised_object; });
+            }
 
             const auto menu_name = class_menu_name.read();
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, menu_name, index, (flags & CSF_ANSIPROC) != 0};
+            const auto entry =
+                process_context::class_entry{cls_ptr, wnd_class, menu_name, index, class_name_str, (flags & CSF_ANSIPROC) != 0};
             publish_class_to_guest(c.win_emu.memory, entry);
 
             // win32kfull takes the menu name from pusMenuName, not from the WNDCLASSEX, and marks only a non-empty string,
@@ -3956,7 +3995,7 @@ namespace sogen
                                                         std::to_string(index));
             }
 
-            c.proc.classes.insert_or_assign(class_name_str, entry);
+            c.proc.classes.insert_or_assign(class_key, entry);
             c.proc.classes.insert_or_assign(make_atom_class_name(index), entry);
             if (utils::string::equals_ignore_case(std::u16string_view{class_name_str}, std::u16string_view{u"ComboLBox"}))
             {
@@ -3974,11 +4013,7 @@ namespace sogen
             const auto* entry = find_registered_class(c, cls);
             if (!entry)
             {
-                if (cls.atom)
-                {
-                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
-                }
-
+                set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
                 return FALSE;
             }
 
@@ -4004,10 +4039,7 @@ namespace sogen
             const auto* entry = find_class(c, cls);
             if (!entry)
             {
-                if (cls.atom)
-                {
-                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
-                }
+                set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
 
                 if (c.win_emu.callbacks.on_generic_activity)
                 {
@@ -4177,10 +4209,10 @@ namespace sogen
         }
 
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
-                                         const emulator_object<LARGE_STRING> /*cls_version*/,
-                                         const emulator_object<LARGE_STRING> window_name, const DWORD requested_style, int x, int y,
-                                         int width, int height, const hwnd parent, const hmenu menu, const hinstance instance,
-                                         const pointer l_param, const DWORD /*flags*/, const pointer /*acbi_buffer*/)
+                                         const emulator_object<LARGE_STRING> class_version, const emulator_object<LARGE_STRING> window_name,
+                                         const DWORD requested_style, int x, int y, int width, int height, const hwnd parent,
+                                         const hmenu menu, const hinstance instance, const pointer l_param, const DWORD /*flags*/,
+                                         const pointer /*acbi_buffer*/)
         {
             const auto style = created_window_style(requested_style);
             constexpr int cw_usedefault = static_cast<int>(0x80000000);
@@ -4211,13 +4243,15 @@ namespace sogen
                 c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' style=0x" + style_string);
             }
 
-            auto cls_it = c.proc.classes.find(cls_name);
+            const auto cls_version = read_large_string_or_atom(c, class_version);
+            const auto& cls_key = cls_version.empty() ? cls_name : cls_version;
+            auto cls_it = c.proc.classes.find(cls_key);
 
             if (cls_it == c.proc.classes.end())
             {
-                if (const auto* builtin = ensure_builtin_window_class(c, cls_name))
+                if (const auto* builtin = ensure_builtin_window_class(c, cls_key))
                 {
-                    cls_it = c.proc.classes.find(cls_name);
+                    cls_it = c.proc.classes.find(cls_key);
                     (void)builtin;
                 }
             }
@@ -4286,8 +4320,9 @@ namespace sogen
                 win.parent_handle = has_child_parent ? parent : c.proc.default_desktop_window_handle.bits;
                 win.owner_handle = has_owner ? parent : 0;
             }
-            win.class_name = cls_name;
-            const auto normalized_class = normalize_builtin_window_class_name(cls_name);
+            win.class_name = cls_it->second.name;
+            win.class_key = cls_key;
+            const auto normalized_class = normalize_builtin_window_class_name(win.class_name);
             // Builtin controls use the wide (apfnClientW) wndproc (expect UTF-16); app classes keep
             // their registered proc. Drives the WM_SETTEXT re-encoding so a wide proc never gets ANSI.
             win.unicode_proc = is_builtin_window_class_name(normalized_class) || !cls_it->second.ansi_proc;
@@ -4352,7 +4387,12 @@ namespace sogen
                 }
                 guest_win.windowBand = 1; // ZBID_DESKTOP
                 guest_win.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-                guest_win.fnid = get_builtin_window_fnid(normalized_class);
+                // user32's window procedures set the FNID themselves and refuse a window that carries another one, e.g. the
+                // list box procedure of a ComboLBox window rejects FNID_COMBOLBOX, so only a synthesised class presets it.
+                if (cls_it->second.synthesised)
+                {
+                    guest_win.fnid = emulator_object<USER_CLASS>{c.win_emu.memory, class_obj_addr}.read().fnid;
+                }
                 guest_win.threadId = win.thread_id;
                 guest_win.processId = c.proc.process_id;
 
@@ -4426,7 +4466,7 @@ namespace sogen
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
                     .client_insets = get_host_ui_client_insets(win),
-                    .class_name = std::u16string{normalize_builtin_window_class_name(cls_name)},
+                    .class_name = std::u16string{normalize_builtin_window_class_name(win.class_name)},
                     .title = win.name,
                     .style = style,
                     .ex_style = ex_style,
@@ -6662,7 +6702,7 @@ namespace sogen
                 return 0;
             }
 
-            const auto entry = c.proc.classes.find(win->class_name);
+            const auto entry = c.proc.classes.find(win->class_key);
             if (entry == c.proc.classes.end())
             {
                 return 0;
@@ -8492,7 +8532,7 @@ namespace sogen
                 state(title_bar_element::help_button) = state_invisible;
             }
 
-            const auto window_class = c.proc.classes.find(win.class_name);
+            const auto window_class = c.proc.classes.find(win.class_key);
             if (window_class != c.proc.classes.end() && (window_class->second.wnd_class.style & cs_noclose) != 0)
             {
                 state(title_bar_element::close_button) = state_unavailable;
