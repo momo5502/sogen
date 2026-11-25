@@ -471,7 +471,12 @@ namespace sogen
 #define WM_MOUSEHWHEEL              0x020E
 #define WM_COMMAND                  0x0111
 #define WM_TIMER                    0x0113
+#define WM_RENDERFORMAT             0x0305
+#define WM_RENDERALLFORMATS         0x0306
+#define WM_DESTROYCLIPBOARD         0x0307
+#define WM_DRAWCLIPBOARD            0x0308
 #define WM_HOTKEY                   0x0312
+#define WM_CLIPBOARDUPDATE          0x031D
 #define WM_DWMNCRENDERINGCHANGED    0x031F
 #define WM_WINDOWPOSCHANGING        0x0046
 #define WM_WINDOWPOSCHANGED         0x0047

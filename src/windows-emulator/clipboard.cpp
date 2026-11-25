@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <utility>
 
 namespace sogen
 {
@@ -181,11 +182,12 @@ namespace sogen
         return this->opening && this->opening->thread_id == thread_id;
     }
 
-    void clipboard_state::close()
+    bool clipboard_state::close()
     {
         this->synthesize(text_sources, text_group);
         this->synthesize(bitmap_group, bitmap_group);
         this->opening.reset();
+        return std::exchange(this->modified, false);
     }
 
     void clipboard_state::empty()
@@ -197,6 +199,7 @@ namespace sogen
 
         this->entries.clear();
         this->owner = this->opening ? this->opening->window : 0;
+        this->modified = true;
         ++this->sequence_number;
     }
 
@@ -215,6 +218,12 @@ namespace sogen
             this->entries.push_back(entry);
         }
 
+        if (this->rendering)
+        {
+            return;
+        }
+
+        this->modified = true;
         if (increment_sequence_number)
         {
             ++this->sequence_number;
@@ -313,6 +322,10 @@ namespace sogen
         buffer.write_vector(this->listeners);
         buffer.write_map(this->memory_handles_);
         buffer.write(this->next_memory_handle_);
+        buffer.write(this->viewer);
+        buffer.write(this->notifying_thread);
+        buffer.write(this->modified);
+        buffer.write(this->rendering);
     }
 
     void clipboard_state::deserialize(utils::buffer_deserializer& buffer)
@@ -324,6 +337,10 @@ namespace sogen
         buffer.read_vector(this->listeners);
         buffer.read_map(this->memory_handles_);
         buffer.read(this->next_memory_handle_);
+        buffer.read(this->viewer);
+        buffer.read(this->notifying_thread);
+        buffer.read(this->modified);
+        buffer.read(this->rendering);
     }
 
     void clipboard_state::release(const clipboard_entry& entry)

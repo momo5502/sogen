@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../clipboard_messages.hpp"
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
 #include "../keyboard_layout.hpp"
@@ -11243,6 +11244,12 @@ namespace sogen
 
             c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
             return 0;
+        }
+
+        void dispatch_clipboard_message(const syscall_context& c, const callback_id id, clipboard_message_state state, const window& win,
+                                        const uint32_t message, const uint64_t w_param)
+        {
+            dispatch_window_message(c, id, std::move(state), win, message, w_param);
         }
     }
 

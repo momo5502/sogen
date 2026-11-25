@@ -91,10 +91,14 @@ namespace sogen
         std::optional<clipboard_opening> opening{};
         std::vector<clipboard_entry> entries{};
         std::vector<uint64_t> listeners{};
+        uint64_t viewer{};
+        uint32_t notifying_thread{};
+        bool modified{};
+        bool rendering{};
 
         bool open(uint64_t window, uint32_t thread_id);
         bool is_open_by(uint32_t thread_id) const;
-        void close();
+        bool close();
         void empty();
         void set(uint32_t format, uint64_t handle, bool memory_handle, bool increment_sequence_number);
 
