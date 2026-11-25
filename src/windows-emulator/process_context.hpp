@@ -145,6 +145,38 @@ namespace sogen
         };
     }
 
+    // A DC that was never reset starts as an empty rectangle at the origin that every accumulation extends; DCB_RESET
+    // empties it, and the next accumulation then takes the new rectangle as it is.
+    struct gdi_dc_bounds
+    {
+        int32_t left{};
+        int32_t top{};
+        int32_t right{};
+        int32_t bottom{};
+        bool emptied{};
+        bool enabled{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->left);
+            buffer.write(this->top);
+            buffer.write(this->right);
+            buffer.write(this->bottom);
+            buffer.write(this->emptied);
+            buffer.write(this->enabled);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->left);
+            buffer.read(this->top);
+            buffer.read(this->right);
+            buffer.read(this->bottom);
+            buffer.read(this->emptied);
+            buffer.read(this->enabled);
+        }
+    };
+
     struct gdi_dc_state
     {
         uint32_t selected_bitmap{};
@@ -154,6 +186,8 @@ namespace sogen
         bool is_memory_dc{};
         // Retrieved with GetDC and friends, which hand out the desktop window's DC for no window.
         bool is_window_dc{};
+        gdi_dc_bounds application_bounds{};
+        gdi_dc_bounds window_manager_bounds{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -163,6 +197,8 @@ namespace sogen
             buffer.write(this->current_y);
             buffer.write(this->is_memory_dc);
             buffer.write(this->is_window_dc);
+            this->application_bounds.serialize(buffer);
+            this->window_manager_bounds.serialize(buffer);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -173,6 +209,8 @@ namespace sogen
             buffer.read(this->current_y);
             buffer.read(this->is_memory_dc);
             buffer.read(this->is_window_dc);
+            this->application_bounds.deserialize(buffer);
+            this->window_manager_bounds.deserialize(buffer);
         }
     };
 

@@ -1744,6 +1744,112 @@ namespace sogen
                 }
             }
 
+            constexpr uint32_t k_dcb_reset = 0x1;
+            constexpr uint32_t k_dcb_accumulate = 0x2;
+            constexpr uint32_t k_dcb_enable = 0x4;
+            constexpr uint32_t k_dcb_disable = 0x8;
+            constexpr uint32_t k_dcb_windowmgr = 0x8000;
+
+            const gdi_bitmap_surface* memory_dc_surface(const syscall_context& c, const gdi_dc_state& dc_state)
+            {
+                if (!dc_state.is_memory_dc)
+                {
+                    return nullptr;
+                }
+
+                const auto surface = c.proc.gdi_bitmap_surfaces.find(dc_state.selected_bitmap);
+                return surface != c.proc.gdi_bitmap_surfaces.end() ? &surface->second : nullptr;
+            }
+
+            void reset_bounds(gdi_dc_bounds& bounds)
+            {
+                const auto enabled = bounds.enabled;
+                bounds = {};
+                bounds.emptied = true;
+                bounds.enabled = enabled;
+            }
+
+            void accumulate_bounds(gdi_dc_bounds& bounds, const int32_t left, const int32_t top, const int32_t right, const int32_t bottom)
+            {
+                if (bounds.emptied)
+                {
+                    bounds.left = left;
+                    bounds.top = top;
+                    bounds.right = right;
+                    bounds.bottom = bottom;
+                    bounds.emptied = false;
+                }
+                else
+                {
+                    bounds.left = (std::min)(bounds.left, left);
+                    bounds.top = (std::min)(bounds.top, top);
+                    bounds.right = (std::max)(bounds.right, right);
+                    bounds.bottom = (std::max)(bounds.bottom, bottom);
+                }
+            }
+
+            bool bounds_accumulated(const gdi_dc_bounds& bounds)
+            {
+                return bounds.left < bounds.right && bounds.top < bounds.bottom;
+            }
+
+            RECT bounds_rect(const gdi_dc_bounds& bounds, const gdi_bitmap_surface* surface)
+            {
+                if (!bounds_accumulated(bounds))
+                {
+                    return {.left = 0, .top = 0, .right = 0, .bottom = 0};
+                }
+
+                RECT rect{.left = bounds.left, .top = bounds.top, .right = bounds.right, .bottom = bounds.bottom};
+                if (surface)
+                {
+                    rect.left = (std::max<LONG>)(rect.left, 0);
+                    rect.top = (std::max<LONG>)(rect.top, 0);
+                    rect.right = (std::min<LONG>)(rect.right, static_cast<LONG>(surface->width));
+                    rect.bottom = (std::min<LONG>)(rect.bottom, static_cast<LONG>(surface->height));
+                }
+
+                return rect;
+            }
+
+            void accumulate_drawing_bounds(const syscall_context& c, const hdc dc, const int64_t left, const int64_t top,
+                                           const int64_t right, const int64_t bottom)
+            {
+                const auto dc_state = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+                if (dc_state == c.proc.gdi_dc_states.end())
+                {
+                    return;
+                }
+
+                const auto* surface = memory_dc_surface(c, dc_state->second);
+                if (!surface)
+                {
+                    return;
+                }
+
+                const auto to_int32 = [](const int64_t value) {
+                    return static_cast<int32_t>(
+                        std::clamp<int64_t>(value, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max()));
+                };
+
+                const auto left_edge = to_int32((std::min)(left, right));
+                const auto top_edge = to_int32((std::min)(top, bottom));
+                const auto right_edge = to_int32((std::max)(left, right));
+                const auto bottom_edge = to_int32((std::max)(top, bottom));
+
+                auto& application_bounds = dc_state->second.application_bounds;
+                if (application_bounds.enabled)
+                {
+                    accumulate_bounds(application_bounds, left_edge, top_edge, right_edge, bottom_edge);
+                }
+
+                auto& window_manager_bounds = dc_state->second.window_manager_bounds;
+                if (window_manager_bounds.enabled)
+                {
+                    accumulate_bounds(window_manager_bounds, left_edge, top_edge, right_edge, bottom_edge);
+                }
+            }
+
             template <typename Batch>
             bool flush_gdi_text_batch(const syscall_context& c, const Batch& batch)
             {
@@ -1793,6 +1899,8 @@ namespace sogen
                         {
                             fill_rect(*surface, visible, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom,
                                       colorref_to_bgra(text_out->background));
+                            accumulate_drawing_bounds(c, dc, clip_rect.left - origin_x, clip_rect.top - origin_y,
+                                                      clip_rect.right - origin_x, clip_rect.bottom - origin_y);
                         }
 
                         // The payload after `string` holds the text, then the advances. dx_offset is 0 without advances and
@@ -1831,6 +1939,10 @@ namespace sogen
                             fill_rect(*surface, visible, std::min(rect.left, rect.right) + shift_x,
                                       std::min(rect.top, rect.bottom) + shift_y, std::max(rect.left, rect.right) + shift_x,
                                       std::max(rect.top, rect.bottom) + shift_y, colorref_to_bgra(text_out_rect->background));
+                            accumulate_drawing_bounds(c, dc, static_cast<int64_t>(rect.left) + text_out_rect->viewport_org.x,
+                                                      static_cast<int64_t>(rect.top) + text_out_rect->viewport_org.y,
+                                                      static_cast<int64_t>(rect.right) + text_out_rect->viewport_org.x,
+                                                      static_cast<int64_t>(rect.bottom) + text_out_rect->viewport_org.y);
                         }
                     }
                     else if (surface && header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
@@ -1856,6 +1968,11 @@ namespace sogen
                             {
                                 fill_rect(*surface, visible, rect.x + origin_x, rect.y + origin_y, rect.x + rect.width + origin_x,
                                           rect.y + rect.height + origin_y, *color);
+                                if (rect.width != 0 && rect.height != 0)
+                                {
+                                    accumulate_drawing_bounds(c, dc, rect.x, rect.y, static_cast<int64_t>(rect.x) + rect.width,
+                                                              static_cast<int64_t>(rect.y) + rect.height);
+                                }
                             }
                         }
                     }
@@ -3136,7 +3253,12 @@ namespace sogen
                 target_index = static_cast<size_t>(saved_dc) - 1;
             }
 
-            c.proc.gdi_dc_states[dc_value] = stack[target_index];
+            auto& state = c.proc.gdi_dc_states[dc_value];
+            const auto application_bounds = state.application_bounds;
+            const auto window_manager_bounds = state.window_manager_bounds;
+            state = stack[target_index];
+            state.application_bounds = application_bounds;
+            state.window_manager_bounds = window_manager_bounds;
             stack.resize(target_index);
             return TRUE;
         }
@@ -4897,6 +5019,9 @@ namespace sogen
                 const auto color = get_dc_pen_color(c, dc);
                 draw_line(*surface, visible, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x,
                           y_end + origin_y, color);
+                accumulate_drawing_bounds(
+                    c, dc, (std::min<int64_t>)(dc_state->current_x, x_end), (std::min<int64_t>)(dc_state->current_y, y_end),
+                    (std::max<int64_t>)(dc_state->current_x, x_end) + 1, (std::max<int64_t>)(dc_state->current_y, y_end) + 1);
             }
 
             dc_state->current_x = x_end;
@@ -4951,6 +5076,7 @@ namespace sogen
                 draw_rectangle_outline(*surface, visible, x0, y0, x1, y1, get_dc_pen_color(c, dc), rop2);
             }
 
+            accumulate_drawing_bounds(c, dc, left, top, right, bottom);
             present_win_surface(c, present_handle, surface);
             return TRUE;
         }
@@ -4998,6 +5124,8 @@ namespace sogen
                     return FALSE;
                 }
             }
+
+            accumulate_drawing_bounds(c, dst_dc, x_dst, y_dst, static_cast<int64_t>(x_dst) + width, static_cast<int64_t>(y_dst) + height);
 
             auto dx = static_cast<int64_t>(x_dst) + dst_origin_x;
             auto dy = static_cast<int64_t>(y_dst) + dst_origin_y;
@@ -5165,6 +5293,9 @@ namespace sogen
                     return FALSE;
                 }
             }
+
+            accumulate_drawing_bounds(c, dst_dc, x_dst, y_dst, static_cast<int64_t>(x_dst) + dst_width,
+                                      static_cast<int64_t>(y_dst) + dst_height);
 
             const int dst_w = std::abs(dst_width);
             const int dst_h = std::abs(dst_height);
@@ -5348,6 +5479,11 @@ namespace sogen
                 return TRUE;
             }
 
+            if (width != 0 && height != 0)
+            {
+                accumulate_drawing_bounds(c, dc, x, y, static_cast<int64_t>(x) + width, static_cast<int64_t>(y) + height);
+            }
+
             const auto pattern = color.value_or(0);
             const int64_t left = static_cast<int64_t>(x) + origin_x;
             const int64_t top = static_cast<int64_t>(y) + origin_y;
@@ -5401,6 +5537,11 @@ namespace sogen
                 {
                     fill_rect(*surface, visible, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x,
                               rect[1] + rect[3] + origin_y, *color);
+                    if (rect[2] != 0 && rect[3] != 0)
+                    {
+                        accumulate_drawing_bounds(c, dc, rect[0], rect[1], static_cast<int64_t>(rect[0]) + rect[2],
+                                                  static_cast<int64_t>(rect[1]) + rect[3]);
+                    }
                 }
             }
             return TRUE;
@@ -5446,6 +5587,8 @@ namespace sogen
                 {
                     fill_rect(*surface, visible, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom,
                               get_dc_background_color(c, dc));
+                    accumulate_drawing_bounds(c, dc, clip_rect.left - origin_x, clip_rect.top - origin_y, clip_rect.right - origin_x,
+                                              clip_rect.bottom - origin_y);
                 }
             }
 
@@ -6905,6 +7048,7 @@ namespace sogen
 
             const auto bgra = colorref_to_bgra(color);
             set_surface_pixel(*surface, surface_x, surface_y, bgra);
+            accumulate_drawing_bounds(c, dc, x, y, static_cast<int64_t>(x) + 1, static_cast<int64_t>(y) + 1);
             present_win_surface(c, present_handle, surface);
 
             return bgra_to_colorref(bgra);
@@ -6942,9 +7086,75 @@ namespace sogen
             return static_cast<COLORREF>(color & 0x00FFFFFFu);
         }
 
-        uint32_t handle_NtGdiSetBoundsRect(const syscall_context&, const hdc, const emulator_pointer, const uint32_t)
+        uint32_t handle_NtGdiSetBoundsRect(const syscall_context& c, const hdc dc, const emulator_pointer rect, const uint32_t flags)
         {
-            return 0;
+            (void)handle_NtGdiFlush(c);
+
+            const auto dc_state = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (dc_state == c.proc.gdi_dc_states.end())
+            {
+                return 0;
+            }
+
+            RECT extent{};
+            if (rect != 0 &&
+                (!is_readable_range(c.win_emu, rect, sizeof(extent)) || !c.win_emu.memory.try_read_memory(rect, &extent, sizeof(extent))))
+            {
+                return 0;
+            }
+
+            const bool window_manager = (flags & k_dcb_windowmgr) != 0;
+            auto& bounds = window_manager ? dc_state->second.window_manager_bounds : dc_state->second.application_bounds;
+            const auto previous_state = k_dcb_reset | (bounds_accumulated(bounds) ? k_dcb_accumulate : 0) |
+                                        (bounds.enabled ? k_dcb_enable : k_dcb_disable) | (window_manager ? k_dcb_windowmgr : 0);
+
+            if ((flags & k_dcb_reset) != 0)
+            {
+                reset_bounds(bounds);
+            }
+
+            if ((flags & k_dcb_accumulate) != 0 && rect != 0)
+            {
+                accumulate_bounds(bounds, extent.left, extent.top, extent.right, extent.bottom);
+            }
+
+            if ((flags & k_dcb_enable) != 0)
+            {
+                bounds.enabled = true;
+            }
+
+            if ((flags & k_dcb_disable) != 0)
+            {
+                bounds.enabled = false;
+            }
+
+            return previous_state;
+        }
+
+        uint32_t handle_NtGdiGetBoundsRect(const syscall_context& c, const hdc dc, const emulator_pointer rect, const uint32_t flags)
+        {
+            (void)handle_NtGdiFlush(c);
+
+            const auto dc_state = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (dc_state == c.proc.gdi_dc_states.end())
+            {
+                return 0;
+            }
+
+            auto& bounds = (flags & k_dcb_windowmgr) != 0 ? dc_state->second.window_manager_bounds : dc_state->second.application_bounds;
+            const auto* surface = (flags & k_dcb_windowmgr) != 0 ? nullptr : memory_dc_surface(c, dc_state->second);
+            const auto current = bounds_rect(bounds, surface);
+            const auto accumulated = bounds_accumulated(bounds);
+            const auto state = k_dcb_reset | (accumulated ? k_dcb_accumulate : 0);
+
+            // DCB_RESET empties the rectangle even when the caller's RECT turns out to be unwritable. An empty rectangle is left
+            // as it is, so a DC that was never reset still includes the origin on the next accumulation.
+            if ((flags & k_dcb_reset) != 0 && accumulated)
+            {
+                reset_bounds(bounds);
+            }
+
+            return rect != 0 && write_guest_bytes_up_to_fault(c, rect, &current, sizeof(current)) ? state : 0;
         }
 
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, const hdc dc, const uint32_t method, const uint32_t value,

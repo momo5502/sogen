@@ -922,6 +922,7 @@ namespace sogen
         uint32_t handle_NtGdiGetDeviceCapsAll(const syscall_context& c, hdc dc, emulator_pointer caps);
         COLORREF handle_NtGdiGetNearestColor(const syscall_context& c, hdc dc, COLORREF color);
         uint32_t handle_NtGdiSetBoundsRect(const syscall_context& c, hdc dc, emulator_pointer rect, uint32_t flags);
+        uint32_t handle_NtGdiGetBoundsRect(const syscall_context& c, hdc dc, emulator_pointer rect, uint32_t flags);
         uint32_t handle_NtGdiComputeXformCoefficients(const syscall_context& c, hdc dc);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
@@ -1916,6 +1917,7 @@ namespace sogen
         add_handler(NtGdiGetDeviceCapsAll);
         add_handler(NtGdiGetNearestColor);
         add_handler(NtGdiSetBoundsRect);
+        add_handler(NtGdiGetBoundsRect);
         add_handler(NtGdiComputeXformCoefficients);
         add_handler(NtGdiFlush);
         add_handler(NtGdiCreateSolidBrush);
