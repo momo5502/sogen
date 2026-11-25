@@ -243,6 +243,7 @@ CALL :collect_file "%WINDIR%\SystemResources", wininet.dll.mun, %EMU_SYSTEMRESOU
 CALL :collect winmm.dll
 CALL :collect winmmbase.dll
 CALL :collect winnlsres.dll
+CALL :collect winnsi.dll
 CALL :collect_file "%WINDIR%\System32\en-US", winnlsres.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect wintrust.dll
 CALL :collect wintypes.dll
