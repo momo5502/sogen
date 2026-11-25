@@ -40,6 +40,10 @@ namespace sogen
         };
 
         FILE* stream_{};
+#ifdef _WIN32
+        void* disk_file_{};
+        bool text_mode_{};
+#endif
         std::mutex mutex_{};
         std::condition_variable wake_writer_{};
         std::condition_variable written_{};
@@ -57,6 +61,7 @@ namespace sogen
         void request_write();
         void wait_for_writer(std::unique_lock<std::mutex>& lock);
         void write_queue();
+        void write_text(std::string_view text) const;
     };
 
 } // namespace sogen

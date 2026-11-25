@@ -1,6 +1,15 @@
 #include "queued_file_writer.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
+
+#ifdef _WIN32
+#include <utils/win.hpp>
+
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace sogen
 {
@@ -11,10 +20,61 @@ namespace sogen
         // thousands of lines a second while holding the kernel lock.
         constexpr auto write_interval = std::chrono::milliseconds(50);
         constexpr size_t max_queued_bytes = 64ULL * 1024 * 1024;
+
+#ifdef _WIN32
+        constexpr DWORD write_at_end_of_file = 0xFFFFFFFF;
+
+        void* disk_file_of(FILE* stream)
+        {
+            const auto descriptor = _fileno(stream);
+            if (descriptor < 0)
+            {
+                return nullptr;
+            }
+
+            auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(descriptor));
+            return handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_DISK ? handle : nullptr;
+        }
+
+        bool is_text_mode(FILE* stream)
+        {
+            const auto descriptor = _fileno(stream);
+            const auto mode = _setmode(descriptor, _O_BINARY);
+            if (mode == -1)
+            {
+                return false;
+            }
+
+            (void)_setmode(descriptor, mode);
+            return mode == _O_TEXT;
+        }
+
+        void append_to_file(void* file, std::string_view data)
+        {
+            while (!data.empty())
+            {
+                OVERLAPPED at_end{};
+                at_end.Offset = write_at_end_of_file;
+                at_end.OffsetHigh = write_at_end_of_file;
+                const auto size = static_cast<DWORD>(std::min<size_t>(data.size(), std::numeric_limits<DWORD>::max()));
+                DWORD written{};
+                if (!WriteFile(file, data.data(), size, &written, &at_end) || written == 0)
+                {
+                    return;
+                }
+
+                data.remove_prefix(written);
+            }
+        }
+#endif
     }
 
     queued_file_writer::queued_file_writer(FILE* stream)
         : stream_(stream),
+#ifdef _WIN32
+          disk_file_(disk_file_of(stream)),
+          text_mode_(disk_file_ && is_text_mode(stream)),
+#endif
           thread_([this] { this->write_queue(); })
     {
     }
@@ -85,6 +145,38 @@ namespace sogen
         }
     }
 
+    void queued_file_writer::write_text(const std::string_view text) const
+    {
+#ifdef _WIN32
+        // A library sharing the handle can set the file position back over text written since it read it: lseek's
+        // SetFilePointerEx(FILE_CURRENT) reads the position and then sets it. So a disk file is written at its end.
+        if (this->disk_file_)
+        {
+            (void)fflush(this->stream_);
+            if (!this->text_mode_)
+            {
+                append_to_file(this->disk_file_, text);
+                return;
+            }
+
+            std::string crlf_text{};
+            crlf_text.reserve(text.size() + (text.size() / 16));
+            for (const auto c : text)
+            {
+                if (c == '\n')
+                {
+                    crlf_text += '\r';
+                }
+                crlf_text += c;
+            }
+            append_to_file(this->disk_file_, crlf_text);
+            return;
+        }
+#endif
+        (void)fwrite(text.data(), 1, text.size(), this->stream_);
+        (void)fflush(this->stream_);
+    }
+
     void queued_file_writer::write_queue()
     {
         std::string batch{};
@@ -124,8 +216,7 @@ namespace sogen
                 text = &output;
             }
 
-            (void)fwrite(text->data(), 1, text->size(), this->stream_);
-            (void)fflush(this->stream_);
+            this->write_text(*text);
             batch.clear();
             deferred.clear();
             records.clear();
