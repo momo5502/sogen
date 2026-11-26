@@ -9345,6 +9345,34 @@ namespace sogen
                 constexpr uint32_t getflatmenu = 0x1022;
                 constexpr uint32_t getdropshadow = 0x1024;
                 constexpr uint32_t getblocksendinputresets = 0x1026;
+                constexpr uint32_t getshowsounds = 0x0038;
+                constexpr uint32_t getserialkeys = 0x003E;
+                constexpr uint32_t getdefaultinputlang = 0x0059;
+                constexpr uint32_t getwindowsextension = 0x005C;
+                constexpr uint32_t getmousetrails = 0x005E;
+                constexpr uint32_t getaudiodescription = 0x0074;
+                constexpr uint32_t getscreensavesecure = 0x0076;
+                constexpr uint32_t gethungapptimeout = 0x0078;
+                constexpr uint32_t getwaittokilltimeout = 0x007A;
+                constexpr uint32_t getwaittokillservicetimeout = 0x007C;
+                constexpr uint32_t getmousedockthreshold = 0x007E;
+                constexpr uint32_t getpendockthreshold = 0x0080;
+                constexpr uint32_t getmousedragoutthreshold = 0x0084;
+                constexpr uint32_t getpendragoutthreshold = 0x0086;
+                constexpr uint32_t getmousesidemovethreshold = 0x0088;
+                constexpr uint32_t getpensidemovethreshold = 0x008A;
+                constexpr uint32_t getdragfrommaximize = 0x008C;
+                constexpr uint32_t gettouchpredictionparameters = 0x009C;
+                constexpr uint32_t getmousecornercliplength = 0x00A0;
+                constexpr uint32_t getmousesonar = 0x101C;
+                constexpr uint32_t getmouseclicklock = 0x101E;
+                constexpr uint32_t getmousevanish = 0x1020;
+                constexpr uint32_t getcaretbrowsing = 0x104C;
+                constexpr uint32_t getminimumhitradius = 0x2014;
+                constexpr uint32_t getpenvisualization = 0x201E;
+                constexpr uint32_t getpenarbitrationtype = 0x2020;
+                constexpr uint32_t getcarettimeout = 0x2022;
+                constexpr uint32_t gethandedness = 0x2024;
             }
 
             struct spi_scalar
@@ -9423,6 +9451,56 @@ namespace sogen
                 {.action = spi_action::getflatmenu, .value = 1},
                 {.action = spi_action::getdropshadow, .value = 0},
                 {.action = spi_action::getblocksendinputresets, .value = 0},
+                {.action = spi_action::getshowsounds, .value = 0},
+                {.action = spi_action::getmousetrails, .value = 0},
+                {.action = spi_action::getscreensavesecure, .value = 0},
+                {.action = spi_action::gethungapptimeout, .value = 5000},
+                {.action = spi_action::getwaittokilltimeout, .value = 5000},
+                {.action = spi_action::getwaittokillservicetimeout, .value = 5000},
+                {.action = spi_action::getmousedockthreshold, .value = 1},
+                {.action = spi_action::getpendockthreshold, .value = 30},
+                {.action = spi_action::getmousedragoutthreshold, .value = 20},
+                {.action = spi_action::getpendragoutthreshold, .value = 30},
+                {.action = spi_action::getmousesidemovethreshold, .value = 50},
+                {.action = spi_action::getpensidemovethreshold, .value = 50},
+                {.action = spi_action::getdragfrommaximize, .value = 1},
+                {.action = spi_action::getmousecornercliplength, .value = 6},
+                {.action = spi_action::getmousesonar, .value = 0},
+                {.action = spi_action::getmouseclicklock, .value = 0},
+                {.action = spi_action::getmousevanish, .value = 1},
+                {.action = spi_action::getcaretbrowsing, .value = 0},
+                {.action = spi_action::getminimumhitradius, .value = 0},
+                {.action = spi_action::getpenvisualization, .value = 0x23},
+                {.action = spi_action::getpenarbitrationtype, .value = 3},
+                {.action = spi_action::getcarettimeout, .value = 5000},
+                {.action = spi_action::gethandedness, .value = 0},
+                // Actions winuser.h does not name, which Windows answers all the same.
+                {.action = 0x1010, .value = 0},
+                {.action = 0x1028, .value = 0},
+                {.action = 0x102A, .value = 0},
+                {.action = 0x102C, .value = 0},
+                {.action = 0x102E, .value = 0},
+                {.action = 0x1030, .value = 0},
+                {.action = 0x1032, .value = 0},
+                {.action = 0x1034, .value = 0},
+                {.action = 0x1036, .value = 0},
+                {.action = 0x1038, .value = 0},
+                {.action = 0x103A, .value = 0},
+                {.action = 0x103C, .value = 0},
+                {.action = 0x1044, .value = 0},
+                {.action = 0x1046, .value = 0},
+                {.action = 0x1052, .value = 0},
+                {.action = 0x1054, .value = 0},
+                {.action = 0x2026, .value = 0},
+                {.action = 0x2028, .value = 0x20},
+                {.action = 0x202A, .value = 0},
+                {.action = 0x202C, .value = 0},
+                {.action = 0x202E, .value = 0},
+                {.action = 0x2030, .value = 1},
+                {.action = 0x2032, .value = 1},
+                {.action = 0x2034, .value = 0},
+                {.action = 0x2036, .value = 0},
+                {.action = 0x2038, .value = 0},
             });
 
             constexpr std::array<uint32_t, 3> k_mouse_acceleration{6, 10, 1};
@@ -9434,11 +9512,46 @@ namespace sogen
             constexpr DWORD k_error_noaccess = 998;
             constexpr uint16_t k_flat_border_subsystem_version = 6;
             constexpr DWORD k_error_invalid_spi_value = 1439;
+            constexpr uint32_t k_default_input_language = 0x04090409;
+            constexpr uint32_t k_touch_prediction_parameters_size = 16;
+            constexpr std::array<uint32_t, 3> k_touch_prediction_parameters{8, 8, 1};
+            constexpr uint32_t k_max_wallpaper_chars = 260;
+            constexpr uint32_t k_update_ini_file = 0x1;
+            constexpr uint32_t k_output_alignment = 4;
+
+            constexpr bool rejects_non_zero_param(const uint32_t action)
+            {
+                const bool in_range = (action >= 0x1000 && action <= 0x1055) || (action >= 0x2000 && action <= 0x2039);
+                return in_range && action != spi_action::getblocksendinputresets;
+            }
+
+            constexpr bool fails_with_update_ini_file(const uint32_t action)
+            {
+                switch (action)
+                {
+                case spi_action::getpenvisualization:
+                case spi_action::getpenarbitrationtype:
+                case 0x2026:
+                case 0x2030:
+                case 0x2032:
+                case 0x2034:
+                case 0x2038:
+                    return true;
+                default:
+                    return false;
+                }
+            }
 
             BOOL fail_with(const syscall_context& c, const DWORD error)
             {
                 set_guest_last_error(c, error);
                 return FALSE;
+            }
+
+            // win32kbase probes these outputs at 4 bytes (1 for a WOW64 caller), also the 8-byte HKL.
+            bool is_misaligned_output(const syscall_context& c, const emulator_pointer value)
+            {
+                return !c.proc.is_wow64_process && value % k_output_alignment != 0;
             }
 
             BOOL write_output(const syscall_context& c, const emulator_pointer value, const void* data, const size_t size)
@@ -9600,18 +9713,58 @@ namespace sogen
                     {spi_action::getstickykeys, {8, 0x1FE}},
                     {spi_action::getaccesstimeout, {12, 2, 300000}},
                     {spi_action::getsoundsentry, {56, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}},
+                    {spi_action::getaudiodescription, {12, 0, 0}},
                 };
 
                 return structs;
             }
 
-            BOOL get_setting(const syscall_context& c, const uint32_t action, const uint32_t param, const emulator_pointer value)
+            BOOL get_desk_wallpaper(const syscall_context& c, const uint32_t param, const emulator_pointer value)
+            {
+                if (!is_writable_range(c.win_emu, value, uint64_t{param} * sizeof(char16_t)))
+                {
+                    return fail_with(c, k_error_noaccess);
+                }
+
+                c.win_emu.memory.set_memory(value, 0, uint64_t{std::min(param, k_max_wallpaper_chars)} * sizeof(char16_t));
+                return TRUE;
+            }
+
+            BOOL get_touch_prediction_parameters(const syscall_context& c, const uint32_t param, const emulator_pointer value)
+            {
+                if (param != k_touch_prediction_parameters_size)
+                {
+                    return fail_with(c, k_error_invalid_parameter);
+                }
+
+                if (is_misaligned_output(c, value) || !is_writable_range(c.win_emu, value, k_touch_prediction_parameters_size))
+                {
+                    return fail_with(c, k_error_noaccess);
+                }
+
+                return write_output(c, value + sizeof(uint32_t), k_touch_prediction_parameters.data(),
+                                    sizeof(k_touch_prediction_parameters));
+            }
+
+            BOOL get_setting(const syscall_context& c, const uint32_t action, const uint32_t param, const emulator_pointer value,
+                             const uint32_t win_ini)
             {
                 for (const auto& scalar : k_scalar_gets)
                 {
                     if (scalar.action == action)
                     {
-                        return write_output(c, value, &scalar.value, sizeof(scalar.value));
+                        if (param != 0 && rejects_non_zero_param(action))
+                        {
+                            return fail_with(c, k_error_invalid_parameter);
+                        }
+
+                        const auto written = write_output(c, value, &scalar.value, sizeof(scalar.value));
+                        if (written && (win_ini & k_update_ini_file) != 0 && fails_with_update_ini_file(action))
+                        {
+                            return FALSE;
+                        }
+
+                        return written;
                     }
                 }
 
@@ -9675,7 +9828,7 @@ namespace sogen
         }
 
         BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
-                                               const emulator_pointer value, const uint32_t /*win_ini*/)
+                                               const emulator_pointer value, const uint32_t win_ini)
         {
             switch (action)
             {
@@ -9699,14 +9852,39 @@ namespace sogen
             case spi_action::getmouse:
                 return write_output(c, value, k_mouse_acceleration.data(), sizeof(k_mouse_acceleration));
             case spi_action::getdeskwallpaper:
-                return write_output(c, value, u"", sizeof(char16_t));
-            case spi_action::getlogicaldpioverride:
+                return get_desk_wallpaper(c, param, value);
+            // Windows reports failure here although it has written the zero.
+            case spi_action::getlogicaldpioverride: {
+                constexpr int32_t no_override = 0;
+                write_output(c, value, &no_override, sizeof(no_override));
                 return FALSE;
+            }
+            case spi_action::getdefaultinputlang: {
+                constexpr uint64_t input_language = k_default_input_language;
+                if (is_misaligned_output(c, value))
+                {
+                    return fail_with(c, k_error_noaccess);
+                }
+
+                return write_output(c, value, &input_language, sizeof(input_language));
+            }
+            case spi_action::getaudiodescription:
+                if (is_misaligned_output(c, value))
+                {
+                    return fail_with(c, k_error_noaccess);
+                }
+
+                return get_setting(c, action, param, value, win_ini);
+            case spi_action::gettouchpredictionparameters:
+                return get_touch_prediction_parameters(c, param, value);
+            case spi_action::getserialkeys:
+            case spi_action::getwindowsextension:
+                return fail_with(c, k_error_invalid_parameter);
             case 0:
             case spi_action::getgridgranularity:
                 return fail_with(c, k_error_invalid_spi_value);
             default:
-                return get_setting(c, action, param, value);
+                return get_setting(c, action, param, value, win_ini);
             }
         }
 

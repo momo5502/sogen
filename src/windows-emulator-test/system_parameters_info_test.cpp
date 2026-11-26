@@ -32,6 +32,198 @@ namespace sogen::test
         constexpr auto icon_metrics_size = static_cast<uint32_t>(sizeof(EMU_ICONMETRICS));
         constexpr auto logfont_size = static_cast<uint32_t>(sizeof(EMU_LOGFONTW));
 
+        struct scalar_get
+        {
+            uint32_t action;
+            uint32_t value;
+            bool rejects_param;
+        };
+
+        struct struct_get
+        {
+            uint32_t action;
+            uint32_t param;
+            uint32_t struct_size;
+            bool succeeds;
+            uint32_t error;
+            std::array<uint8_t, 16> bytes;
+        };
+
+        struct wallpaper_get
+        {
+            uint32_t capacity;
+            uint32_t written_bytes;
+        };
+
+        constexpr uint32_t last_error_sentinel = 0xDEAD;
+
+        constexpr auto added_scalar_gets = std::to_array<scalar_get>({
+            {.action = 0x0038, .value = 0, .rejects_param = false},    {.action = 0x005E, .value = 0, .rejects_param = false},
+            {.action = 0x0076, .value = 0, .rejects_param = false},    {.action = 0x0078, .value = 5000, .rejects_param = false},
+            {.action = 0x007A, .value = 5000, .rejects_param = false}, {.action = 0x007C, .value = 5000, .rejects_param = false},
+            {.action = 0x007E, .value = 1, .rejects_param = false},    {.action = 0x0080, .value = 30, .rejects_param = false},
+            {.action = 0x0084, .value = 20, .rejects_param = false},   {.action = 0x0086, .value = 30, .rejects_param = false},
+            {.action = 0x0088, .value = 50, .rejects_param = false},   {.action = 0x008A, .value = 50, .rejects_param = false},
+            {.action = 0x008C, .value = 1, .rejects_param = false},    {.action = 0x00A0, .value = 6, .rejects_param = false},
+            {.action = 0x101C, .value = 0, .rejects_param = true},     {.action = 0x101E, .value = 0, .rejects_param = true},
+            {.action = 0x1020, .value = 1, .rejects_param = true},     {.action = 0x104C, .value = 0, .rejects_param = true},
+            {.action = 0x2014, .value = 0, .rejects_param = true},     {.action = 0x201E, .value = 35, .rejects_param = true},
+            {.action = 0x2020, .value = 3, .rejects_param = true},     {.action = 0x2022, .value = 5000, .rejects_param = true},
+            {.action = 0x2024, .value = 0, .rejects_param = true},
+        });
+
+        constexpr auto recaptured_scalar_gets = std::to_array<scalar_get>({
+            {.action = 0x005F, .value = 0, .rejects_param = false},
+            {.action = 0x0068, .value = 3, .rejects_param = false},
+            {.action = 0x006C, .value = 3, .rejects_param = false},
+            {.action = 0x200E, .value = 1, .rejects_param = true},
+            {.action = 0x2010, .value = 1, .rejects_param = true},
+            {.action = 0x004A, .value = 1, .rejects_param = false},
+            {.action = 0x200A, .value = 2, .rejects_param = true},
+            {.action = 0x200C, .value = 1200, .rejects_param = true},
+            {.action = 0x2012, .value = 1, .rejects_param = true},
+            {.action = 0x1048, .value = 1, .rejects_param = true},
+            {.action = 0x006A, .value = 400, .rejects_param = false},
+            {.action = 0x100A, .value = 0, .rejects_param = true},
+            {.action = 0x1042, .value = 1, .rejects_param = true},
+            {.action = 0x1040, .value = 0, .rejects_param = true},
+            {.action = 0x2016, .value = 5, .rejects_param = true},
+            {.action = 0x2018, .value = 0, .rejects_param = true},
+            {.action = 0x201A, .value = 24, .rejects_param = true},
+        });
+
+        constexpr auto added_struct_gets = std::to_array<struct_get>({
+            {.action = 0x74,
+             .param = 0,
+             .struct_size = 12,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 12,
+             .struct_size = 12,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 12,
+             .struct_size = 0,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 12,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 0,
+             .struct_size = 0,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 1,
+             .struct_size = 12,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 16,
+             .struct_size = 12,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 24,
+             .struct_size = 12,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 0,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x74,
+             .param = 12,
+             .struct_size = 100,
+             .succeeds = false,
+             .error = last_error_sentinel,
+             .bytes = {0x64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 0,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x10, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 16,
+             .struct_size = 16,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x10, 0, 0, 0, 0x08, 0, 0, 0, 0x08, 0, 0, 0, 0x01, 0, 0, 0}},
+            {.action = 0x9C,
+             .param = 16,
+             .struct_size = 0,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x00, 0, 0, 0, 0x08, 0, 0, 0, 0x08, 0, 0, 0, 0x01, 0, 0, 0}},
+            {.action = 0x9C,
+             .param = 16,
+             .struct_size = 20,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x14, 0, 0, 0, 0x08, 0, 0, 0, 0x08, 0, 0, 0, 0x01, 0, 0, 0}},
+            {.action = 0x9C,
+             .param = 0,
+             .struct_size = 0,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x00, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 1,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x10, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 24,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x10, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 20,
+             .struct_size = 16,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x10, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 0,
+             .struct_size = 20,
+             .succeeds = false,
+             .error = error_invalid_parameter,
+             .bytes = {0x14, 0, 0, 0, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}},
+            {.action = 0x9C,
+             .param = 16,
+             .struct_size = 100,
+             .succeeds = true,
+             .error = last_error_sentinel,
+             .bytes = {0x64, 0, 0, 0, 0x08, 0, 0, 0, 0x08, 0, 0, 0, 0x01, 0, 0, 0}},
+        });
+
+        constexpr std::array<wallpaper_get, 6> wallpaper_gets{{
+            {.capacity = 260, .written_bytes = 520},
+            {.capacity = 0, .written_bytes = 0},
+            {.capacity = 1, .written_bytes = 2},
+            {.capacity = 2, .written_bytes = 4},
+            {.capacity = 4, .written_bytes = 8},
+            {.capacity = 16, .written_bytes = 32},
+        }};
+
         class SystemParametersInfoTest : public testing::Test
         {
           protected:
@@ -41,9 +233,9 @@ namespace sogen::test
                 this->out = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
             }
 
-            BOOL query(const uint32_t action, const uint32_t param, const uint64_t value)
+            BOOL query(const uint32_t action, const uint32_t param, const uint64_t value, const uint32_t win_ini = 0)
             {
-                return syscalls::handle_NtUserSystemParametersInfo(this->context, action, param, value, 0);
+                return syscalls::handle_NtUserSystemParametersInfo(this->context, action, param, value, win_ini);
             }
 
             BOOL query_for_dpi(const uint32_t action, const uint32_t param, const uint64_t value, const uint32_t dpi)
@@ -61,15 +253,53 @@ namespace sogen::test
                 this->emu.mod_manager.executable->subsystem_major_version = major;
             }
 
+            uint64_t raw_output()
+            {
+                return this->emu.memory.read_memory<uint64_t>(this->out);
+            }
+
+            static uint64_t written_value(const uint32_t value, const size_t size)
+            {
+                uint64_t expected = 0xCCCCCCCCCCCCCCCC;
+                std::memcpy(&expected, &value, size);
+                return expected;
+            }
+
+            void expect_scalar_get(const scalar_get& row)
+            {
+                this->clear_output(last_error_sentinel);
+                EXPECT_TRUE(this->query(row.action, 0, this->out)) << row.action;
+                EXPECT_EQ(last_error_sentinel, this->last_error()) << row.action;
+                EXPECT_EQ(written_value(row.value, sizeof(row.value)), this->raw_output()) << row.action;
+
+                this->clear_output(last_error_sentinel);
+                if (row.rejects_param)
+                {
+                    EXPECT_FALSE(this->query(row.action, 4, this->out)) << row.action;
+                    EXPECT_EQ(error_invalid_parameter, this->last_error()) << row.action;
+                    EXPECT_EQ(0xCCCCCCCCCCCCCCCC, this->raw_output()) << row.action;
+                }
+                else
+                {
+                    EXPECT_TRUE(this->query(row.action, 4, this->out)) << row.action;
+                    EXPECT_EQ(last_error_sentinel, this->last_error()) << row.action;
+                    EXPECT_EQ(written_value(row.value, sizeof(row.value)), this->raw_output()) << row.action;
+                }
+
+                this->clear_output(last_error_sentinel);
+                EXPECT_FALSE(this->query(row.action, 0, 0)) << row.action;
+                EXPECT_EQ(error_noaccess, this->last_error()) << row.action;
+            }
+
             uint32_t last_error()
             {
                 return this->emu.vcpu(0).active_thread->teb64->read().LastErrorValue;
             }
 
-            void clear_output()
+            void clear_output(const uint32_t last_error_before = 0)
             {
                 this->emu.memory.set_memory(this->out, 0xCC, 0x1000);
-                this->emu.vcpu(0).active_thread->teb64->access([](TEB64& teb) { teb.LastErrorValue = 0; });
+                this->emu.vcpu(0).active_thread->teb64->access([last_error_before](TEB64& teb) { teb.LastErrorValue = last_error_before; });
             }
 
             windows_emulator emu = create_sample_emulator();
@@ -349,5 +579,177 @@ namespace sogen::test
         const auto metrics = this->emu.memory.read_memory<EMU_NONCLIENTMETRICS>(this->out);
         EXPECT_EQ(1, metrics.iBorderWidth);
         EXPECT_EQ(4, metrics.iPaddedBorderWidth);
+    }
+
+    // Expected values captured on Windows 11 build 26300 (x64): uiParam through SystemParametersInfoW, the rest through
+    // win32u!NtUserSystemParametersInfo.
+    TEST_F(SystemParametersInfoTest, AddedGetsFollowTheCapture)
+    {
+        for (const auto& row : added_scalar_gets)
+        {
+            this->expect_scalar_get(row);
+        }
+
+        for (const auto& row : added_struct_gets)
+        {
+            this->clear_output(last_error_sentinel);
+            this->set_struct_size(row.struct_size);
+            EXPECT_EQ(row.succeeds, this->query(row.action, row.param, this->out) == TRUE)
+                << row.action << " " << row.param << " " << row.struct_size;
+            EXPECT_EQ(row.error, this->last_error()) << row.action << " " << row.param << " " << row.struct_size;
+
+            std::array<uint8_t, 16> actual{};
+            this->emu.memory.read_memory(this->out, actual.data(), actual.size());
+            EXPECT_EQ(row.bytes, actual) << row.action << " " << row.param << " " << row.struct_size;
+        }
+
+        for (const uint32_t action : {0x74u, 0x9Cu})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->query(action, action == 0x74 ? 12 : 16, 0)) << action;
+            EXPECT_EQ(error_noaccess, this->last_error()) << action;
+        }
+
+        for (const uint32_t action : {0x3Eu, 0x5Cu})
+        {
+            for (const uint64_t pointer : {this->out, uint64_t{0}})
+            {
+                this->clear_output(last_error_sentinel);
+                EXPECT_FALSE(this->query(action, 0, pointer)) << action << " " << pointer;
+                EXPECT_EQ(error_invalid_parameter, this->last_error()) << action << " " << pointer;
+                EXPECT_EQ(0xCCCCCCCCCCCCCCCC, this->raw_output()) << action << " " << pointer;
+            }
+        }
+
+        this->clear_output(last_error_sentinel);
+        EXPECT_TRUE(this->query(0x59, 0, this->out));
+        EXPECT_EQ(last_error_sentinel, this->last_error());
+        EXPECT_EQ(0x04090409u, this->raw_output());
+    }
+
+    // Expected values captured on Windows 11 build 26300 (x64): SPI_GETLOGICALDPIOVERRIDE reports failure after writing a zero,
+    // and SPI_GETDESKWALLPAPER fills up to 260 characters of the buffer the caller names.
+    TEST_F(SystemParametersInfoTest, RecapturedGetsFollowTheCapture)
+    {
+        for (const auto& row : recaptured_scalar_gets)
+        {
+            this->expect_scalar_get(row);
+        }
+
+        for (const uint32_t param : {0u, 4u, 8u})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->query(0x9E, param, this->out)) << param;
+            EXPECT_EQ(last_error_sentinel, this->last_error()) << param;
+            EXPECT_EQ(written_value(0, sizeof(uint32_t)), this->raw_output()) << param;
+        }
+
+        this->clear_output(last_error_sentinel);
+        EXPECT_FALSE(this->query(0x9E, 0, 0));
+        EXPECT_EQ(error_noaccess, this->last_error());
+
+        for (const auto& [capacity, written_bytes] : wallpaper_gets)
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_TRUE(this->query(0x73, capacity, this->out)) << capacity;
+            EXPECT_EQ(last_error_sentinel, this->last_error()) << capacity;
+
+            for (uint32_t offset = 0; offset < written_bytes + sizeof(uint32_t); ++offset)
+            {
+                EXPECT_EQ(offset < written_bytes ? 0x00 : 0xCC, this->emu.memory.read_memory<uint8_t>(this->out + offset))
+                    << capacity << " +" << offset;
+            }
+        }
+    }
+
+    // Expected values read from NtUserSystemParametersInfo in win32kbase 10.0.26100.9974; the capture has no row for them.
+    TEST_F(SystemParametersInfoTest, GetsFollowTheRulesTheCaptureDoesNotCover)
+    {
+        for (const uint32_t action : {0x1028u, 0x2038u})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->query(action, 4, this->out)) << action;
+            EXPECT_EQ(error_invalid_parameter, this->last_error()) << action;
+            EXPECT_EQ(0xCCCCCCCCCCCCCCCC, this->raw_output()) << action;
+        }
+
+        this->clear_output(last_error_sentinel);
+        EXPECT_TRUE(this->query(0x1026, 4, this->out));
+        EXPECT_EQ(last_error_sentinel, this->last_error());
+        EXPECT_EQ(written_value(0, sizeof(uint32_t)), this->raw_output());
+
+        this->clear_output(last_error_sentinel);
+        EXPECT_TRUE(this->query(0x73, 261, this->out));
+        EXPECT_EQ(last_error_sentinel, this->last_error());
+        for (uint32_t offset = 0; offset < 522; ++offset)
+        {
+            EXPECT_EQ(offset < 520 ? 0x00 : 0xCC, this->emu.memory.read_memory<uint8_t>(this->out + offset)) << offset;
+        }
+
+        const auto split = this->emu.memory.allocate_memory(0x2000, memory_permission::read_write);
+        ASSERT_TRUE(this->emu.memory.release_memory(split + 0x1000, 0x1000));
+        const auto tail = split + 0x1000 - 520;
+        this->clear_output(last_error_sentinel);
+        this->emu.memory.set_memory(tail, 0xCC, 520);
+        EXPECT_FALSE(this->query(0x73, 261, tail));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(0xCC, this->emu.memory.read_memory<uint8_t>(tail));
+
+        for (const uint32_t param : {0u, 20u})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->query(0x9C, param, 0)) << param;
+            EXPECT_EQ(error_invalid_parameter, this->last_error()) << param;
+        }
+
+        constexpr std::array<std::pair<uint32_t, uint32_t>, 5> update_ini_file_gets{
+            {{0x201E, 0x23}, {0x2020, 3}, {0x2026, 0}, {0x2030, 1}, {0x2034, 0}}};
+        for (const auto& [action, value] : update_ini_file_gets)
+        {
+            for (const uint32_t win_ini : {1u, 2u, 3u})
+            {
+                this->clear_output(last_error_sentinel);
+                EXPECT_EQ((win_ini & 1) == 0, this->query(action, 0, this->out, win_ini) == TRUE) << action << " " << win_ini;
+                EXPECT_EQ(last_error_sentinel, this->last_error()) << action << " " << win_ini;
+                EXPECT_EQ(written_value(value, sizeof(value)), this->raw_output()) << action << " " << win_ini;
+            }
+        }
+
+        for (const uint32_t action : {0x1020u, 0x2028u, 0x2024u})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_TRUE(this->query(action, 0, this->out, 1)) << action;
+            EXPECT_EQ(last_error_sentinel, this->last_error()) << action;
+        }
+    }
+
+    // Expected values read from NtUserSystemParametersInfo in win32kbase 10.0.26100.9974; the capture has no row for them.
+    TEST_F(SystemParametersInfoTest, MisalignedOutputsFailBeforeAnythingIsWritten)
+    {
+        constexpr std::array<std::pair<uint32_t, uint32_t>, 3> getters{{{0x9C, 16}, {0x74, 12}, {0x59, 0}}};
+
+        for (const auto& [action, param] : getters)
+        {
+            for (const uint64_t offset : {1u, 2u, 3u})
+            {
+                this->clear_output(last_error_sentinel);
+                this->emu.memory.write_memory(this->out + offset, uint32_t{action == 0x74 ? 12u : 0u});
+                EXPECT_FALSE(this->query(action, param, this->out + offset)) << action << " +" << offset;
+                EXPECT_EQ(error_noaccess, this->last_error()) << action << " +" << offset;
+                EXPECT_EQ(action == 0x74 ? uint32_t{12} : 0u, this->emu.memory.read_memory<uint32_t>(this->out + offset))
+                    << action << " +" << offset;
+                EXPECT_EQ(0xCCCCCCCCCCCCCCCC, this->emu.memory.read_memory<uint64_t>(this->out + offset + 4)) << action << " +" << offset;
+            }
+
+            this->clear_output(last_error_sentinel);
+            this->emu.memory.write_memory(this->out + 4, uint32_t{action == 0x74 ? 12u : 0u});
+            EXPECT_TRUE(this->query(action, param, this->out + 4)) << action;
+            EXPECT_EQ(last_error_sentinel, this->last_error()) << action;
+        }
+
+        this->emu.process.is_wow64_process = true;
+        this->clear_output(last_error_sentinel);
+        EXPECT_TRUE(this->query(0x59, 0, this->out + 1));
+        EXPECT_EQ(0x04090409u, this->emu.memory.read_memory<uint64_t>(this->out + 1));
     }
 }
