@@ -138,11 +138,15 @@ builds 1 to 64 vCPUs (one processor group), each with its own FEXCore thread, GD
 stack, and on macOS its JIT write-protect retry slots and armed watchpoints; the backend selection
 always asks for one. Syscalls are served by the vCPU running on the calling thread, translated code
 is invalidated in every vCPU's FEXCore thread, and on macOS a memory call that changes the
-no-access pages stops the other vCPUs once so they arm the new watchpoints.
+no-access pages stops the other vCPUs once so they arm the new watchpoints. A snapshot keeps vCPU 0's
+registers and the thread it runs; the threads on the other vCPUs are saved with the process and handed out
+again after a restore, so a thread may come back on another vCPU.
 `supports_multiple_vcpus()` can only become true once these gaps are closed:
 
-- **Snapshots are refused.** `serialize_state`/`deserialize_state` throw "Multi-vCPU snapshots are
-  not supported yet", as in WHP.
+- **A snapshot can be restored into more vCPUs than it was saved with.** The snapshot does not
+  record the vCPU count and the GDT allocation covers only the saved vCPUs, so
+  `refresh_execution_context` points a vCPU past it at memory beyond that allocation, and a WoW64
+  thread writes its FS descriptor there.
 - **On Linux, a host copy can widen protection for the whole process.** A host read or write of
   guest memory that lacks the permission it needs changes the host protection while it copies, so
   another vCPU's guest access to that memory during the copy does not fault. macOS has no such

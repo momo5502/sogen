@@ -2249,17 +2249,11 @@ namespace sogen::fex
             }
         }
 
-        void ensure_single_vcpu_snapshot() const
-        {
-            if (this->vcpus_.size() > 1)
-            {
-                throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
-            }
-        }
-
+        // Only vCPU 0's registers: the emulator saves the threads the other vCPUs run into their thread objects first
+        // (windows_emulator::prepare_serialization), and a vCPU holds nothing between threads that its threads do not
+        // carry, since save_registers is what a thread switch moves.
         void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
         {
-            this->ensure_single_vcpu_snapshot();
             buffer.write_vector(this->save_registers());
             buffer.write(this->guest_arena_);
             buffer.write(this->low_guest_window_ != 0);
@@ -2269,7 +2263,6 @@ namespace sogen::fex
 
         void deserialize_state(utils::buffer_deserializer& buffer, bool /*is_snapshot*/) override
         {
-            this->ensure_single_vcpu_snapshot();
             const exclusive_tables_lock lock(this->tables_mutex_);
             const auto registers = buffer.read_vector<std::byte>();
             if (buffer.read<uint64_t>() != this->guest_arena_)

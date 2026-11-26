@@ -339,6 +339,105 @@ namespace sogen::test
 
         EXPECT_EQ(run_second(), rewritten_immediate);
     }
+
+    TEST(FexMultiVcpuSnapshotTest, SavesTheFirstVcpuAndRestoresIt)
+    {
+        const auto emu = fex::create_x86_64_emulator(2);
+        auto& second = emu->get_cpu(1);
+
+        emu->reg(x86_register::rax, 0x1234);
+        emu->reg(x86_register::rip, 0x5000);
+        second.reg(x86_register::rax, 0x4321);
+
+        utils::buffer_serializer state{};
+        emu->serialize_state(state, false);
+        emu->reg(x86_register::rax, 0);
+        emu->reg(x86_register::rip, 0);
+
+        utils::buffer_deserializer deserializer{state};
+        emu->deserialize_state(deserializer, false);
+        EXPECT_EQ(emu->reg(x86_register::rax), 0x1234u);
+        EXPECT_EQ(emu->reg(x86_register::rip), 0x5000u);
+        EXPECT_EQ(second.reg(x86_register::rax), 0x4321u);
+    }
+
+    TEST(FexMultiVcpuSnapshotTest, ThreadRunOnTheSecondVcpuResumesOnTheFirstOfANewInstance)
+    {
+        constexpr size_t page_size = 0x1000;
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        constexpr uint32_t seed = 0x11223344;
+        constexpr uint64_t thread_pointer = 0x7FF612340000;
+
+        // mov eax, seed; movd xmm0, eax; syscall; add eax, 1; movd edx, xmm0; syscall
+        constexpr std::array<uint8_t, 24> guest_code = {0xB8, 0x44, 0x33, 0x22, 0x11, 0x66, 0x0F, 0x6E, 0xC0, 0x0F, 0x05, 0x83,
+                                                        0xC0, 0x01, 0x66, 0x0F, 0x7E, 0xC2, 0x0F, 0x05, 0x90, 0x90, 0x90, 0x90};
+        constexpr size_t first_stop_offset = 11;
+        constexpr size_t second_stop_offset = 20;
+
+        const auto prepare = [&](x86_64_emulator& emu, memory_manager& memory) {
+            memory.reserve_host_memory_ranges();
+            const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+            const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+            EXPECT_NE(code, 0u);
+            EXPECT_NE(gdt, 0u);
+
+            emu.write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+            memory.write_memory(code, guest_code.data(), guest_code.size());
+            EXPECT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+            for (size_t index = 0; index < emu.vcpu_count(); ++index)
+            {
+                auto& cpu = emu.get_cpu(index);
+                cpu.load_gdt(gdt, page_size);
+                cpu.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+            }
+
+            emu.hook_instruction(x86_hookable_instructions::syscall, [](cpu_interface& cpu, uint64_t) {
+                cpu.stop();
+                return instruction_hook_continuation::skip_instruction;
+            });
+
+            return code;
+        };
+
+        utils::buffer_serializer state{};
+        uint64_t code{};
+
+        {
+            const auto emu = fex::create_x86_64_emulator(2);
+            memory_manager memory{*emu};
+            code = prepare(*emu, memory);
+            ASSERT_NE(code, 0u);
+
+            auto& first = emu->get_cpu(0);
+            auto& second = emu->get_cpu(1);
+            second.reg(x86_register::rip, code);
+            second.reg(x86_register::fs_base, thread_pointer);
+            second.start(0);
+            ASSERT_EQ(second.reg(x86_register::rip), code + first_stop_offset);
+            ASSERT_EQ(second.reg<uint32_t>(x86_register::eax), seed);
+
+            first.restore_registers(second.save_registers());
+            emu->serialize_state(state, false);
+        }
+
+        const auto emu = fex::create_x86_64_emulator(2);
+        memory_manager memory{*emu};
+        ASSERT_EQ(prepare(*emu, memory), code);
+
+        utils::buffer_deserializer deserializer{state};
+        emu->deserialize_state(deserializer, false);
+
+        auto& first = emu->get_cpu(0);
+        EXPECT_EQ(first.reg(x86_register::rip), code + first_stop_offset);
+        EXPECT_EQ(first.reg(x86_register::fs_base), thread_pointer);
+
+        first.start(0);
+        EXPECT_EQ(first.reg(x86_register::rip), code + second_stop_offset);
+        EXPECT_EQ(first.reg<uint32_t>(x86_register::eax), seed + 1);
+        EXPECT_EQ(first.reg<uint32_t>(x86_register::edx), seed);
+    }
 #endif
 
 #ifdef __APPLE__

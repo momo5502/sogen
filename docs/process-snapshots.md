@@ -39,7 +39,7 @@ code is shared with Android's single-vCPU FEX backend.
       image belongs to the family that first used it until a release and its matching acquire move it, and its
       contents are copied on a queue of that family. A snapshot is refused while a modelled wait is unsatisfied or
       a release has not been acquired
-- [ ] Several vCPUs on WHP
+- [x] Several vCPUs: vCPU 0's thread is saved, the others are handed out again on restore (WHP; FEX once it offers several vCPUs)
 - [ ] Child processes
 - [ ] Android integration
 
@@ -75,7 +75,7 @@ intact; the guest clock jumped forward by the suspended time.
 | Imported guest memory | Saved with guest memory | Re-imported at the recorded address |
 | Sockets (AFD) | Endpoint re-created, connection lost | Restored as reset connections |
 | Child processes | Not saved | Nested snapshots |
-| Multi-vCPU (WHP) | `serialize_state` throws | Save every vCPU; Android has one |
+| Multi-vCPU (WHP, FEX) | Saves vCPU 0; the threads of the other vCPUs are saved as threads | Save every vCPU; Android has one |
 | Compatibility | No per-field versioning | Header with build id and executable size/mtime; mismatches discarded |
 
 ## GPU design
