@@ -1911,10 +1911,23 @@ namespace sogen
                 return 0;
             }
 
+            constexpr size_t max_name_length = 255;
+
             const auto raw = message_name.try_read();
-            if (!raw || raw->Buffer == 0 || raw->Length == 0 || raw->Length > raw->MaximumLength || (raw->Length & 1) != 0)
+            if (!raw || raw->Buffer == 0 || raw->Length > raw->MaximumLength || (raw->Length & 1) != 0)
             {
                 set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            if (raw->Length == 0)
+            {
+                return 0;
+            }
+
+            if (raw->Length > max_name_length * sizeof(char16_t))
+            {
+                set_guest_last_error(c, 234); // ERROR_MORE_DATA
                 return 0;
             }
 
@@ -9886,53 +9899,6 @@ namespace sogen
             default:
                 return get_setting(c, action, param, value, win_ini);
             }
-        }
-
-        uint32_t handle_NtUserGetClipboardSequenceNumber()
-        {
-            return 1;
-        }
-
-        BOOL handle_NtUserOpenClipboard()
-        {
-            return TRUE;
-        }
-
-        BOOL handle_NtUserCloseClipboard()
-        {
-            return TRUE;
-        }
-
-        BOOL handle_NtUserEmptyClipboard()
-        {
-            return TRUE;
-        }
-
-        BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
-        {
-            return TRUE;
-        }
-
-        BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
-        {
-            return TRUE;
-        }
-
-        uint64_t handle_NtUserGetClipboardData()
-        {
-            return 0;
-        }
-
-        uint64_t handle_NtUserConvertMemHandle()
-        {
-            // Return a non-null placeholder clipboard handle so SetClipboardData succeeds. The contents are
-            // not stored; reads via NtUserGetClipboardData report an empty clipboard.
-            return 1;
-        }
-
-        uint64_t handle_NtUserSetClipboardData()
-        {
-            return 1;
         }
 
         uint64_t handle_NtUserGetProcessDpiAwarenessContext()

@@ -22,6 +22,7 @@
 #include "port.hpp"
 #include "user_handle_table.hpp"
 #include "wnf_state.hpp"
+#include "clipboard.hpp"
 
 #include "apiset/apiset.hpp"
 
@@ -857,6 +858,7 @@ namespace sogen
         std::map<uint32_t, handle> thread_handles_by_id{};
         handle initial_thread_handle{};
         std::map<uint16_t, atom_entry> atoms{};
+        clipboard_state clipboard{};
         utils::insensitive_u16string_map<class_entry> classes{};
 
         apiset_map apiset;
