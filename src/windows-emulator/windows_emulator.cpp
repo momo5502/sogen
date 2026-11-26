@@ -2707,7 +2707,7 @@ namespace sogen
         if (is_pointer_message(event.message))
         {
             // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
-            // reflects it, and treat the window the user is pointing at as the foreground one.
+            // reflects it.
             const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0);
             auto l_param = event.lParam;
             const auto [new_cursor_x, new_cursor_y] = this->cursor_after_pointer_event(event);
@@ -2751,7 +2751,13 @@ namespace sogen
 
             this->process.cursor_x = new_cursor_x;
             this->process.cursor_y = new_cursor_y;
-            this->set_foreground_window(event.window);
+
+            // Mouse input moves the foreground only with a button press, as win32kbase's
+            // CMouseProcessor::UpdateForegroundForInput does: motion, releases and the wheel leave it.
+            if (is_mouse_button_down_message(event.message))
+            {
+                this->set_foreground_window(event.window);
+            }
 
             const auto target = route_pointer(this->process, event.window, point_x(l_param), point_y(l_param));
             m.window = target.window;
