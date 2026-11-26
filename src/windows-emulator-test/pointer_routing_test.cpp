@@ -115,4 +115,22 @@ namespace sogen::test
         EXPECT_EQ(root, owner.message_queue.back().window);
         EXPECT_EQ(WM_MOUSEMOVE, owner.message_queue.back().message);
     }
+
+    TEST_F(PointerRoutingTest, OnlyAButtonPressMovesTheForeground)
+    {
+        const auto first = this->create_window(this->thread(this->first_handle).id, 0, ws_visible, 0, 0, 200, 200);
+        const auto second = this->create_window(this->thread(this->second_handle).id, 0, ws_visible, 300, 0, 200, 200);
+        const auto foreground = [&] { return this->emu->process.user_handles.get_server_info().read().foregroundWindow; };
+
+        this->send_pointer(first, WM_LBUTTONDOWN, 20, 20, MK_LBUTTON);
+        this->send_pointer(first, WM_LBUTTONUP, 20, 20);
+        ASSERT_EQ(first, foreground());
+
+        this->send_pointer(second, WM_MOUSEMOVE, 20, 20);
+        this->send_pointer(second, WM_LBUTTONUP, 20, 20);
+        EXPECT_EQ(first, foreground());
+
+        this->send_pointer(second, WM_RBUTTONDOWN, 20, 20, MK_RBUTTON);
+        EXPECT_EQ(second, foreground());
+    }
 }
