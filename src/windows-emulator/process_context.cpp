@@ -822,6 +822,30 @@ namespace sogen
         }
     }
 
+    std::vector<process_context::working_device>& process_context::working_devices()
+    {
+        if (this->working_device_list_generation != this->devices.generation() || this->working_device_list_size != this->devices.size())
+        {
+            this->working_device_list.clear();
+            for (auto& [index, device] : this->devices)
+            {
+                if (device.does_work())
+                {
+                    this->working_device_list.push_back({
+                        .reference = {.type = handle_types::device, .index = index},
+                        .object = &device,
+                        .generation = this->devices.generation(),
+                    });
+                }
+            }
+
+            this->working_device_list_generation = this->devices.generation();
+            this->working_device_list_size = this->devices.size();
+        }
+
+        return this->working_device_list;
+    }
+
     void process_context::terminate_job_processes(windows_emulator& win_emu, const job_object& job)
     {
         constexpr uint32_t kill_on_job_close = 0x2000;

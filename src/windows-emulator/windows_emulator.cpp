@@ -446,9 +446,13 @@ namespace sogen
             const auto was_blocked = devices.block_mutation(true);
             const auto _ = utils::finally([&] { devices.block_mutation(was_blocked); });
 
-            for (auto& dev : devices | std::views::values)
+            for (auto& device : win_emu.process.working_devices())
             {
-                dev.work(win_emu);
+                // A device's work() can close the last handle to another device in the list.
+                if (auto* container = devices.get_cached(device.reference, device.object, device.generation))
+                {
+                    container->work(win_emu);
+                }
             }
         }
 

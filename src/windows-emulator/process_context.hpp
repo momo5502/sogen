@@ -747,6 +747,18 @@ namespace sogen
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
         handle_store<handle_types::section, section> sections{};
         handle_store<handle_types::device, io_device_container> devices{};
+
+        struct working_device
+        {
+            object_reference reference{};
+            ref_counted_object* object{};
+            uint64_t generation{};
+        };
+
+        std::vector<working_device>& working_devices();
+        std::vector<working_device> working_device_list{};
+        uint64_t working_device_list_generation{};
+        size_t working_device_list_size{};
         handle console_handle{};
         handle_store<handle_types::semaphore, semaphore> semaphores{};
         handle_store<handle_types::io_completion, io_completion> io_completions{};

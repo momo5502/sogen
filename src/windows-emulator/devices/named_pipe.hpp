@@ -50,6 +50,11 @@ namespace sogen
         {
         }
 
+        bool does_work() const override
+        {
+            return true;
+        }
+
         void work(windows_emulator& win_emu) override;
         bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
         bool has_pending_io(uint32_t issuing_thread_id) const override;

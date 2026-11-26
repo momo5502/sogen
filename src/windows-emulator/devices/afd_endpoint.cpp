@@ -791,6 +791,11 @@ namespace sogen
                 }
             }
 
+            bool does_work() const override
+            {
+                return true;
+            }
+
             void work(windows_emulator& win_emu) override
             {
                 this->work_pending_polls(win_emu);
