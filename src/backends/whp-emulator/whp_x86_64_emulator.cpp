@@ -1727,9 +1727,18 @@ namespace sogen::whp
                         this->apply_patched_execution_breakpoints(guest_address);
                     }
 
+                    const bool was_writable = this->is_page_table_entry_writable(*page);
                     page->permissions = permissions;
+                    const bool entry_loses_write = was_writable && !this->is_page_table_entry_writable(*page);
+                    if (entry_loses_write)
+                    {
+                        this->ensure_virtual_mapping(guest_address);
+                    }
                     this->remap_page(*page);
-                    this->ensure_virtual_mapping(guest_address);
+                    if (!entry_loses_write)
+                    {
+                        this->ensure_virtual_mapping(guest_address);
+                    }
                 }
             }
 
@@ -1913,6 +1922,8 @@ namespace sogen::whp
                 }
 
                 std::unique_lock lock(this->partition_mutex_);
+                bool write_taken_away = false;
+                std::vector<uint64_t> entries_gaining_write{};
 
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
@@ -1923,10 +1934,38 @@ namespace sogen::whp
                         continue;
                     }
 
-                    entry->second->permissions = permissions;
+                    auto& page = *entry->second;
+                    const bool was_writable = this->is_page_table_entry_writable(page);
+                    const bool had_write = (page.permissions & memory_permission::write) != memory_permission::none;
+                    page.permissions = permissions;
+                    if (page.host_page == nullptr || was_writable == this->is_page_table_entry_writable(page))
+                    {
+                        continue;
+                    }
+
+                    if (was_writable)
+                    {
+                        this->ensure_virtual_mapping(guest_address);
+                        write_taken_away |= had_write;
+                    }
+                    else
+                    {
+                        entries_gaining_write.push_back(guest_address);
+                    }
                 }
 
                 this->remap_pages(address, size);
+                for (const auto guest_address : entries_gaining_write)
+                {
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                if (write_taken_away)
+                {
+                    const auto epoch = this->flush_virtual_address_mappings();
+                    lock.unlock();
+                    this->wait_for_tlb_epoch(epoch);
+                }
             }
 
             emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
@@ -2689,10 +2728,29 @@ namespace sogen::whp
                 return false;
             }
 
+            // Assumes partition_mutex_ is held. An MMIO page's writes must still exit.
+            bool page_table_holds_write(const mapped_page& page) const
+            {
+                return page.user_accessible && (page.permissions & memory_permission::read) != memory_permission::none &&
+                       this->find_mmio_region(page.guest_page_base) == nullptr;
+            }
+
+            // Assumes partition_mutex_ is held. Where a permission change flips it, the entry has to lose write before the
+            // page's mapping can give access, and gain it only after the mapping took access away; otherwise the two together
+            // allow a write that neither the old nor the new permissions allow.
+            bool is_page_table_entry_writable(const mapped_page& page) const
+            {
+                return (page.permissions & memory_permission::write) != memory_permission::none || !this->page_table_holds_write(page);
+            }
+
             // Assumes partition_mutex_ is held.
             memory_permission effective_page_permissions(const mapped_page& page) const
             {
                 auto permissions = page.permissions;
+                if (this->page_table_holds_write(page))
+                {
+                    permissions |= memory_permission::write;
+                }
                 if (page.page_execution_hook_count != 0 && !this->is_page_being_stepped(page.guest_page_base))
                 {
                     permissions &= ~memory_permission::exec;
@@ -3459,9 +3517,14 @@ namespace sogen::whp
                 const auto pd_gpa = this->ensure_child_table(pdpt_gpa, pdpt_index);
                 const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
 
+                const auto& page = *mapped_page->second;
                 auto* const pt_entries = this->get_page_table_entries(pt_gpa);
-                auto entry = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable;
-                if (mapped_page->second->user_accessible)
+                auto entry = page.guest_physical_address | page_table_entry_present;
+                if (this->is_page_table_entry_writable(page))
+                {
+                    entry |= page_table_entry_writable;
+                }
+                if (page.user_accessible)
                 {
                     entry |= page_table_entry_user;
                 }
@@ -3507,7 +3570,11 @@ namespace sogen::whp
                     if (!guard_tripped && backed && permitted)
                     {
                         this->ensure_virtual_mapping(page_base);
-                        this->remap_page(*it->second);
+                        const auto needed_flags = to_whp_map_flags(operation);
+                        if ((it->second->map_flags & needed_flags) != needed_flags)
+                        {
+                            this->remap_page(*it->second);
+                        }
                         repaired = true;
                     }
                 }
@@ -3596,12 +3663,21 @@ namespace sogen::whp
                 return epoch;
             }
 
-            // Assumes partition_mutex_ is held. A vCPU that is not executing guest code applies the pending
-            // flush before it can enter the guest again, so only running vCPUs have to acknowledge.
+            // A vCPU that is not executing guest code applies the pending flush before it can enter the guest again, so only
+            // running vCPUs have to acknowledge.
             bool is_tlb_epoch_acknowledged(const uint64_t epoch) const
             {
                 return std::ranges::all_of(this->vcpus_,
                                            [&](const auto& vcpu) { return !vcpu->run_active_ || vcpu->acked_tlb_epoch_ >= epoch; });
+            }
+
+            // Assumes partition_mutex_ is not held: a cancelled vCPU's exit may need it.
+            void wait_for_tlb_epoch(const uint64_t epoch) const
+            {
+                while (!this->is_tlb_epoch_acknowledged(epoch))
+                {
+                    YieldProcessor();
+                }
             }
 
             // Assumes partition_mutex_ is held (shared is sufficient for reads, exclusive for writes
