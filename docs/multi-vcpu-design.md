@@ -40,7 +40,7 @@ Status: in progress on branch `multi-vcpu`
       Remaining Phase 3 (non-blocking, latency/feature): cross-vCPU kicks for
       alert/APC/suspend/terminate targeting a *running* thread (currently take effect at the
       next ~20ms timer preemption — functionally correct); NtGet/SetContextThread force-save
-      for a running thread; stop-the-world snapshot quiesce (snapshots still N=1); and the
+      for a running thread; and the
       rare `--vcpus 8+` miss. Details of the earlier register/dispatch fixes below.
 - [~] Phase 3 (earlier fixes) — Fixed the register-routing bug that made every
       syscall on a non-zero vCPU touch vCPU 0's registers: `syscall_context::emu` (and the
@@ -99,7 +99,7 @@ Status: in progress on branch `multi-vcpu`
       delivered), pointing at a tighter map/unmap/protect race on a shared page, or a
       guest-level loader-lock / .mrdata race. Still Heisenbug-y (vanishes under hot-path
       logging); the env-gated post-mortem tracer (`SOGEN_TRACE_EXCEPTIONS=1`) is the tool.
-      Remaining Phase 3: that race; cross-vCPU kicks; stop-the-world for snapshots; guest
+      Remaining Phase 3: that race; cross-vCPU kicks; guest
       CPU count = vcpu_count. Remaining Phase 2 polish: ready_cv instead of sleep-poll;
       device pump on ticks; N=1 boot benchmark; clang-cl -Wthread-safety annotations.
 - [~] Phase 3 — cross-vCPU correctness (WHP: 64-bit + WoW64 32-bit run at N=1..8;
@@ -431,7 +431,7 @@ target's vCPU as the kick:
 - `NtGetContextThread` / `NtSetContextThread` on a *running* thread: kick the target vCPU,
   wait (under BEL, via a condition) until the worker has saved the blob, then operate on
   `last_registers` — the mechanism that already exists for parked threads.
-- **Stop-the-world helper** (needed for snapshots, precise-breakpoint stepping, possibly
+- **Stop-the-world helper** (needed for precise-breakpoint stepping, possibly
   unmap): set a global pause flag, kick all vCPUs, wait until every worker has parked
   its thread, run the critical action, release.
 
@@ -457,10 +457,11 @@ target's vCPU as the kick:
   masks; `fake_env.number_of_processors` becomes an explicit override for anti-analysis
   experiments. `NtGetCurrentProcessorNumberEx` (`thread.cpp:916`) returns the index of
   the vCPU that took the syscall (`c.cpu.index()`). Affinity/priority remain no-ops.
-- **Serialization/snapshots** (decision: **restricted to N=1 in v1**):
-  `save_snapshot()`/`serialize()` at `vcpu_count > 1` is an error until the
-  stop-the-world quiesce lands in Phase 3. Per-thread register blobs already serialize;
-  the interrupt-thread atomics currently serialized (`windows_emulator.cpp:1315`) become
+- **Serialization/snapshots**: taken after `start()` returned, so every vCPU is stopped.
+  `prepare_serialization()` saves the thread each other vCPU runs into its thread object, and
+  the snapshot keeps one running thread, vCPU 0's. After a restore the scheduler hands the
+  threads out again, so the thread-to-vCPU assignment is not preserved. The
+  interrupt-thread atomics currently serialized (`windows_emulator.cpp:1315`) become
   per-vCPU state that resets on restore.
 - **gdb-stub / debugger** (`x86_64_gdb_stub_handler.hpp`, `debug_session.cpp`):
   incompatible with `vcpu_count > 1` — hard error when combined. Multi-vCPU debugging
@@ -703,13 +704,11 @@ on scheduler ticks; `logger` mutex; atomic instruction counters. Exposed as a se
 (`--vcpus N`, default 1). N=1 goes through the same scheduler (one worker, uncontended
 BEL) — benchmark N=1 boot wall-time against main before merging. Startup validation:
 hard error when `vcpu_count > 1` is combined with an unsupported backend, gdb-stub,
-instruction precision, instruction budgets, relative-time mode, or snapshots (until
-Phase 3).
+instruction precision, instruction budgets, or relative-time mode.
 
 **Phase 3 — cross-vCPU correctness.**
 Kicks for alert/APC/suspend/terminate targeting running threads; force-save for
-`NtGet/SetContextThread`; stop-the-world helper; snapshot quiesce (lifts the N=1
-snapshot restriction); guest-visible CPU identity (KUSD count,
+`NtGet/SetContextThread`; stop-the-world helper; guest-visible CPU identity (KUSD count,
 `NtGetCurrentProcessorNumberEx`).
 
 **Phase 4 — validation + performance.** *(done)*
@@ -783,7 +782,7 @@ shared component at that point, not before).
   latent guest bugs that were masked by deterministic scheduling. Keep `--vcpus 1` as the
   deterministic-repro fallback.
 - **Determinism / snapshots.** Multi-vCPU runs are inherently non-reproducible;
-  snapshot/restore stays supported (quiesced) but replay-style debugging needs N=1.
+  snapshot/restore is supported (after the run stopped) but replay-style debugging needs N=1.
 - **WOW64.** Heaven's-gate transitions (`wow64_heaven_gate.hpp`) are per-thread register
   state inside the blob — no extra work expected, but the 32-bit paths must be in the
   Phase 4 stress matrix (open-iw5, t6mp are the practical testbeds).
