@@ -2718,6 +2718,16 @@ namespace sogen
             }
         }
 
+        // win32kfull's xxxMouseActivate.
+        const auto activate_from_input = [&] {
+            if (thread->active_window != event.window)
+            {
+                thread->foreground_activation_allowed = false;
+                this->process.foreground_activation_allowed = false;
+            }
+            this->set_foreground_window(event.window);
+        };
+
         if (is_pointer_message(event.message))
         {
             // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
@@ -2770,7 +2780,7 @@ namespace sogen
             // CMouseProcessor::UpdateForegroundForInput does: motion, releases and the wheel leave it.
             if (is_mouse_button_down_message(event.message))
             {
-                this->set_foreground_window(event.window);
+                activate_from_input();
             }
 
             const auto target = route_pointer(this->process, event.window, point_x(l_param), point_y(l_param));
@@ -2789,7 +2799,7 @@ namespace sogen
         {
             // The window just became active/focused: make it the foreground window so polling APIs
             // (GetForegroundWindow/GetActiveWindow) agree with the activation the game just received.
-            this->set_foreground_window(event.window);
+            activate_from_input();
         }
         else if ((event.message == WM_ACTIVATE && event.wParam == 0) && this->process.foreground_window == event.window)
         {

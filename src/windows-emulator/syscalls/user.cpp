@@ -399,6 +399,147 @@ namespace sogen
             return foreground != nullptr && !foreground->message_only;
         }
 
+        // win32kfull's FVisCountable: visible top-level windows that are not minimized. It also counts the desktop window,
+        // which in Windows belongs to the desktop thread, never to an application's.
+        bool counts_as_visible_window(const syscall_context& c, const window& win)
+        {
+            return (win.style & (WS_VISIBLE | WS_MINIMIZE)) == WS_VISIBLE && win.parent_handle == c.proc.default_desktop_window_handle.bits;
+        }
+
+        bool has_visible_window(const syscall_context& c, const uint32_t thread_id)
+        {
+            return std::ranges::any_of(c.proc.windows, [&](const auto& entry) {
+                return entry.second.thread_id == thread_id && counts_as_visible_window(c, entry.second);
+            });
+        }
+
+        // win32kfull's xxxActivateWindow.
+        void activate_window_of_calling_thread(const syscall_context& c, const window& win)
+        {
+            auto& thread = c.thread();
+            const bool thread_right = std::exchange(thread.foreground_activation_allowed, false);
+            const bool process_right = std::exchange(c.proc.foreground_activation_allowed, false);
+            const auto* foreground = c.proc.windows.get(c.proc.foreground_window);
+
+            if (foreground != nullptr && foreground->thread_id == thread.id)
+            {
+                c.win_emu.set_foreground_window(win.handle);
+            }
+            else if ((thread_right || process_right) && (win.ex_style & WS_EX_NOACTIVATE) == 0)
+            {
+                thread.foreground_activation_allowed = !has_visible_window(c, thread.id);
+                c.win_emu.set_foreground_window(win.handle);
+            }
+            else
+            {
+                thread.set_active_window(win.handle);
+            }
+        }
+
+        bool is_only_visible_window(const syscall_context& c, const window& win)
+        {
+            return counts_as_visible_window(c, win) && std::ranges::none_of(c.proc.windows, [&](const auto& entry) {
+                       return entry.second.handle != win.handle && entry.second.thread_id == win.thread_id &&
+                              counts_as_visible_window(c, entry.second);
+                   });
+        }
+
+        // win32kfull's xxxMinMaximizeEx and xxxSwpActivate.
+        void activate_after_min_max_change(const syscall_context& c, const window& win, const bool restored, const bool activates)
+        {
+            auto& thread = c.thread();
+            const auto* foreground = c.proc.windows.get(c.proc.foreground_window);
+            const bool in_foreground = foreground != nullptr && foreground->thread_id == thread.id;
+            if (restored && !in_foreground && (activates || thread.active_window == win.handle) && is_only_visible_window(c, win))
+            {
+                c.win_emu.set_foreground_window(win.handle);
+            }
+            else if (activates && thread.active_window != win.handle)
+            {
+                activate_window_of_calling_thread(c, win);
+            }
+        }
+
+        // xxxShowWindowEx: SW_SHOWDEFAULT is SW_SHOWNORMAL for a process started without a show command in its STARTUPINFO.
+        bool show_activates_window(const window& win, const LONG cmd_show)
+        {
+            switch (cmd_show)
+            {
+            case SW_SHOWNORMAL:
+            case SW_SHOWMAXIMIZED:
+            case SW_SHOW:
+            case SW_RESTORE:
+            case SW_SHOWDEFAULT:
+                return true;
+            case SW_SHOWMINIMIZED:
+                return (win.style & WS_MINIMIZE) == 0;
+            default:
+                return false;
+            }
+        }
+
+        // win32kfull's xxxShowWindowEx.
+        bool activates_before_visible(const syscall_context& c, const window& win, const LONG cmd_show)
+        {
+            const bool shows_normal =
+                (cmd_show == SW_SHOWNORMAL || cmd_show == SW_SHOWDEFAULT) && (win.style & (WS_MINIMIZE | WS_MAXIMIZE)) == 0;
+            if (cmd_show != SW_SHOW && !shows_normal)
+            {
+                return false;
+            }
+
+            const auto it = c.proc.classes.find(win.class_name);
+            return it != c.proc.classes.end() && (it->second.wnd_class.style & CS_SAVEBITS) != 0;
+        }
+
+        // win32kfull's xxxMinMaximizeEx.
+        void update_min_max_style(window& win, const LONG cmd_show)
+        {
+            const bool minimized = (win.style & WS_MINIMIZE) != 0;
+            switch (cmd_show)
+            {
+            case SW_SHOWMINIMIZED:
+            case SW_MINIMIZE:
+            case SW_SHOWMINNOACTIVE:
+                if (!minimized)
+                {
+                    win.restore_to_maximized = (win.style & WS_MAXIMIZE) != 0;
+                    win.style = (win.style & ~WS_MAXIMIZE) | WS_MINIMIZE;
+                }
+                break;
+            case SW_SHOWMAXIMIZED:
+                win.style = (win.style & ~WS_MINIMIZE) | WS_MAXIMIZE;
+                break;
+            case SW_SHOWNOACTIVATE:
+            case SW_RESTORE:
+                if (minimized && win.restore_to_maximized)
+                {
+                    win.style = (win.style & ~WS_MINIMIZE) | WS_MAXIMIZE;
+                }
+                else
+                {
+                    win.style &= ~(WS_MINIMIZE | WS_MAXIMIZE);
+                }
+                break;
+            case SW_SHOWNORMAL:
+            case SW_SHOWDEFAULT:
+                win.style &= ~(WS_MINIMIZE | WS_MAXIMIZE);
+                break;
+            default:
+                break;
+            }
+        }
+
+        // win32kfull 10.0.26100.5074's IncVisWindows; 19041's only counts the window.
+        void clear_foreground_activation_if_visible_foreground(const syscall_context& c, const window& win)
+        {
+            if (c.win_emu.version.is_build_after_or_equal(WINDOWS_VERSION::WINDOWS_11_24H2, 5074) && counts_as_visible_window(c, win) &&
+                c.proc.foreground_window == win.handle)
+            {
+                c.thread().foreground_activation_allowed = false;
+            }
+        }
+
         void set_user_handle_owner(const syscall_context& c, const handle h, const uint64_t owner)
         {
             if (owner == 0)
@@ -5208,6 +5349,20 @@ namespace sogen
 
             if (want_visible == was_visible)
             {
+                const bool counted = counts_as_visible_window(c, *win);
+                const auto min_max = win->style & (WS_MINIMIZE | WS_MAXIMIZE);
+                const bool activates = activate_window && !win->message_only && show_activates_window(*win, cmd_show);
+                update_min_max_style(*win, cmd_show);
+                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
+                if (!counted)
+                {
+                    clear_foreground_activation_if_visible_foreground(c, *win);
+                }
+                if ((win->style & (WS_MINIMIZE | WS_MAXIMIZE)) != min_max)
+                {
+                    const bool restored = (min_max & WS_MINIMIZE) != 0 && (win->style & WS_MINIMIZE) == 0 && !is_child;
+                    activate_after_min_max_change(c, *win, restored, activates);
+                }
                 return was_visible ? TRUE : FALSE;
             }
 
@@ -5244,8 +5399,16 @@ namespace sogen
 
             if (want_visible)
             {
-                orchestrator.start_show(*win, visibility_flags, activate_window, !is_child,
-                                        activate_window && !win->message_only && !is_application_active(c));
+                const bool activates = activate_window && !win->message_only && show_activates_window(*win, cmd_show);
+                const bool activates_first = activates && activates_before_visible(c, *win, cmd_show);
+                const bool emit_activate_app = activate_window && !win->message_only && !is_application_active(c);
+
+                if (activates_first)
+                {
+                    activate_window_of_calling_thread(c, *win);
+                }
+
+                orchestrator.start_show(*win, visibility_flags, activate_window, !is_child, emit_activate_app);
 
                 if (is_child && win->parent_handle != 0)
                 {
@@ -5262,7 +5425,14 @@ namespace sogen
                     }
                 }
 
+                update_min_max_style(*win, cmd_show);
                 win->style |= WS_VISIBLE;
+                clear_foreground_activation_if_visible_foreground(c, *win);
+
+                if (activates && !activates_first && c.thread().active_window != win->handle)
+                {
+                    activate_window_of_calling_thread(c, *win);
+                }
             }
             else
             {
@@ -6944,6 +7114,14 @@ namespace sogen
             if ((win->style & WS_CHILD) != 0 && (win->style & WS_POPUP) == 0)
             {
                 return FALSE;
+            }
+
+            // win32kfull's xxxSetForegroundWindowWithOptions.
+            const auto* foreground = c.proc.windows.get(c.proc.foreground_window);
+            if (foreground == nullptr || foreground->thread_id != win->thread_id)
+            {
+                c.thread().foreground_activation_allowed = false;
+                c.proc.foreground_activation_allowed = false;
             }
 
             c.win_emu.set_foreground_window(hwnd);

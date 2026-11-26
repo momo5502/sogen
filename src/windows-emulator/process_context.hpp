@@ -633,6 +633,9 @@ namespace sogen
         // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
         // and GetCursorPos to drive menu cursors and gate their input loop on the window being active.
         hwnd foreground_window{};
+        // W32PF_ALLOWFOREGROUNDACTIVATE: a process started from the foreground may bring the first window it activates
+        // to the foreground.
+        bool foreground_activation_allowed{true};
         int32_t cursor_x{};
         int32_t cursor_y{};
         hcursor current_cursor{};

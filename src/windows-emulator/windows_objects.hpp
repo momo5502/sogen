@@ -475,6 +475,7 @@ namespace sogen
         int32_t y{};
         uint32_t ex_style{};
         uint32_t style{};
+        bool restore_to_maximized{};
         uint32_t context_help_id{};
         RECT update_rect{};
         bool update_pending{};
@@ -610,6 +611,7 @@ namespace sogen
             buffer.write(this->y);
             buffer.write(this->ex_style);
             buffer.write(this->style);
+            buffer.write(this->restore_to_maximized);
             buffer.write(this->context_help_id);
             buffer.write(this->update_rect);
             buffer.write(this->update_pending);
@@ -642,6 +644,7 @@ namespace sogen
             buffer.read(this->y);
             buffer.read(this->ex_style);
             buffer.read(this->style);
+            buffer.read(this->restore_to_maximized);
             buffer.read(this->context_help_id);
             buffer.read(this->update_rect);
             buffer.read(this->update_pending);
