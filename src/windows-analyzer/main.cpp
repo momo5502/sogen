@@ -121,10 +121,55 @@ namespace sogen
         };
 
 #ifndef OS_EMSCRIPTEN
-        std::vector<std::string> create_managed_process_arguments(const analysis_options& options, const uint16_t port,
-                                                                  const std::string& token, const uint64_t child_id)
+        // Only options the sandbox defines: it stops parsing at the first one it does not know and drops the rest.
+        std::vector<std::string> create_sandbox_arguments(const analysis_options& options, const uint16_t port, const std::string& token)
         {
             std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+            arguments.emplace_back("--network");
+            arguments.emplace_back(network::to_string(options.network));
+            if (options.steam_app_tickets)
+            {
+                arguments.emplace_back("--steam-app-tickets");
+            }
+            if (options.spoof_gpu_features)
+            {
+                arguments.emplace_back("--spoof-gpu-features");
+            }
+            if (options.elevated)
+            {
+                arguments.emplace_back("--elevated");
+            }
+
+            const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
+                if (!path.empty())
+                {
+                    arguments.emplace_back(option);
+                    arguments.push_back(path.string());
+                }
+            };
+            add_path("--emulation", options.emulation_root);
+            add_path("--registry", options.registry_path);
+            add_path("--snapshot-dir", options.snapshot_directory);
+            for (const auto& registry_file : options.registry_files)
+            {
+                arguments.emplace_back("--reg-file");
+                arguments.push_back(registry_file.string());
+            }
+            arguments.emplace_back("--root-mode");
+            arguments.emplace_back(to_string(options.root_mode));
+            for (const auto& mount : options.mounts)
+            {
+                arguments.emplace_back("--mount");
+                arguments.push_back(render_mount_spec(mount));
+            }
+
+            return arguments;
+        }
+
+        std::vector<std::string> create_analyzer_arguments(const analysis_options& options, const uint16_t port, const std::string& token,
+                                                           const uint64_t child_id)
+        {
+            auto arguments = create_sandbox_arguments(options, port, token);
             if (options.trace_children)
             {
                 arguments.insert(arguments.end(), {"--trace-children", "--backend", "whp"});
@@ -167,20 +212,6 @@ namespace sogen
                     arguments.push_back(name->first);
                 }
             }
-            arguments.emplace_back("--network");
-            arguments.emplace_back(network::to_string(options.network));
-            if (options.steam_app_tickets)
-            {
-                arguments.emplace_back("--steam-app-tickets");
-            }
-            if (options.spoof_gpu_features)
-            {
-                arguments.emplace_back("--spoof-gpu-features");
-            }
-            if (options.elevated)
-            {
-                arguments.emplace_back("--elevated");
-            }
             if (options.reproducible)
             {
                 arguments.emplace_back("--reproducible");
@@ -192,29 +223,6 @@ namespace sogen
             if (options.native_timing)
             {
                 arguments.emplace_back("--native-timing");
-            }
-
-            const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
-                if (!path.empty())
-                {
-                    arguments.emplace_back(option);
-                    arguments.push_back(path.string());
-                }
-            };
-            add_path("--emulation", options.emulation_root);
-            add_path("--registry", options.registry_path);
-            add_path("--snapshot-dir", options.snapshot_directory);
-            for (const auto& registry_file : options.registry_files)
-            {
-                arguments.emplace_back("--reg-file");
-                arguments.push_back(registry_file.string());
-            }
-            arguments.emplace_back("--root-mode");
-            arguments.emplace_back(to_string(options.root_mode));
-            for (const auto& mount : options.mounts)
-            {
-                arguments.emplace_back("--mount");
-                arguments.push_back(render_mount_spec(mount));
             }
 
             return arguments;
@@ -921,9 +929,13 @@ namespace sogen
             {
                 throw std::runtime_error("--trace-children requires an x86 or x64 target with the WHP backend");
             }
+            const auto sandboxed_children = use_sandbox && !options.trace_children;
             manager = std::make_unique<subprocess_process_manager>(
-                get_managed_process_executable(use_sandbox && !options.trace_children),
-                [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token, ++child_counter); },
+                get_managed_process_executable(sandboxed_children),
+                [&, sandboxed_children](const auto port, const auto& token) {
+                    return sandboxed_children ? create_sandbox_arguments(options, port, token)
+                                              : create_analyzer_arguments(options, port, token, ++child_counter);
+                },
                 create_subprocess_launcher(),
                 options.managed_process ? options.managed_process->request().session : process_session_endpoint{});
 #endif
