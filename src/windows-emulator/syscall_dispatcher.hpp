@@ -106,6 +106,7 @@ namespace sogen
     {
         cbt_create,
         creation_messages,
+        min_max_info,
     };
 
     struct window_create_state : completion_state
@@ -120,6 +121,8 @@ namespace sogen
         std::vector<uint64_t> converted_create_struct_text{};
         std::vector<qmsg> message_queue{};
         window_show_data show_data{};
+        int requested_width{};
+        int requested_height{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -134,6 +137,8 @@ namespace sogen
             buffer.write_vector(this->converted_create_struct_text);
             buffer.write_vector(this->message_queue);
             this->show_data.serialize(buffer);
+            buffer.write(this->requested_width);
+            buffer.write(this->requested_height);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -148,6 +153,8 @@ namespace sogen
             buffer.read_vector(this->converted_create_struct_text);
             buffer.read_vector(this->message_queue);
             this->show_data.deserialize(buffer);
+            buffer.read(this->requested_width);
+            buffer.read(this->requested_height);
         }
     };
 
@@ -337,6 +344,8 @@ namespace sogen
         bool dispatching_nested_send{};
         bool destroying_window{};
         window_destroy_data destruction{};
+        emulator_stack_allocation min_max_info_alloc{};
+        uint64_t result_info{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -348,6 +357,8 @@ namespace sogen
             buffer.write(this->dispatching_nested_send);
             buffer.write(this->destroying_window);
             this->destruction.serialize(buffer);
+            buffer.write(this->min_max_info_alloc);
+            buffer.write(this->result_info);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -359,6 +370,8 @@ namespace sogen
             buffer.read(this->dispatching_nested_send);
             buffer.read(this->destroying_window);
             this->destruction.deserialize(buffer);
+            buffer.read(this->min_max_info_alloc);
+            buffer.read(this->result_info);
         }
     };
 

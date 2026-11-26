@@ -59,6 +59,10 @@ namespace sogen
                 srv.systemMetrics[19] = 1;    // SM_MOUSEPRESENT
                 srv.systemMetrics[20] = 17;   // SM_CYVSCROLL
                 srv.systemMetrics[21] = 17;   // SM_CXHSCROLL
+                srv.systemMetrics[28] = 136;  // SM_CXMIN
+                srv.systemMetrics[29] = 39;   // SM_CYMIN
+                srv.systemMetrics[34] = 136;  // SM_CXMINTRACK
+                srv.systemMetrics[35] = 39;   // SM_CYMINTRACK
                 srv.systemMetrics[43] = 3;    // SM_CMOUSEBUTTONS
                 srv.systemMetrics[49] = 16;   // SM_CXSMICON
                 srv.systemMetrics[50] = 16;   // SM_CYSMICON
