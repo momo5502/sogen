@@ -98,7 +98,10 @@ namespace sogen
                 this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
 
                 // A call answers as of everything the guest did before it, including the records it queued.
-                this->run_command_ring(win_emu);
+                if (queued_records_can_change_the_answer(context.io_control_code))
+                {
+                    this->run_command_ring(win_emu);
+                }
 
                 switch (context.io_control_code)
                 {
@@ -835,6 +838,13 @@ namespace sogen
                 while (this->run_ring_record(win_emu, false))
                 {
                 }
+            }
+
+            static bool queued_records_can_change_the_answer(const uint32_t io_control_code)
+            {
+                return io_control_code != gpu_bridge::ioctl_get_fence_status &&
+                       io_control_code != gpu_bridge::ioctl_get_semaphore_counter_value &&
+                       io_control_code != gpu_bridge::ioctl_wait_semaphores;
             }
 
             void raise_ring_events(windows_emulator& win_emu)
