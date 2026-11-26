@@ -249,17 +249,43 @@ namespace sogen
             CLSMENUNAME<EmulatorTraits<Emu64>> menu_name{};
             bool ansi_proc{};
             uint16_t atom{};
+            std::u16string name{};
+            bool synthesised{};
 
             class_entry() = default;
 
             class_entry(const emulator_pointer guest_obj, const EMU_WNDCLASSEX& wnd_class,
-                        const CLSMENUNAME<EmulatorTraits<Emu64>>& menu_name, const uint16_t atom, const bool ansi_proc = false)
+                        const CLSMENUNAME<EmulatorTraits<Emu64>>& menu_name, const uint16_t atom, std::u16string name,
+                        const bool ansi_proc = false)
                 : guest_obj_addr(guest_obj),
                   wnd_class(wnd_class),
                   menu_name(menu_name),
                   ansi_proc(ansi_proc),
-                  atom(atom)
+                  atom(atom),
+                  name(std::move(name))
             {
+            }
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->guest_obj_addr);
+                buffer.write(this->wnd_class);
+                buffer.write(this->menu_name);
+                buffer.write(this->ansi_proc);
+                buffer.write(this->atom);
+                buffer.write(this->name);
+                buffer.write(this->synthesised);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->guest_obj_addr);
+                buffer.read(this->wnd_class);
+                buffer.read(this->menu_name);
+                buffer.read(this->ansi_proc);
+                buffer.read(this->atom);
+                buffer.read(this->name);
+                buffer.read(this->synthesised);
             }
         };
 
