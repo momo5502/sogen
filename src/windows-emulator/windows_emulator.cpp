@@ -2261,7 +2261,17 @@ namespace sogen
 
         this->process.foreground_window = window;
 
-        if (const auto* previous_window = this->process.windows.get(previous))
+        const auto* previous_window = this->process.windows.get(previous);
+        const auto* new_window = this->process.windows.get(window);
+
+        // Windows clears the cursor clip when the foreground moves to another thread's input queue (win32kfull's
+        // xxxSetForegroundWindow2 and xxxProcessActivationEvent).
+        if (!previous_window || !new_window || previous_window->thread_id != new_window->thread_id)
+        {
+            this->process.cursor_clip.reset();
+        }
+
+        if (previous_window)
         {
             if (auto* owner = get_thread_by_id(this->process, previous_window->thread_id); owner && owner->active_window == previous)
             {
@@ -2269,7 +2279,7 @@ namespace sogen
             }
         }
 
-        if (const auto* new_window = this->process.windows.get(window))
+        if (new_window)
         {
             if (auto* owner = get_thread_by_id(this->process, new_window->thread_id))
             {
