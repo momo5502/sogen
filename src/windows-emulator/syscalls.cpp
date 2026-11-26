@@ -689,8 +689,13 @@ namespace sogen
         uint64_t handle_NtUserSetWindowsHookEx(const syscall_context& c, hinstance instance,
                                                emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module, DWORD thread_id, int hook_id,
                                                pointer proc, BOOL ansi);
+        uint64_t handle_NtUserSetWindowsHookAW(const syscall_context& c, int hook_id, pointer proc, BOOL ansi);
         BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, uint64_t hook);
+        BOOL handle_NtUserUnhookWindowsHook(const syscall_context& c, int hook_id, pointer proc);
         lresult handle_NtUserCallNextHookEx(const syscall_context& c, int code, wparam w_param, lparam l_param, BOOL ansi);
+        lresult completion_NtUserCallNextHookEx(const syscall_context& c, int code, wparam w_param, lparam l_param, BOOL ansi);
+        BOOL handle_NtUserCallMsgFilter(const syscall_context& c, emulator_object<msg> message, int code);
+        BOOL completion_NtUserCallMsgFilter(const syscall_context& c, emulator_object<msg> message, int code);
 
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
                                          emulator_object<LARGE_STRING> cls_version, emulator_object<LARGE_STRING> window_name, DWORD style,
@@ -2175,8 +2180,11 @@ namespace sogen
         add_handler(NtUserRegisterClassExWOW);
         add_handler(NtUserUnregisterClass);
         add_handler(NtUserSetWindowsHookEx);
+        add_handler(NtUserSetWindowsHookAW);
         add_handler(NtUserUnhookWindowsHookEx);
+        add_handler(NtUserUnhookWindowsHook);
         add_handler(NtUserCallNextHookEx);
+        add_handler(NtUserCallMsgFilter);
 
         add_handler(NtUserCreateWindowEx);
         add_handler(NtUserShowWindow);
@@ -2481,6 +2489,8 @@ namespace sogen
         add_stateless_callback(NtUserFillWindow);
         add_callback(NtUserGetMessage, message_retrieval_state);
         add_callback(NtUserPeekMessage, message_retrieval_state);
+        add_callback(NtUserCallNextHookEx, hook_call_state);
+        add_callback(NtUserCallMsgFilter, hook_call_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
         add_stateless_callback(NtUserWaitMessage);
         add_stateless_callback(NtUserMsgWaitForMultipleObjectsEx);

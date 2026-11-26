@@ -14,4 +14,13 @@ namespace sogen
     // The completion returns the message the hook left.
     bool dispatch_get_message_hook(const syscall_context& c, callback_id completion_id, const msg& message, UINT remove_flags);
     msg complete_get_message_hook(const syscall_context& c);
+
+    // leave_hook has to run in the completion of the callback that follows enter_hook.
+    void enter_hook(const syscall_context& c, const user_thread_hook& hook);
+    void enter_low_level_hook(const syscall_context& c, const user_low_level_hook& hook);
+    void leave_hook(const syscall_context& c);
+
+    void dispatch_message_hook(const syscall_context& c, callback_id completion_id, const user_thread_hook& hook, int code, wparam w_param,
+                               const msg& message);
+    std::optional<msg> complete_message_hook(const syscall_context& c);
 }

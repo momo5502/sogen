@@ -3,19 +3,21 @@
 #include "keyboard_layout.hpp"
 #include "user_callback_dispatch.hpp"
 #include "win32k_userconnect.hpp"
+#include "window_hooks.hpp"
 #include "windows_emulator.hpp"
 
 namespace sogen
 {
     namespace
     {
-        constexpr int k_wh_keyboard_ll = 13;
         constexpr int k_hc_action = 0;
         constexpr uint32_t k_fn_hk_in_lp_kbdll_hook_struct_callback_id = 0x2D;
         constexpr uint32_t k_fn_hk_in_lp_msll_hook_struct_callback_id = 0x2E;
         constexpr uint32_t k_fn_hk_in_lp_msg_callback_id = 0x2F;
-        constexpr int k_wh_getmessage = 3;
         constexpr size_t k_client_pfn_dispatch_hook_index = 19;
+        constexpr size_t k_client_info_offset = offsetof(TEB64, Win32ClientInfo);
+        constexpr size_t k_client_info_phk_current_index = 6;
+        constexpr size_t k_client_info_hook_current_index = 11;
 
         constexpr DWORD k_llkhf_extended = 0x01;
         constexpr DWORD k_llkhf_injected = 0x10;
@@ -80,6 +82,23 @@ namespace sogen
             const auto server_info = c.proc.user_handles.get_server_info().read();
             return ansi ? server_info.apfnClientA[k_client_pfn_dispatch_hook_index]
                         : server_info.apfnClientW[k_client_pfn_dispatch_hook_index];
+        }
+
+        UINT hook_callback_code(const user_thread_hook& hook, const int code)
+        {
+            return static_cast<UINT>(code & 0xFFFF) | (static_cast<UINT>(hook.id) << 16);
+        }
+
+        fn_hk_in_lp_msg_message make_message_hook_args(const syscall_context& c, const user_thread_hook& hook, const int code,
+                                                       const wparam w_param, const msg& message)
+        {
+            return fn_hk_in_lp_msg_message{
+                .code = hook_callback_code(hook, code),
+                .wParam = w_param,
+                .proc = hook.proc,
+                .dispatch = client_dispatch_hook(c, hook.ansi),
+                .hook_data = message,
+            };
         }
 
         bool runs_get_message_hook(const emulator_thread& thread)
@@ -151,6 +170,7 @@ namespace sogen
         const auto code = static_cast<UINT>(k_hc_action | (entry.id << 16));
         const auto dispatch = client_dispatch_hook(c);
 
+        enter_low_level_hook(c, entry);
         if (entry.id == k_wh_keyboard_ll)
         {
             const fn_hk_in_ll_hook_message<kbdll_hook_struct> args{
@@ -179,40 +199,104 @@ namespace sogen
 
     void complete_low_level_hook(const syscall_context& c)
     {
+        leave_hook(c);
         c.win_emu.finish_low_level_hook(c.thread(), c.previous_callback_result.value != 0);
+    }
+
+    void enter_hook(const syscall_context& c, const user_thread_hook& hook)
+    {
+        auto& thread = c.thread();
+        const auto& teb = *thread.teb64;
+        const auto current = teb.field<uint64_t>(k_client_info_offset + k_client_info_phk_current_index * sizeof(uint64_t));
+        const auto word = teb.field<uint32_t>(k_client_info_offset + k_client_info_hook_current_index * sizeof(uint64_t));
+
+        thread.running_hooks.push_back(running_hook{
+            .handle = hook.handle,
+            .previous_current = current.read(),
+            .previous_word = word.read(),
+        });
+
+        // user32's CallNextHookEx only enters the kernel while phkCurrent, the next valid hook, is set, and takes the hook
+        // type (high word) and the ANSI flag (low word) of the running hook from dwHookCurrent.
+        const auto* next = thread.next_older_hook(hook);
+        current.write(next ? next->handle : 0);
+        word.write((static_cast<uint32_t>(hook.id) << 16) | (hook.ansi ? 1u : 0u));
+    }
+
+    void enter_low_level_hook(const syscall_context& c, const user_low_level_hook& hook)
+    {
+        auto& thread = c.thread();
+        const auto& teb = *thread.teb64;
+        const auto current = teb.field<uint64_t>(k_client_info_offset + k_client_info_phk_current_index * sizeof(uint64_t));
+        const auto word = teb.field<uint32_t>(k_client_info_offset + k_client_info_hook_current_index * sizeof(uint64_t));
+
+        thread.running_hooks.push_back(running_hook{
+            .handle = hook.handle,
+            .previous_current = current.read(),
+            .previous_word = word.read(),
+        });
+
+        word.write(static_cast<uint32_t>(hook.id) << 16);
+    }
+
+    void leave_hook(const syscall_context& c)
+    {
+        auto& thread = c.thread();
+        const auto& teb = *thread.teb64;
+        const auto entry = thread.running_hooks.back();
+        thread.running_hooks.pop_back();
+        thread.erase_destroyed_hook(entry.handle);
+
+        teb.field<uint64_t>(k_client_info_offset + k_client_info_phk_current_index * sizeof(uint64_t)).write(entry.previous_current);
+        teb.field<uint32_t>(k_client_info_offset + k_client_info_hook_current_index * sizeof(uint64_t)).write(entry.previous_word);
     }
 
     bool dispatch_get_message_hook(const syscall_context& c, const callback_id completion_id, const msg& message, const UINT remove_flags)
     {
-        const auto& thread = c.thread();
-        if (!thread.get_message_hook || runs_get_message_hook(thread))
+        auto& thread = c.thread();
+        const auto* hook = thread.newest_hook(k_wh_getmessage);
+        if (!hook || runs_get_message_hook(thread))
         {
             return false;
         }
 
-        const auto& hook = *thread.get_message_hook;
-        const fn_hk_in_lp_msg_message args{
-            .code = static_cast<UINT>(k_hc_action | (k_wh_getmessage << 16)),
-            .wParam = remove_flags,
-            .proc = hook.proc,
-            .dispatch = client_dispatch_hook(c, hook.ansi),
-            .hook_data = message,
-        };
+        const auto args = make_message_hook_args(c, *hook, k_hc_action, remove_flags, message);
 
         message_retrieval_state state{};
         state.message = message;
+        enter_hook(c, *hook);
         dispatch_user_callback(c, completion_id, k_fn_hk_in_lp_msg_callback_id, std::move(state), args);
         return true;
     }
 
     msg complete_get_message_hook(const syscall_context& c)
     {
-        auto message = c.get_completion_state<message_retrieval_state>().message;
+        const auto message = c.get_completion_state<message_retrieval_state>().message;
+        return complete_message_hook(c).value_or(message);
+    }
+
+    void dispatch_message_hook(const syscall_context& c, const callback_id completion_id, const user_thread_hook& hook, const int code,
+                               const wparam w_param, const msg& message)
+    {
+        hook_call_state state{};
+        state.hook_id = hook.id;
+        enter_hook(c, hook);
+        dispatch_user_callback(c, completion_id, k_fn_hk_in_lp_msg_callback_id, std::move(state),
+                               make_message_hook_args(c, hook, code, w_param, message));
+    }
+
+    std::optional<msg> complete_message_hook(const syscall_context& c)
+    {
+        leave_hook(c);
+
         const auto& result = c.get_callback_result_object();
-        if (result.output != 0 && result.output_size >= sizeof(message))
+        if (result.output == 0 || result.output_size < sizeof(msg))
         {
-            c.win_emu.memory.read_memory(result.output, &message, sizeof(message));
+            return std::nullopt;
         }
+
+        msg message{};
+        c.win_emu.memory.read_memory(result.output, &message, sizeof(message));
         return message;
     }
 }

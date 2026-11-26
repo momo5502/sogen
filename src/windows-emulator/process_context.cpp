@@ -1244,7 +1244,7 @@ namespace sogen
         buffer.write_vector(this->raw_input_registrations);
         buffer.write_vector(this->pending_low_level_input);
         buffer.write(this->next_low_level_input_id);
-        buffer.write(this->next_hook_handle);
+        buffer.write(this->next_hook_uniqueness);
         buffer.write(this->drop_low_level_characters);
         buffer.write(this->next_raw_input_token);
         buffer.write_map(this->audio_render_events_by_stream);
@@ -1384,7 +1384,7 @@ namespace sogen
         buffer.read_vector(this->raw_input_registrations);
         buffer.read_vector(this->pending_low_level_input);
         buffer.read(this->next_low_level_input_id);
-        buffer.read(this->next_hook_handle);
+        buffer.read(this->next_hook_uniqueness);
         buffer.read(this->drop_low_level_characters);
         buffer.read(this->next_raw_input_token);
         buffer.read_map(this->audio_render_events_by_stream);
@@ -2120,6 +2120,10 @@ namespace sogen
         }
 
         thread.exit_status = thread_exit_status;
+        for (auto& other : this->threads | std::views::values)
+        {
+            other.destroy_hooks_installed_by(thread.id);
+        }
         thread.clear_raw_input();
         for (auto& sent : thread.pending_sent_messages)
         {

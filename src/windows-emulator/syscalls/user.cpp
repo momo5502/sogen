@@ -6,6 +6,7 @@
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "../window_destroy_orchestrator.hpp"
+#include "../window_hooks.hpp"
 #include "../window_show_orchestrator.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
@@ -38,11 +39,18 @@ namespace sogen
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
-        constexpr int k_wh_getmessage = 3;
-        constexpr int k_wh_cbt = 5;
-        constexpr int k_wh_keyboard_ll = 13;
-        constexpr int k_wh_mouse_ll = 14;
+        constexpr DWORD k_error_invalid_hook_handle = 1404;
+        constexpr DWORD k_error_invalid_hook_filter = 1426;
+        constexpr DWORD k_error_invalid_filter_proc = 1427;
+        constexpr DWORD k_error_hook_needs_hmod = 1428;
         constexpr DWORD k_error_global_only_hook = 1429;
+        constexpr DWORD k_error_access_denied = 5;
+        constexpr DWORD k_error_hook_not_installed = 1431;
+        constexpr DWORD k_error_not_enough_memory = 8;
+        constexpr uint64_t k_hook_index_mask = 0xFFFF;
+        constexpr uint64_t k_hook_uniqueness_mask = 0x7FFF;
+        constexpr uint32_t k_hook_uniqueness_last = 0x7FFE;
+        constexpr size_t k_max_hook_text_length = 0x8000;
         constexpr int k_hcbt_createwnd = 3;
 
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
@@ -1134,6 +1142,7 @@ namespace sogen
             args.cs.lpszName = window_name;
             args.cs.lpszClass = class_name;
 
+            enter_hook(c, hook);
             dispatch_user_callback(c, callback_id::NtUserCreateWindowEx, k_fn_hk_in_lp_cbt_create_struct_callback_id, std::move(state),
                                    args);
         }
@@ -4114,84 +4123,405 @@ namespace sogen
             return static_cast<int>(copied_chars);
         }
 
+        std::optional<uint64_t> allocate_hook_handle(const syscall_context& c)
+        {
+            std::set<uint64_t> used_indices{};
+            for (const auto& thread : c.proc.threads | std::views::values)
+            {
+                for (const auto& hook : thread.thread_hooks)
+                {
+                    used_indices.insert(hook.handle & 0xFFFF);
+                }
+
+                for (const auto& hook : thread.low_level_hooks)
+                {
+                    used_indices.insert(hook.handle & 0xFFFF);
+                }
+            }
+
+            uint64_t index = 1;
+            while (used_indices.contains(index))
+            {
+                ++index;
+            }
+
+            if (index > k_hook_index_mask)
+            {
+                set_guest_last_error(c, k_error_not_enough_memory);
+                return std::nullopt;
+            }
+
+            const uint64_t uniqueness = c.proc.next_hook_uniqueness;
+            c.proc.next_hook_uniqueness = uniqueness < k_hook_uniqueness_last ? static_cast<uint32_t>(uniqueness + 1) : 1;
+            return (uniqueness << 16) | index;
+        }
+
+        bool hook_handle_matches(const syscall_context& c, const uint64_t entry, const uint64_t requested)
+        {
+            if ((entry & k_hook_index_mask) != (requested & k_hook_index_mask))
+            {
+                return false;
+            }
+
+            const auto requested_uniqueness = (requested >> 16) & k_hook_uniqueness_mask;
+            return requested_uniqueness == k_hook_uniqueness_mask || requested_uniqueness == ((entry >> 16) & k_hook_uniqueness_mask) ||
+                   (c.proc.is_wow64_process && requested_uniqueness == 0);
+        }
+
+        uint64_t install_window_hook(const syscall_context& c, const hinstance instance, const DWORD thread_id, const int hook_id,
+                                     const pointer proc, const BOOL ansi)
+        {
+            if (hook_id < k_wh_msgfilter || hook_id > k_wh_mouse_ll)
+            {
+                set_guest_last_error(c, k_error_invalid_hook_filter);
+                return 0;
+            }
+
+            if (proc == 0)
+            {
+                set_guest_last_error(c, k_error_invalid_filter_proc);
+                return 0;
+            }
+
+            if (hook_id == k_wh_journalrecord || hook_id == k_wh_journalplayback)
+            {
+                return 0;
+            }
+
+            const bool low_level = hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll;
+            if ((low_level || hook_id == k_wh_sysmsgfilter) && thread_id != 0)
+            {
+                set_guest_last_error(c, k_error_global_only_hook);
+                return 0;
+            }
+
+            auto& thread = c.thread();
+
+            // Low-level hooks are global; they run on the installing thread while it retrieves messages.
+            if (low_level)
+            {
+                const auto handle = allocate_hook_handle(c);
+                if (!handle)
+                {
+                    return 0;
+                }
+
+                thread.low_level_hooks.push_back(user_low_level_hook{.handle = *handle, .id = hook_id, .proc = proc});
+                return *handle;
+            }
+
+            if (thread_id == 0)
+            {
+                if (instance == 0)
+                {
+                    set_guest_last_error(c, k_error_hook_needs_hmod);
+                }
+                return 0;
+            }
+
+            auto* target = c.proc.find_thread_by_id(thread_id);
+            const bool is_gui_thread = target && (target == &thread || target->win32k_thread_info != 0);
+            if (!is_gui_thread || target->is_terminated())
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            const auto handle = allocate_hook_handle(c);
+            if (!handle)
+            {
+                return 0;
+            }
+
+            target->thread_hooks.push_back(user_thread_hook{
+                .handle = *handle,
+                .id = hook_id,
+                .proc = proc,
+                .ansi = ansi != FALSE,
+                .installer = thread.id,
+                .destroyed = false,
+            });
+            target->publish_hook_flags();
+            return *handle;
+        }
+
         uint64_t handle_NtUserSetWindowsHookEx(const syscall_context& c, const hinstance instance,
                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*module*/,
                                                const DWORD thread_id, const int hook_id, const pointer proc, const BOOL ansi)
         {
+            return install_window_hook(c, instance, thread_id, hook_id, proc, ansi);
+        }
+
+        uint64_t handle_NtUserSetWindowsHookAW(const syscall_context& c, const int hook_id, const pointer proc, const BOOL ansi)
+        {
             auto& thread = c.thread();
-            if (proc == 0)
+            const bool first_of_type = !thread.chains_hooks(hook_id);
+            const auto handle = install_window_hook(c, 0, thread.id, hook_id, proc, ansi);
+            if (handle == 0)
             {
-                return 0;
+                return std::numeric_limits<uint64_t>::max();
             }
 
-            // Low-level hooks are global; they run on the installing thread while it retrieves messages.
-            if (hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll)
-            {
-                if (thread_id != 0)
-                {
-                    set_guest_last_error(c, k_error_global_only_hook);
-                    return 0;
-                }
-
-                const auto handle = c.proc.next_hook_handle++;
-                thread.low_level_hooks.push_back(user_low_level_hook{.handle = handle, .id = hook_id, .proc = proc});
-                return handle;
-            }
-
-            if (instance != 0 || thread_id != thread.id)
-            {
-                return 0;
-            }
-
-            std::optional<user_thread_hook>* slot{};
-            if (hook_id == k_wh_cbt)
-            {
-                slot = &thread.cbt_hook;
-            }
-            else if (hook_id == k_wh_getmessage)
-            {
-                slot = &thread.get_message_hook;
-            }
-
-            if (!slot || *slot)
-            {
-                return 0;
-            }
-
-            const auto handle = c.proc.next_hook_handle++;
-            *slot = user_thread_hook{
-                .handle = handle,
-                .proc = proc,
-                .ansi = ansi != FALSE,
-            };
-            return handle;
+            // The hook type's table in win32kfull flags (0x8) whether its first install returns the HHOOK.
+            const bool type_returns_handle_on_first_install = hook_id == k_wh_msgfilter || hook_id == k_wh_keyboard;
+            return first_of_type && !type_returns_handle_on_first_install ? 0 : handle;
         }
 
         BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, const uint64_t hook)
         {
+            const auto requested = hook & 0xFFFFFFFF;
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                for (auto* slot : {&thread.cbt_hook, &thread.get_message_hook})
+                if (std::erase_if(thread.low_level_hooks,
+                                  [&](const user_low_level_hook& entry) { return hook_handle_matches(c, entry.handle, requested); }) != 0)
                 {
-                    if (*slot && (*slot)->handle == hook)
-                    {
-                        slot->reset();
-                        return TRUE;
-                    }
+                    return TRUE;
                 }
 
-                if (std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0)
+                const auto found = std::ranges::find_if(thread.thread_hooks, [&](const user_thread_hook& entry) {
+                    return !entry.destroyed && hook_handle_matches(c, entry.handle, requested);
+                });
+                if (found != thread.thread_hooks.end())
                 {
+                    thread.destroy_hook(found->handle);
+                    return !thread.is_terminated();
+                }
+            }
+
+            set_guest_last_error(c, k_error_invalid_hook_handle);
+            return FALSE;
+        }
+
+        BOOL handle_NtUserUnhookWindowsHook(const syscall_context& c, const int hook_id, const pointer proc)
+        {
+            if (hook_id < k_wh_msgfilter || hook_id > k_wh_mouse_ll)
+            {
+                set_guest_last_error(c, k_error_invalid_hook_filter);
+                return FALSE;
+            }
+
+            auto& thread = c.thread();
+            for (const auto& hook : thread.thread_hooks | std::views::reverse)
+            {
+                if (hook.id == hook_id && hook.proc == proc && !hook.destroyed)
+                {
+                    if (hook.installer != thread.id)
+                    {
+                        set_guest_last_error(c, k_error_access_denied);
+                        return FALSE;
+                    }
+
+                    thread.destroy_hook(hook.handle);
                     return TRUE;
                 }
             }
 
+            set_guest_last_error(c, k_error_hook_not_installed);
             return FALSE;
         }
 
-        lresult handle_NtUserCallNextHookEx(const syscall_context&, const int, const wparam, const lparam, const BOOL)
+        template <typename T>
+        bool read_guest(const syscall_context& c, const uint64_t address, T& value, const size_t size = sizeof(T))
         {
+            if (!is_readable_range(c.win_emu, address, size))
+            {
+                return false;
+            }
+
+            c.win_emu.memory.read_memory(address, &value, size);
+            return true;
+        }
+
+        template <typename Element>
+        bool read_hook_text(const syscall_context& c, const pointer address, std::basic_string<Element>& text)
+        {
+            for (size_t i = 0; i < k_max_hook_text_length; ++i)
+            {
+                Element unit{};
+                if (!read_guest(c, address + (i * sizeof(Element)), unit))
+                {
+                    return false;
+                }
+
+                if (unit == 0)
+                {
+                    break;
+                }
+
+                text.push_back(unit);
+            }
+
+            return true;
+        }
+
+        bool convert_hook_text(const syscall_context& c, pointer& address, const bool is_atom_allowed, const bool from_ansi,
+                               const bool to_ansi, std::vector<uint64_t>& allocations)
+        {
+            if (address == 0 || (is_atom_allowed && address <= std::numeric_limits<uint16_t>::max()))
+            {
+                return true;
+            }
+
+            std::string narrow{};
+            std::u16string wide{};
+            if (from_ansi ? !read_hook_text(c, address, narrow) : !read_hook_text(c, address, wide))
+            {
+                return false;
+            }
+
+            if (from_ansi == to_ansi)
+            {
+                return true;
+            }
+
+            if (from_ansi)
+            {
+                wide = cp1252_to_u16(narrow);
+            }
+            else
+            {
+                narrow = u16_to_cp1252(wide);
+            }
+
+            const void* data = to_ansi ? static_cast<const void*>(narrow.c_str()) : wide.c_str();
+            const auto size = to_ansi ? narrow.size() + 1 : (wide.size() + 1) * sizeof(char16_t);
+            address = c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(size)), memory_permission::read_write);
+            c.win_emu.memory.write_memory(address, data, size);
+            allocations.push_back(address);
+            return true;
+        }
+
+        void release_hook_text(const syscall_context& c, hook_call_state& state)
+        {
+            for (const auto address : state.converted_text)
+            {
+                c.win_emu.memory.release_memory(address, 0);
+            }
+
+            state.converted_text.clear();
+        }
+
+        bool dispatch_next_cbt_create_hook(const syscall_context& c, const user_thread_hook& next, const wparam w_param,
+                                           const lparam l_param, const bool caller_ansi)
+        {
+            const auto* win = c.proc.windows.get(w_param);
+            if (!win || c.proc.is_wow64_process)
+            {
+                return false;
+            }
+
+            struct cbt_create_wnd
+            {
+                pointer lpcs{};
+                hwnd hwndInsertAfter{};
+            };
+
+            cbt_create_wnd create{};
+            fn_hk_in_lp_cbt_create_struct_message args{};
+            if (!read_guest(c, l_param, create) || !is_writable_range(c.win_emu, create.lpcs, sizeof(args.cs)) ||
+                !read_guest(c, create.lpcs, args.cs))
+            {
+                return false;
+            }
+
+            hook_call_state state{};
+            state.hook_id = k_wh_cbt;
+            if (!convert_hook_text(c, args.cs.lpszName, false, caller_ansi, next.ansi, state.converted_text) ||
+                !convert_hook_text(c, args.cs.lpszClass, true, caller_ansi, next.ansi, state.converted_text))
+            {
+                release_hook_text(c, state);
+                return false;
+            }
+
+            args.pwnd = win->guest.value();
+            args.msg = static_cast<UINT>(k_hcbt_createwnd | (k_wh_cbt << 16));
+            args.wParam = w_param;
+            args.hwndInsertAfter = create.hwndInsertAfter;
+            args.xpfnProc = next.proc;
+            args.ansi = next.ansi ? TRUE : FALSE;
+
+            enter_hook(c, next);
+            dispatch_user_callback(c, callback_id::NtUserCallNextHookEx, k_fn_hk_in_lp_cbt_create_struct_callback_id, std::move(state),
+                                   args);
+            return true;
+        }
+
+        lresult handle_NtUserCallNextHookEx(const syscall_context& c, const int code, const wparam w_param, const lparam l_param,
+                                            const BOOL ansi)
+        {
+            auto& thread = c.thread();
+            if (thread.running_hooks.empty())
+            {
+                return 0;
+            }
+
+            const auto* running = thread.find_hook(thread.running_hooks.back().handle);
+            const auto* next = running ? thread.next_older_hook(*running) : nullptr;
+            if (!next)
+            {
+                return 0;
+            }
+
+            if (next->id == k_wh_getmessage || next->id == k_wh_msgfilter)
+            {
+                const bool writes_back = next->id == k_wh_getmessage;
+                msg message{};
+                if (!read_guest(c, l_param, message) || (writes_back && !is_writable_range(c.win_emu, l_param, sizeof(message))))
+                {
+                    return 0;
+                }
+
+                dispatch_message_hook(c, callback_id::NtUserCallNextHookEx, *next, code, w_param, message);
+                return {};
+            }
+
+            if (next->id == k_wh_cbt && code == k_hcbt_createwnd &&
+                dispatch_next_cbt_create_hook(c, *next, w_param, l_param, ansi != FALSE))
+            {
+                return {};
+            }
+
             return 0;
+        }
+
+        lresult completion_NtUserCallNextHookEx(const syscall_context& c, const int /*code*/, const wparam /*w_param*/,
+                                                const lparam l_param, const BOOL /*ansi*/)
+        {
+            auto& state = c.get_completion_state<hook_call_state>();
+            if (state.hook_id == k_wh_cbt)
+            {
+                leave_hook(c);
+                release_hook_text(c, state);
+            }
+            else if (const auto hooked = complete_message_hook(c); hooked && state.hook_id == k_wh_getmessage)
+            {
+                if (!is_writable_range(c.win_emu, l_param, sizeof(*hooked)))
+                {
+                    return 0;
+                }
+
+                c.win_emu.memory.write_memory(l_param, &*hooked, sizeof(*hooked));
+            }
+
+            return c.get_callback_result<lresult>();
+        }
+
+        BOOL handle_NtUserCallMsgFilter(const syscall_context& c, const emulator_object<msg> message, const int code)
+        {
+            const auto* hook = c.thread().newest_hook(k_wh_msgfilter);
+            if (!hook || !is_readable_range(c.win_emu, message.value(), sizeof(msg)))
+            {
+                return FALSE;
+            }
+
+            dispatch_message_hook(c, callback_id::NtUserCallMsgFilter, *hook, code, 0, message.read());
+            return {};
+        }
+
+        BOOL completion_NtUserCallMsgFilter(const syscall_context& c, const emulator_object<msg> /*message*/, const int /*code*/)
+        {
+            complete_message_hook(c);
+            return c.get_callback_result<lresult>() != 0 ? TRUE : FALSE;
         }
 
         // Windows clips every window that is not a child against its siblings and gives every overlapped one a caption.
@@ -4600,7 +4930,7 @@ namespace sogen
                                                         utils::string::to_hex_number(handle.bits));
             }
 
-            if (const auto& hook = c.thread().cbt_hook)
+            if (const auto* hook = c.thread().newest_hook(k_wh_cbt))
             {
                 const auto hook_name = text_in_encoding(window_name, creator_name, hook->ansi);
                 const auto hook_class = text_in_encoding(class_name, creator_class, hook->ansi);
@@ -4625,6 +4955,11 @@ namespace sogen
             auto& s = c.get_completion_state<window_create_state>();
             auto* win = c.proc.windows.get(s.handle);
             auto show_orchestrator = window_show_orchestrator{s.show_data, c};
+
+            if (s.phase == window_create_phase::cbt_create)
+            {
+                leave_hook(c);
+            }
 
             const auto release_window_create_allocations = [&] {
                 show_orchestrator.release();
