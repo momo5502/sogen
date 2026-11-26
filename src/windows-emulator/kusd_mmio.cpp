@@ -230,10 +230,10 @@ namespace sogen
         features[PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE] = field(isar1, 20) != 0;
     }
 
-    uint64_t reference_tsc_scale(const uint64_t tsc_frequency)
+    uint64_t reference_tsc_scale(const uint64_t tsc_frequency, const uint64_t counter_frequency)
     {
-        // Long division of 10^7 * 2^64, one quotient bit at a time; it fits in 64 bits because 10^7 < tsc_frequency.
-        uint64_t remainder = REFERENCE_TIME_FREQUENCY;
+        // The result fits in 64 bits because counter_frequency < tsc_frequency.
+        uint64_t remainder = counter_frequency;
         uint64_t quotient = 0;
         for (int bit = 0; bit < 64; ++bit)
         {
@@ -303,18 +303,25 @@ namespace sogen
     }
 
     void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env,
-                          const std::optional<uint64_t> tsc_frequency)
+                          const std::optional<uint64_t> tsc_frequency, const bool steady_time)
     {
         setup_kusd(this->kusd_, version, fake_env);
 
         // QpcBypassEnabled already asks ntdll for the hypervisor page; once there is one to read, QPC needs no syscall.
-        // Its reference time counts 100 ns units from the partition's first run, like a freshly booted Hyper-V guest.
-        if (tsc_frequency && *tsc_frequency > REFERENCE_TIME_FREQUENCY)
+        const uint64_t counter_frequency = steady_time ? static_cast<uint64_t>(this->kusd_.QpcFrequency) : REFERENCE_TIME_FREQUENCY;
+        if (tsc_frequency && *tsc_frequency > counter_frequency)
         {
-            this->reference_tsc_scale_ = reference_tsc_scale(*tsc_frequency);
-            this->reference_tsc_sequence_ = 1;
-            this->kusd_.QpcFrequency = HUNDRED_NANOSECONDS_IN_ONE_SECOND;
-            this->kusd_.QpcBias = 0;
+            this->reference_tsc_scale_ = reference_tsc_scale(*tsc_frequency, counter_frequency);
+            // A partition's TSC stands still until a vCPU first runs, so a page that counts the steady clock waits for a
+            // syscall to anchor it.
+            if (!steady_time)
+            {
+                // The reference time counts 100 ns units from the partition's first run, like a freshly booted Hyper-V guest.
+                this->reference_tsc_sequence_ = 1;
+                this->reference_tsc_anchored_ = true;
+                this->kusd_.QpcFrequency = HUNDRED_NANOSECONDS_IN_ONE_SECOND;
+                this->kusd_.QpcBias = 0;
+            }
         }
 
         this->register_mmio();
@@ -330,11 +337,44 @@ namespace sogen
         return REFERENCE_TSC_PAGE_ADDRESS;
     }
 
-    uint64_t kusd_mmio::query_performance_counter(const uint64_t tsc) const
+    uint64_t kusd_mmio::query_performance_counter(const uint64_t tsc)
     {
+        if (this->reference_tsc_scale_ && !this->reference_tsc_anchored_)
+        {
+            this->anchor_reference_tsc_page(tsc);
+        }
+
         // ntdll: ((tsc * TscScale) >> 64) + TscOffset + QpcBias, shifted right by QpcShift, which is 0.
         const auto bias = this->access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcBias; });
         return reference_time(tsc, this->reference_tsc_scale_) + static_cast<uint64_t>(this->reference_tsc_offset_) + bias;
+    }
+
+    void kusd_mmio::follow_steady_clock()
+    {
+        if (!this->reference_tsc_scale_ || !this->counts_steady_time())
+        {
+            return;
+        }
+
+        this->reference_tsc_anchored_ = false;
+        this->write_reference_tsc_page();
+    }
+
+    void kusd_mmio::anchor_reference_tsc_page(const uint64_t tsc)
+    {
+        const auto now = static_cast<uint64_t>(this->clock_->steady_now().time_since_epoch().count());
+        const auto bias = this->access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcBias; });
+        this->reference_tsc_offset_ = static_cast<int64_t>(now - reference_time(tsc, this->reference_tsc_scale_) - bias);
+        this->reference_tsc_sequence_ = this->reference_tsc_sequence_ == UINT32_MAX ? 1 : this->reference_tsc_sequence_ + 1;
+        this->reference_tsc_anchored_ = true;
+        this->write_reference_tsc_page();
+    }
+
+    bool kusd_mmio::counts_steady_time() const
+    {
+        static_assert(static_cast<uint64_t>(utils::clock::steady_duration::period::den) != REFERENCE_TIME_FREQUENCY);
+        return static_cast<uint64_t>(this->access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcFrequency; })) !=
+               REFERENCE_TIME_FREQUENCY;
     }
 
     bool kusd_mmio::refresh_due(const ULONG clock_interval) const
@@ -414,13 +454,18 @@ namespace sogen
         // migration, TscScale follows this host's TSC rate, TscOffset moves so the reference time goes on from the saved
         // value, and the sequence changes so a read that the save interrupted starts over (0 would mean no page).
         this->reference_tsc_offset_ = 0;
+        this->reference_tsc_anchored_ = false;
         if (this->reference_tsc_scale_)
         {
             const auto tsc = this->read_native_tsc();
-            this->reference_tsc_scale_ = reference_tsc_scale(tsc.frequency);
-            this->reference_tsc_offset_ =
-                static_cast<int64_t>(saved_reference_time - reference_time(tsc.value, this->reference_tsc_scale_));
-            this->reference_tsc_sequence_ = this->reference_tsc_sequence_ == UINT32_MAX ? 1 : this->reference_tsc_sequence_ + 1;
+            this->reference_tsc_scale_ = reference_tsc_scale(tsc.frequency, static_cast<uint64_t>(this->kusd_.QpcFrequency));
+            if (!this->counts_steady_time())
+            {
+                this->reference_tsc_offset_ =
+                    static_cast<int64_t>(saved_reference_time - reference_time(tsc.value, this->reference_tsc_scale_));
+                this->reference_tsc_sequence_ = this->reference_tsc_sequence_ == UINT32_MAX ? 1 : this->reference_tsc_sequence_ + 1;
+                this->reference_tsc_anchored_ = true;
+            }
         }
 
         this->register_mmio();
@@ -430,7 +475,8 @@ namespace sogen
     {
         // The page exists only for a guest that reads its TSC natively; one restored elsewhere would mix the two QPC clocks.
         const auto tsc = this->read_tsc_ ? this->read_tsc_() : std::nullopt;
-        if (!tsc || tsc->frequency <= REFERENCE_TIME_FREQUENCY)
+        if (!tsc ||
+            tsc->frequency <= static_cast<uint64_t>(this->access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcFrequency; })))
         {
             throw std::runtime_error("The reference TSC page needs a TSC the guest reads natively");
         }
@@ -546,12 +592,20 @@ namespace sogen
             throw std::runtime_error("Failed to map the reference TSC page");
         }
 
-        // A TSC of fixed rate needs no rewrite while the process runs; only a restore moves the offset and the sequence.
-        const reference_tsc_page_layout page{.tsc_sequence = this->reference_tsc_sequence_,
-                                             .reserved = 0,
-                                             .tsc_scale = this->reference_tsc_scale_,
-                                             .tsc_offset = this->reference_tsc_offset_};
+        this->write_reference_tsc_page();
+    }
+
+    void kusd_mmio::write_reference_tsc_page()
+    {
+        // As Hyper-V rewrites the page: TscSequence 0 while TscScale and TscOffset change, then the new sequence.
+        const reference_tsc_page_layout page{
+            .tsc_sequence = 0, .reserved = 0, .tsc_scale = this->reference_tsc_scale_, .tsc_offset = this->reference_tsc_offset_};
         this->memory_->write_memory(REFERENCE_TSC_PAGE_ADDRESS, &page, sizeof(page));
+        if (this->reference_tsc_anchored_)
+        {
+            this->memory_->write_memory(REFERENCE_TSC_PAGE_ADDRESS + offsetof(reference_tsc_page_layout, tsc_sequence),
+                                        &this->reference_tsc_sequence_, sizeof(this->reference_tsc_sequence_));
+        }
     }
 
     bool intercepts_kusd(const emulator_settings& settings, const bool instruction_precision, guest_machine& emu)

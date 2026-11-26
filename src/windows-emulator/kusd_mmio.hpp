@@ -27,10 +27,10 @@ namespace sogen
     // XState, and processor features derived from the CPU's identification registers.
     void apply_arm64_processor(KUSER_SHARED_DATA64& kusd, uint64_t isar0, uint64_t isar1);
 
-    // TscScale of the Hyper-V reference TSC page for a TSC running at tsc_frequency Hz: floor(10^7 * 2^64 / tsc_frequency).
-    uint64_t reference_tsc_scale(uint64_t tsc_frequency);
+    // TscScale of the Hyper-V reference TSC page for a TSC running at tsc_frequency Hz: floor(counter_frequency * 2^64 / tsc_frequency).
+    uint64_t reference_tsc_scale(uint64_t tsc_frequency, uint64_t counter_frequency = HUNDRED_NANOSECONDS_IN_ONE_SECOND);
 
-    // Reference time in 100 ns units for a TSC value, as Hyper-V defines it: (tsc * tsc_scale) >> 64, before the page's TscOffset.
+    // Reference time for a TSC value, as Hyper-V defines it: (tsc * tsc_scale) >> 64, before the page's TscOffset.
     uint64_t reference_time(uint64_t tsc, uint64_t tsc_scale);
 
     // A clock interrupt's next tick: one clock interval (100 ns units) after the last, or the first tick still ahead when
@@ -81,13 +81,16 @@ namespace sogen
 
         // Given the rate of a TSC the guest reads natively, QueryPerformanceCounter runs in user mode as under Hyper-V: ntdll
         // reads a reference TSC page mapped after the KUSD instead of making a syscall.
-        void setup(const windows_version_manager& version, const fake_environment_config& fake_env, std::optional<uint64_t> tsc_frequency);
+        void setup(const windows_version_manager& version, const fake_environment_config& fake_env, std::optional<uint64_t> tsc_frequency,
+                   bool steady_time = false);
 
         // The reference TSC page's address, which SystemHypervisorSharedPageInformation reports; empty without one.
         std::optional<uint64_t> reference_tsc_page() const;
 
         // QueryPerformanceCounter for a guest TSC value, as ntdll computes it from the reference TSC page.
-        uint64_t query_performance_counter(uint64_t tsc) const;
+        uint64_t query_performance_counter(uint64_t tsc);
+
+        void follow_steady_clock();
 
         // Rewrites the page's time fields as KiUpdateTime does at every clock interrupt: once clock_interval (100 ns units)
         // has passed since the last rewrite or the clock went back, and right away without an interval. The vCPUs call it
@@ -117,6 +120,7 @@ namespace sogen
         // TscSequence and TscOffset, which a restore changes so the reference time goes on from the saved one.
         uint32_t reference_tsc_sequence_{};
         int64_t reference_tsc_offset_{};
+        bool reference_tsc_anchored_{};
 
         // The MMIO read callback runs on the WHP worker thread during guest execution
         // (outside the kernel lock), so multiple vCPUs can read KUSD concurrently. This
@@ -135,6 +139,9 @@ namespace sogen
         void register_mmio();
         void deregister_mmio();
         void map_reference_tsc_page();
+        void write_reference_tsc_page();
+        void anchor_reference_tsc_page(uint64_t tsc);
+        bool counts_steady_time() const;
         native_tsc read_native_tsc() const;
     };
 

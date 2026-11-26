@@ -1149,11 +1149,14 @@ namespace sogen
             {
                 if (performance_counter)
                 {
+                    // Read before the TSC: the call keeps its clock's first reading, so a page anchored to it never runs ahead
+                    // of the steady clock.
+                    const auto now = c.win_emu.clock().steady_now();
                     // With the reference TSC page this is the value ntdll computes from it in user mode, from the same TSC.
                     const auto tsc = c.proc.kusd.reference_tsc_page() ? c.emu.read_native_timestamp_counter() : std::nullopt;
                     performance_counter.access([&](LARGE_INTEGER& value) {
-                        value.QuadPart = tsc ? static_cast<LONGLONG>(c.proc.kusd.query_performance_counter(*tsc))
-                                             : c.win_emu.clock().steady_now().time_since_epoch().count();
+                        value.QuadPart =
+                            tsc ? static_cast<LONGLONG>(c.proc.kusd.query_performance_counter(*tsc)) : now.time_since_epoch().count();
                     });
                 }
 
