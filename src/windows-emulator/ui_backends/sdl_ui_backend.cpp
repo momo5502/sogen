@@ -1147,36 +1147,21 @@ namespace sogen
                     return;
                 }
 
-                auto flags = host_window_flags(desc);
+                const auto flags = host_window_flags(desc);
                 const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
                                                         desc.client_insets.right);
                 const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
                                                          desc.client_insets.bottom);
                 auto* window = create_host_window(desc, flags, width, height);
-                if (!window && (flags & SDL_WINDOW_VULKAN) != 0)
-                {
-                    flags &= ~SDL_WINDOW_VULKAN;
-                    window = create_host_window(desc, flags, width, height);
-                }
                 if (!window)
                 {
                     return;
                 }
 
                 auto* renderer = SDL_CreateRenderer(window, nullptr);
-                if (!renderer && (flags & SDL_WINDOW_VULKAN) != 0)
-                {
-                    SDL_DestroyWindow(window);
-                    flags &= ~SDL_WINDOW_VULKAN;
-                    window = create_host_window(desc, flags, width, height);
-                    renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
-                }
                 if (!renderer)
                 {
-                    if (window)
-                    {
-                        SDL_DestroyWindow(window);
-                    }
+                    SDL_DestroyWindow(window);
                     return;
                 }
 
@@ -1402,7 +1387,7 @@ namespace sogen
                 {
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
-                return flags | SDL_WINDOW_VULKAN;
+                return flags;
             }
 
             // The host window is sized to the guest client area; we render no frame, so that keeps the present 1:1.
@@ -1451,7 +1436,9 @@ namespace sogen
             bool recreate_host_window(window_state& state)
             {
                 auto* old_window = state.window;
-                auto flags = host_window_flags(state.desc) & ~SDL_WINDOW_HIDDEN;
+                // SDL loads its Vulkan loader, and with it every installed Vulkan driver, for each window created with
+                // SDL_WINDOW_VULKAN while it holds none, so only the window a Vulkan surface goes onto asks for Vulkan.
+                auto flags = (host_window_flags(state.desc) & ~SDL_WINDOW_HIDDEN) | SDL_WINDOW_VULKAN;
                 flags |= SDL_GetWindowFlags(old_window) & SDL_WINDOW_HIDDEN;
 
                 int x{};

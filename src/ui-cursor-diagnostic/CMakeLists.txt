@@ -16,3 +16,5 @@ sogen_strip_target(ui-cursor-diagnostic)
 
 add_test(NAME ui-system-cursors COMMAND ui-cursor-diagnostic --check)
 set_tests_properties(ui-system-cursors PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 15)
+add_test(NAME ui-vulkan-windows COMMAND ui-cursor-diagnostic --check-vulkan-windows)
+set_tests_properties(ui-vulkan-windows PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 15)

@@ -2,7 +2,14 @@
 #include <platform/ui_backend.hpp>
 #include <utils/finally.hpp>
 
+#include "../windows-emulator/vulkan_handle_utils.hpp"
+
 #include <SDL3/SDL.h>
+
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan_core.h>
+
+#include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -75,6 +82,68 @@ namespace
         return 0;
     }
 
+    void keep_sdl_rendering_off_vulkan()
+    {
+        SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, "software", SDL_HINT_OVERRIDE);
+        SDL_SetHintWithPriority(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0", SDL_HINT_OVERRIDE);
+    }
+
+    int check_vulkan_windows(sogen::ui_backend& ui)
+    {
+        keep_sdl_rendering_off_vulkan();
+
+        if (!SDL_Vulkan_LoadLibrary(nullptr))
+        {
+            std::cerr << "Vulkan unavailable: " << SDL_GetError() << '\n';
+            return 77;
+        }
+        SDL_Vulkan_UnloadLibrary();
+
+        ui.pump_events();
+        ui.create_window({.handle = window_id,
+                          .rect = {.left = 0, .top = 0, .right = 64, .bottom = 48},
+                          .style = WS_POPUP,
+                          .visible = false,
+                          .top_level = true});
+        require(SDL_Vulkan_GetVkGetInstanceProcAddr() == nullptr, "A window without a Vulkan surface loaded the Vulkan loader");
+
+        const auto extensions = ui.vulkan_instance_extensions();
+        const auto get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
+        const auto create_instance =
+            get_instance_proc_addr ? reinterpret_cast<PFN_vkCreateInstance>(get_instance_proc_addr(nullptr, "vkCreateInstance")) : nullptr;
+
+        std::vector<const char*> names{};
+        names.reserve(extensions.size());
+        for (const auto& extension : extensions)
+        {
+            names.push_back(extension.c_str());
+        }
+        VkInstanceCreateInfo create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        create_info.enabledExtensionCount = static_cast<uint32_t>(names.size());
+        create_info.ppEnabledExtensionNames = names.data();
+        VkInstance instance{};
+        if (extensions.empty() || !create_instance || create_instance(&create_info, nullptr, &instance) != VK_SUCCESS)
+        {
+            std::cerr << "No usable Vulkan driver for a surface\n";
+            return 77;
+        }
+        const auto destroy_instance = reinterpret_cast<PFN_vkDestroyInstance>(get_instance_proc_addr(instance, "vkDestroyInstance"));
+        const auto destroy_surface = reinterpret_cast<PFN_vkDestroySurfaceKHR>(get_instance_proc_addr(instance, "vkDestroySurfaceKHR"));
+
+        const auto surface = ui.create_vulkan_surface(window_id, sogen::pack_vulkan_handle(instance));
+        if (surface != 0)
+        {
+            destroy_surface(instance, sogen::unpack_vulkan_handle<VkSurfaceKHR>(surface), nullptr);
+        }
+        ui.destroy_window(window_id);
+        destroy_instance(instance, nullptr);
+        require(surface != 0, "The window got no Vulkan surface");
+
+        std::cout << "Vulkan window checks passed\n";
+        return 0;
+    }
+
     void show_cursors(sogen::ui_backend& ui)
     {
         bool running = true;
@@ -121,9 +190,10 @@ namespace
 int main(int argc, char** argv)
 {
     const bool check = argc == 2 && std::string_view{argv[1]} == "--check";
-    if (argc != 1 && !check)
+    const bool check_vulkan = argc == 2 && std::string_view{argv[1]} == "--check-vulkan-windows";
+    if (argc != 1 && !check && !check_vulkan)
     {
-        std::cerr << "Usage: ui-cursor-diagnostic [--check]\n";
+        std::cerr << "Usage: ui-cursor-diagnostic [--check | --check-vulkan-windows]\n";
         return 1;
     }
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
@@ -143,6 +213,10 @@ int main(int argc, char** argv)
         if (check)
         {
             return check_cursors(ui);
+        }
+        if (check_vulkan)
+        {
+            return check_vulkan_windows(*ui);
         }
         show_cursors(*ui);
         return 0;
