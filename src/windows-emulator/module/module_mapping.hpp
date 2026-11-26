@@ -25,7 +25,7 @@ namespace sogen
     template <typename T>
     mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path);
 
-    NTSTATUS check_image_layout(std::span<const std::byte> data);
+    NTSTATUS check_image(std::span<const std::byte> data);
 
     bool unmap_module(memory_manager& memory, const mapped_module& mod);
 

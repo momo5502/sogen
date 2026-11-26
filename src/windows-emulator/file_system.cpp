@@ -467,13 +467,13 @@ namespace sogen
     bool file_system::read_file(const windows_path& path, std::vector<std::byte>* data) const
     {
         const auto input = this->open_read(path);
-        if (!input.file)
-        {
-            return false;
-        }
+        return input.file && read_file(*input.file, data);
+    }
 
-        const auto size = input.file->size();
-        if (size < 0 || !input.file->seek(0, SEEK_SET))
+    bool file_system::read_file(i_file& file, std::vector<std::byte>* data)
+    {
+        const auto size = file.size();
+        if (size < 0 || !file.seek(0, SEEK_SET))
         {
             return false;
         }
@@ -483,7 +483,7 @@ namespace sogen
         size_t offset = 0;
         while (offset < data->size())
         {
-            const auto read = input.file->read(std::span{*data}.subspan(offset));
+            const auto read = file.read(std::span{*data}.subspan(offset));
             if (read == 0)
             {
                 return false;

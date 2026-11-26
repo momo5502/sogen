@@ -59,6 +59,7 @@ namespace sogen
 
         bool read_file(const windows_path& path, std::vector<std::byte>* data) const;
         std::vector<std::byte> read_file(const windows_path& path) const;
+        static bool read_file(i_file& file, std::vector<std::byte>* data);
         std::optional<std::filesystem::path> translate(const windows_path& path) const;
 
       private:

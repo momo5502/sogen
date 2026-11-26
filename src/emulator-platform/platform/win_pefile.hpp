@@ -65,7 +65,9 @@
 
 #define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE 0x0040
 #define IMAGE_DLLCHARACTERISTICS_NX_COMPAT    0x0100
+#define IMAGE_DLLCHARACTERISTICS_APPCONTAINER 0x1000
 #define IMAGE_FILE_RELOCS_STRIPPED            0x0001
+#define IMAGE_FILE_EXECUTABLE_IMAGE           0x0002
 #define IMAGE_FILE_LARGE_ADDRESS_AWARE        0x0020
 #define IMAGE_FILE_32BIT_MACHINE              0x0100
 #define IMAGE_FILE_DLL                        0x2000
@@ -296,6 +298,45 @@ namespace sogen
         std::uint16_t e_oeminfo;  // OEM information; e_oemid specific
         std::uint16_t e_res2[10]; // Reserved words
         std::uint32_t e_lfanew;   // File address of new exe header
+    };
+
+    struct PEOs2Header_t
+    {
+        enum
+        {
+            k_Magic = 0x454E, // IMAGE_OS2_SIGNATURE
+        };
+
+        std::uint16_t ne_magic;
+        std::uint8_t ne_ver;
+        std::uint8_t ne_rev;
+        std::uint16_t ne_enttab;
+        std::uint16_t ne_cbenttab;
+        std::int32_t ne_crc;
+        std::uint16_t ne_flags;
+        std::uint16_t ne_autodata;
+        std::uint16_t ne_heap;
+        std::uint16_t ne_stack;
+        std::int32_t ne_csip;
+        std::int32_t ne_sssp;
+        std::uint16_t ne_cseg;
+        std::uint16_t ne_cmod;
+        std::uint16_t ne_cbnrestab;
+        std::uint16_t ne_segtab;
+        std::uint16_t ne_rsrctab;
+        std::uint16_t ne_restab;
+        std::uint16_t ne_modtab;
+        std::uint16_t ne_imptab;
+        std::int32_t ne_nrestab;
+        std::uint16_t ne_cmovent;
+        std::uint16_t ne_align;
+        std::uint16_t ne_cres;
+        std::uint8_t ne_exetyp;
+        std::uint8_t ne_flagsothers;
+        std::uint16_t ne_pretthunks;
+        std::uint16_t ne_psegrefbytes;
+        std::uint16_t ne_swaparea;
+        std::uint16_t ne_expver;
     };
 
 #pragma pack(pop)

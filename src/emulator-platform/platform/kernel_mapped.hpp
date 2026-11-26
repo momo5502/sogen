@@ -2067,6 +2067,30 @@ namespace sogen
 
     static_assert(sizeof(PROCESS_MITIGATION_POLICY_RAW_DATA) == 0x8);
 
+    union PROCESS_MITIGATION_CHILD_PROCESS_POLICY
+    {
+        ULONG Flags;
+
+        struct
+        {
+            ULONG NoChildProcessCreation : 1;
+            ULONG AuditNoChildProcessCreation : 1;
+            ULONG AllowSecureProcessCreation : 1;
+            ULONG ReservedFlags : 29;
+        };
+    };
+
+    static_assert(sizeof(PROCESS_MITIGATION_CHILD_PROCESS_POLICY) == 0x4);
+
+    struct PROCESS_CHILD_PROCESS_INFORMATION
+    {
+        BOOLEAN ProhibitChildProcesses;
+        BOOLEAN AlwaysAllowSecureChildProcess;
+        BOOLEAN AuditProhibitChildProcesses;
+    };
+
+    static_assert(sizeof(PROCESS_CHILD_PROCESS_INFORMATION) == 0x3);
+
     typedef struct _WOW64_CPURESERVED
     {
         USHORT Flags;       // Initialised to 0x02 by ntdll.dll and periodically bitwise OR'd with WOW64_CPURESERVED_FLAG_RESET_STATE

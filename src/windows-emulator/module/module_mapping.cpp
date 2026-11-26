@@ -593,13 +593,12 @@ namespace sogen
         // sub-page-aligned image, which Windows maps as the file itself, may have gaps and unaligned sections.
         template <typename T>
         void validate_image_layout(const utils::safe_buffer_accessor<const std::byte>& buffer, const PENTHeaders_t<T>& nt_headers,
-                                   const uint64_t nt_headers_offset)
+                                   const uint64_t nt_headers_offset, const uint64_t file_size)
         {
             const auto& optional_header = nt_headers.OptionalHeader;
             const uint64_t section_alignment = optional_header.SectionAlignment;
             const uint64_t file_alignment = optional_header.FileAlignment;
             const uint64_t image_size = page_align_up(optional_header.SizeOfImage);
-            const uint64_t file_size = buffer.get_buffer().size();
 
             const auto require = [](const bool valid, const NTSTATUS status = STATUS_INVALID_IMAGE_FORMAT) {
                 if (!valid)
@@ -655,6 +654,314 @@ namespace sogen
                     static_cast<uint64_t>(last_section.PointerToRawData) + last_section.SizeOfRawData <= file_size);
         }
 
+        constexpr uint64_t sector_size = 0x200;
+        constexpr size_t image_header_page_size = 0x1000;
+        constexpr size_t image_header_later_pages_size = 2 * image_header_page_size;
+        constexpr uint32_t largest_image_size = 0x77000000;
+        constexpr uint16_t optional_header_size_alignment = 8;
+        constexpr size_t dos_paragraph_size = 16;
+
+        constexpr uint8_t ne_target_unknown = 0;
+        constexpr uint8_t ne_target_os2 = 1;
+        constexpr uint8_t ne_target_windows = 2;
+        constexpr uint8_t ne_target_boss = 5;
+        constexpr std::array<uint8_t, 2> ne_windows_16_major_versions{2, 3};
+
+        constexpr std::string_view os2_api_module = "DOSCALLS";
+        constexpr size_t os2_bind_stub_offset = 0x200;
+        constexpr std::string_view os2_bind_stub = "16STUB";
+        constexpr size_t phar_lap_copyright_offset = 24;
+        constexpr std::string_view phar_lap_copyright{"Phar Lap Software, Inc.", sizeof("Phar Lap Software, Inc.")};
+        constexpr size_t phar_lap_signature_offset = 56;
+        constexpr std::array<std::string_view, 3> phar_lap_signatures{"PK", "PO", "PV"};
+        constexpr size_t rational_copyright_pointer_offset = 48;
+        constexpr std::string_view rational_copyright = "Copyright (C) Rational Systems, Inc.";
+        constexpr std::string_view lotus_preloader = "1-2-3 Preloader";
+
+        template <typename T>
+        T read_at(const std::span<const std::byte> buffer, const size_t offset)
+        {
+            T value{};
+            if (offset <= buffer.size() && sizeof(T) <= buffer.size() - offset)
+            {
+                std::memcpy(&value, buffer.data() + offset, sizeof(T));
+            }
+
+            return value;
+        }
+
+        bool holds_at(const std::span<const std::byte> buffer, const size_t offset, const std::string_view text)
+        {
+            return offset <= buffer.size() && text.size() <= buffer.size() - offset &&
+                   std::memcmp(buffer.data() + offset, text.data(), text.size()) == 0;
+        }
+
+        // MiCheckDosCalls
+        bool imports_os2_api(const std::span<const std::byte> new_header, const PEOs2Header_t& os2_header)
+        {
+            const size_t module_table = os2_header.ne_modtab;
+            if (os2_header.ne_cmod == 0 || module_table + sizeof(uint16_t) * os2_header.ne_cmod > new_header.size())
+            {
+                return false;
+            }
+
+            for (size_t i = 0; i < os2_header.ne_cmod; ++i)
+            {
+                const size_t name = os2_header.ne_imptab + size_t{read_at<uint16_t>(new_header, module_table + i * sizeof(uint16_t))};
+                if (name >= new_header.size())
+                {
+                    return false;
+                }
+
+                const size_t length = read_at<uint8_t>(new_header, name);
+                if (length == 0 || name + length >= new_header.size())
+                {
+                    return false;
+                }
+
+                if (length == os2_api_module.size() && holds_at(new_header, name + 1, os2_api_module))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool is_phar_lap_extended(const std::span<const std::byte> first_page, const size_t dos_code)
+        {
+            return dos_code + phar_lap_signature_offset + sizeof(uint16_t) <= first_page.size() &&
+                   holds_at(first_page, dos_code + phar_lap_copyright_offset, phar_lap_copyright) &&
+                   std::ranges::any_of(phar_lap_signatures, [&](const std::string_view signature) {
+                       return holds_at(first_page, dos_code + phar_lap_signature_offset, signature);
+                   });
+        }
+
+        bool is_rational_extended(const std::span<const std::byte> first_page, const size_t dos_code)
+        {
+            if (dos_code + rational_copyright_pointer_offset + sizeof(uint16_t) > first_page.size())
+            {
+                return false;
+            }
+
+            const auto copyright = dos_code + read_at<uint16_t>(first_page, dos_code + rational_copyright_pointer_offset);
+            return holds_at(first_page, copyright, rational_copyright);
+        }
+
+        bool is_lotus_preloaded(const std::span<const std::byte> new_header, const PEOs2Header_t& os2_header,
+                                const uint32_t new_header_offset)
+        {
+            const auto non_resident_names = static_cast<uint32_t>(os2_header.ne_nrestab);
+            if (non_resident_names <= new_header_offset)
+            {
+                return false;
+            }
+
+            const size_t first_name = non_resident_names - new_header_offset;
+            return first_name + 1 + lotus_preloader.size() < new_header.size() && holds_at(new_header, first_name + 1, lotus_preloader);
+        }
+
+        // MiComputeBadImageHeaderType
+        NTSTATUS bad_image_header_status(const std::span<const std::byte> first_page, const std::span<const std::byte> new_header)
+        {
+            const auto os2_header = read_at<PEOs2Header_t>(new_header, 0);
+            if (os2_header.ne_magic != PEOs2Header_t::k_Magic)
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            const auto expected_major_version = static_cast<uint8_t>(os2_header.ne_expver >> std::numeric_limits<uint8_t>::digits);
+            const auto expects_windows_16 =
+                std::ranges::find(ne_windows_16_major_versions, expected_major_version) != ne_windows_16_major_versions.end();
+            const auto targets_windows =
+                os2_header.ne_exetyp == ne_target_windows || (os2_header.ne_exetyp == ne_target_unknown && expects_windows_16);
+            if (targets_windows && !imports_os2_api(new_header, os2_header))
+            {
+                return STATUS_INVALID_IMAGE_WIN_16;
+            }
+
+            if (os2_header.ne_exetyp == ne_target_boss || os2_header.ne_enttab == os2_header.ne_imptab)
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            if (os2_header.ne_exetyp == ne_target_os2 && holds_at(first_page, os2_bind_stub_offset, os2_bind_stub))
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            const auto dos_header = read_at<PEDosHeader_t>(first_page, 0);
+            const auto dos_code = size_t{dos_header.e_cparhdr} * dos_paragraph_size;
+            if (is_phar_lap_extended(first_page, dos_code) || is_rational_extended(first_page, dos_code) ||
+                is_lotus_preloaded(new_header, os2_header, dos_header.e_lfanew))
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            return STATUS_INVALID_IMAGE_NE_FORMAT;
+        }
+
+        // MiLegacyImageArchitecture
+        bool is_legacy_architecture(const PEMachineType machine)
+        {
+            return machine == PEMachineType::I386 || machine == PEMachineType::AMD64;
+        }
+
+        // MiVerifyImageHeader after the optional header's magic
+        template <typename T>
+        bool is_valid_optional_header(const PENTHeaders_t<T>& nt_headers)
+        {
+            constexpr uint16_t required_by_other_architectures = IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE | IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+
+            const auto& file_header = nt_headers.FileHeader;
+            const auto& optional_header = nt_headers.OptionalHeader;
+            const auto file_alignment = optional_header.FileAlignment;
+            const auto section_alignment = optional_header.SectionAlignment;
+            const auto machine = file_header.Machine;
+            const auto machine_matches = sizeof(T) == sizeof(uint32_t) ? machine == PEMachineType::I386 || machine == PEMachineType::ARMNT
+                                                                       : machine == PEMachineType::AMD64 || machine == PEMachineType::ARM64;
+            const auto relocations_stripped = (file_header.Characteristics & IMAGE_FILE_RELOCS_STRIPPED) != 0;
+            const auto dll_characteristics = optional_header.DllCharacteristics;
+            const auto architecture_allows =
+                is_legacy_architecture(machine)
+                    ? !relocations_stripped || !(dll_characteristics & IMAGE_DLLCHARACTERISTICS_APPCONTAINER)
+                    : !relocations_stripped && (dll_characteristics & required_by_other_architectures) == required_by_other_architectures;
+
+            return (file_alignment % sector_size == 0 || file_alignment == section_alignment) && std::has_single_bit(file_alignment) &&
+                   std::has_single_bit(section_alignment) && section_alignment >= file_alignment &&
+                   optional_header.SizeOfImage <= largest_image_size && machine_matches &&
+                   optional_header.SizeOfHeaders < optional_header.SizeOfImage && optional_header.ImageBase % ALLOCATION_GRANULARITY == 0 &&
+                   file_header.SizeOfOptionalHeader % optional_header_size_alignment == 0 && architecture_allows;
+        }
+
+        // MiCreateImageFileMap after MiVerifyImageHeader: the headers and the section table have to lie within SizeOfImage, a
+        // section table that ends past the header pages read so far is read on its own, and only I386 and AMD64 images may be
+        // aligned below a page.
+        template <typename T>
+        NTSTATUS check_file_map_headers(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset, const uint64_t read_end,
+                                        const uint64_t file_size)
+        {
+            const auto& file_header = nt_headers.FileHeader;
+            const auto& optional_header = nt_headers.OptionalHeader;
+            const uint64_t section_table =
+                nt_headers_offset + offsetof(PENTHeaders_t<T>, OptionalHeader) + file_header.SizeOfOptionalHeader;
+            const auto section_table_end = section_table + uint64_t{file_header.NumberOfSections} * sizeof(IMAGE_SECTION_HEADER);
+            if (section_table_end > optional_header.SizeOfImage)
+            {
+                return STATUS_INVALID_IMAGE_FORMAT;
+            }
+
+            if (section_table_end > read_end)
+            {
+                const auto section_table_page = section_table - section_table % image_header_page_size;
+                if (file_header.NumberOfSections == 0 && section_table == section_table_page)
+                {
+                    return STATUS_INVALID_IMAGE_FORMAT;
+                }
+
+                if (section_table_page >= file_size)
+                {
+                    return STATUS_INVALID_FILE_FOR_SECTION;
+                }
+
+                if (section_table_end > file_size)
+                {
+                    return STATUS_INVALID_IMAGE_FORMAT;
+                }
+            }
+
+            if (optional_header.SectionAlignment < image_header_page_size && !is_legacy_architecture(file_header.Machine))
+            {
+                return STATUS_INVALID_IMAGE_FORMAT;
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        // MiVerifyImageHeader up to the optional header's magic
+        NTSTATUS check_nt_headers(const std::span<const std::byte> first_page, const std::span<const std::byte> new_header,
+                                  const uint64_t nt_headers_offset, const uint64_t read_end, const uint64_t file_size)
+        {
+            const auto nt_headers = read_at<PENTHeaders_t<std::uint32_t>>(new_header, 0);
+            if (nt_headers.Signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+            {
+                return bad_image_header_status(first_page, new_header);
+            }
+
+            const auto& file_header = nt_headers.FileHeader;
+            if (file_header.Machine == PEMachineType::UNKNOWN && file_header.SizeOfOptionalHeader == 0)
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            if (!(file_header.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE))
+            {
+                return STATUS_INVALID_IMAGE_FORMAT;
+            }
+
+            const auto check_headers = [&](const auto& headers) {
+                return is_valid_optional_header(headers) ? check_file_map_headers(headers, nt_headers_offset, read_end, file_size)
+                                                         : STATUS_INVALID_IMAGE_FORMAT;
+            };
+
+            const auto magic = nt_headers.OptionalHeader.Magic;
+            if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+            {
+                return check_headers(nt_headers);
+            }
+
+            if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+            {
+                return check_headers(read_at<PENTHeaders_t<std::uint64_t>>(new_header, 0));
+            }
+
+            return STATUS_INVALID_IMAGE_FORMAT;
+        }
+
+        // 19041's MiCreateImageFileMap up to MiBuildImageControlArea
+        NTSTATUS check_image_headers(const std::span<const std::byte> image, const uint64_t file_size)
+        {
+            if (file_size == 0 || file_size > std::numeric_limits<uint32_t>::max())
+            {
+                return STATUS_INVALID_FILE_FOR_SECTION;
+            }
+
+            const auto first_page = image.first(image_header_page_size);
+            const auto dos_header = read_at<PEDosHeader_t>(first_page, 0);
+            if (dos_header.e_magic != PEDosHeader_t::k_Magic)
+            {
+                return STATUS_INVALID_IMAGE_NOT_MZ;
+            }
+
+            const uint64_t nt_headers_offset = dos_header.e_lfanew;
+            const auto nt_headers_end = nt_headers_offset + sizeof(PENTHeaders_t<std::uint64_t>);
+            if (nt_headers_end > file_size || nt_headers_offset % alignof(std::uint32_t) != 0)
+            {
+                return STATUS_INVALID_IMAGE_PROTECT;
+            }
+
+            if (nt_headers_end <= first_page.size())
+            {
+                return check_nt_headers(first_page, first_page.subspan(static_cast<size_t>(nt_headers_offset)), nt_headers_offset,
+                                        first_page.size(), file_size);
+            }
+
+            const auto pages_offset = nt_headers_offset - nt_headers_offset % image_header_page_size;
+            const auto pages_end =
+                pages_offset + std::min<uint64_t>(image_header_later_pages_size, page_align_up(file_size - pages_offset));
+            const auto new_header_size = static_cast<size_t>(pages_end - nt_headers_offset);
+            const auto read_end = std::min(pages_end, file_size);
+            if (pages_end <= file_size)
+            {
+                return check_nt_headers(first_page, image.subspan(static_cast<size_t>(nt_headers_offset), new_header_size),
+                                        nt_headers_offset, read_end, file_size);
+            }
+
+            std::array<std::byte, image_header_later_pages_size> new_header{};
+            std::ranges::copy(image.subspan(static_cast<size_t>(nt_headers_offset)), new_header.begin());
+            return check_nt_headers(first_page, std::span{new_header}.first(new_header_size), nt_headers_offset, read_end, file_size);
+        }
+
         struct section_file_range
         {
             size_t offset{};
@@ -681,7 +988,6 @@ namespace sogen
                 return {};
             }
 
-            constexpr uint64_t sector_size = 0x200;
             const uint64_t raw_end = static_cast<uint64_t>(section.PointerToRawData) + section.SizeOfRawData;
             const auto start = align_down(section.PointerToRawData, sector_size);
             const auto end = std::min(
@@ -873,7 +1179,7 @@ namespace sogen
         const auto& optional_header = nt_headers.OptionalHeader;
 
         validate_image_machine(nt_headers);
-        validate_image_layout(buffer, nt_headers, nt_headers_offset);
+        validate_image_layout(buffer, nt_headers, nt_headers_offset, data.size());
 
         binary.image_base = optional_header.ImageBase;
         binary.image_base_file = optional_header.ImageBase;
@@ -1065,32 +1371,53 @@ namespace sogen
         return binary;
     }
 
-    NTSTATUS check_image_layout(const std::span<const std::byte> data)
+    namespace
     {
-        try
+        NTSTATUS check_layout(const std::span<const std::byte> headers, const uint64_t file_size)
         {
-            const utils::safe_buffer_accessor<const std::byte> buffer{data};
-            const auto nt_headers_offset = buffer.as<PEDosHeader_t>(0).get().e_lfanew;
-            const auto magic = buffer.as<uint16_t>(nt_headers_offset + offsetof(PENTHeaders_t<std::uint32_t>, OptionalHeader)).get();
-            if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+            try
             {
-                validate_image_layout(buffer, read_nt_headers<std::uint32_t>(buffer, nt_headers_offset), nt_headers_offset);
+                const utils::safe_buffer_accessor<const std::byte> buffer{headers};
+                const auto nt_headers_offset = buffer.as<PEDosHeader_t>(0).get().e_lfanew;
+                const auto magic = buffer.as<uint16_t>(nt_headers_offset + offsetof(PENTHeaders_t<std::uint32_t>, OptionalHeader)).get();
+                if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+                {
+                    validate_image_layout(buffer, read_nt_headers<std::uint32_t>(buffer, nt_headers_offset), nt_headers_offset, file_size);
+                }
+                else if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+                {
+                    validate_image_layout(buffer, read_nt_headers<std::uint64_t>(buffer, nt_headers_offset), nt_headers_offset, file_size);
+                }
             }
-            else if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+            catch (const invalid_image_format& e)
             {
-                validate_image_layout(buffer, read_nt_headers<std::uint64_t>(buffer, nt_headers_offset), nt_headers_offset);
+                return e.status;
             }
+            catch (const std::exception&)
+            {
+                // Unreadable headers are reported when the image is mapped.
+            }
+
+            return STATUS_SUCCESS;
         }
-        catch (const invalid_image_format& e)
+    }
+
+    NTSTATUS check_image(const std::span<const std::byte> data)
+    {
+        const auto check = [&](const std::span<const std::byte> image) {
+            const auto status = check_image_headers(image, data.size());
+            return status == STATUS_SUCCESS ? check_layout(image, data.size()) : status;
+        };
+
+        // MiCreateImageFileMap reads the headers of a file smaller than a page as a page that is zero past the file's end.
+        if (data.size() < image_header_page_size)
         {
-            return e.status;
-        }
-        catch (const std::exception&)
-        {
-            // Unreadable headers are reported when the image is mapped.
+            std::array<std::byte, image_header_page_size> first_page{};
+            std::ranges::copy(data, first_page.begin());
+            return check(first_page);
         }
 
-        return STATUS_SUCCESS;
+        return check(data);
     }
 
     bool unmap_module(memory_manager& memory, const mapped_module& mod)

@@ -158,7 +158,7 @@ namespace sogen::test
             nt_headers.FileHeader.Machine = sizeof(Pointer) == 4 ? PEMachineType::I386 : PEMachineType::AMD64;
             nt_headers.FileHeader.NumberOfSections = static_cast<uint16_t>(layout.sections.size());
             nt_headers.FileHeader.SizeOfOptionalHeader = sizeof(PEOptionalHeader_t<Pointer>);
-            nt_headers.FileHeader.Characteristics = IMAGE_FILE_DLL;
+            nt_headers.FileHeader.Characteristics = IMAGE_FILE_DLL | IMAGE_FILE_EXECUTABLE_IMAGE;
 
             auto& optional_header = nt_headers.OptionalHeader;
             optional_header.Magic = PEOptionalHeader_t<Pointer>::k_Magic;
@@ -422,7 +422,7 @@ namespace sogen::test
         void expect_layout(const layout_row& row)
         {
             const auto file = build_image<Pointer>(row.layout);
-            EXPECT_EQ(check_image_layout(file), row.windows_status);
+            EXPECT_EQ(check_image(file), row.windows_status);
 
             page_memory backend{};
             memory_manager memory{backend};

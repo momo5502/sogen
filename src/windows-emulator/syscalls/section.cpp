@@ -362,7 +362,7 @@ namespace sogen
                 std::vector<std::byte> file_data;
                 if (c.win_emu.file_sys.read_file(s.file_name, &file_data))
                 {
-                    if (const auto status = check_image_layout(file_data); status != STATUS_SUCCESS)
+                    if (const auto status = check_image(file_data); status != STATUS_SUCCESS)
                     {
                         return status;
                     }

@@ -2,8 +2,11 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../devices/named_pipe.hpp"
+#include "../module/module_mapping.hpp"
 
 #include <utils/finally.hpp>
+
+#include <sys/stat.h>
 
 namespace sogen
 {
@@ -229,6 +232,24 @@ namespace sogen
 
                 return reserve_thread_stack(c, process_handle, information + offsetof(PROCESS_STACK_ALLOCATION_INFORMATION_EX, AllocInfo));
             }
+
+            // 19041's IoCreateFileEx, then MiCreateImageFileMap's checks.
+            NTSTATUS image_section_status(const file_system& file_sys, const windows_path& path)
+            {
+                if (const auto file_stat = file_sys.stat(path); file_stat && (file_stat->st_mode & S_IFMT) == S_IFDIR)
+                {
+                    return STATUS_FILE_IS_A_DIRECTORY;
+                }
+
+                const auto input = file_sys.open_read(path);
+                if (!input.file)
+                {
+                    return input.status;
+                }
+
+                std::vector<std::byte> image{};
+                return file_system::read_file(*input.file, &image) ? check_image(image) : STATUS_INVALID_FILE_FOR_SECTION;
+            }
         }
 
         NTSTATUS handle_NtCreateUserProcess(const syscall_context& c, const emulator_object<handle> process_handle,
@@ -450,6 +471,13 @@ namespace sogen
             if (request.application.empty())
             {
                 return STATUS_INVALID_PARAMETER;
+            }
+
+            // 19041's NtCreateUserProcess opens the image and creates its section before SeSubProcessToken checks the policy.
+            if (!c.win_emu.child_processes_allowed())
+            {
+                const auto status = image_section_status(c.win_emu.file_sys, application_path);
+                return status == STATUS_SUCCESS ? STATUS_CHILD_PROCESS_BLOCKED : status;
             }
 
             const auto image = pe_architecture_detector::detect_from_file(c.win_emu.file_sys, application_path);
@@ -708,19 +736,29 @@ namespace sogen
                 const emulator_object<PROCESS_MITIGATION_POLICY> policy_obj{c.emu, process_information};
                 const auto policy = policy_obj.read();
 
-                // We only support querying ProcessDynamicCodePolicy
-                if (policy != ProcessDynamicCodePolicy)
+                if (policy != ProcessDynamicCodePolicy && policy != ProcessChildProcessPolicy)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
 
+                PROCESS_MITIGATION_CHILD_PROCESS_POLICY child_process_policy{};
+                child_process_policy.NoChildProcessCreation = c.win_emu.child_processes_allowed() ? 0 : 1;
+                const auto value = policy == ProcessChildProcessPolicy ? child_process_policy.Flags : 0;
+
                 return handle_query<PROCESS_MITIGATION_POLICY_RAW_DATA>(c.emu, process_information, process_information_length,
                                                                         return_length,
-                                                                        [policy](PROCESS_MITIGATION_POLICY_RAW_DATA& policy_data) {
+                                                                        [policy, value](PROCESS_MITIGATION_POLICY_RAW_DATA& policy_data) {
                                                                             policy_data.Policy = policy;
-                                                                            policy_data.Value = 0;
+                                                                            policy_data.Value = value;
                                                                         });
             }
+            case ProcessChildProcessInformation:
+                return handle_query<PROCESS_CHILD_PROCESS_INFORMATION>(
+                    c.emu, process_information, process_information_length, return_length, [&](PROCESS_CHILD_PROCESS_INFORMATION& info) {
+                        info = {.ProhibitChildProcesses = static_cast<BOOLEAN>(c.win_emu.child_processes_allowed() ? FALSE : TRUE),
+                                .AlwaysAllowSecureChildProcess = FALSE,
+                                .AuditProhibitChildProcesses = FALSE};
+                    });
             case ProcessEnclaveInformation:
             case ProcessTelemetryIdInformation:
                 return STATUS_NOT_SUPPORTED;
