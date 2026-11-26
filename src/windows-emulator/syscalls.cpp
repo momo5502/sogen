@@ -988,6 +988,12 @@ namespace sogen
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         BOOL handle_NtGdiGetDCPoint(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, hdc dc, uint32_t method, uint32_t value, emulator_pointer result);
+        BOOL handle_NtGdiTransformPoints(const syscall_context& c, hdc dc, emulator_pointer source, emulator_pointer destination,
+                                         int32_t count, uint32_t mode);
+        BOOL handle_NtGdiScaleWindowExtEx(const syscall_context& c, hdc dc, int32_t x_numerator, int32_t x_denominator, int32_t y_numerator,
+                                          int32_t y_denominator, emulator_pointer previous_extent);
+        BOOL handle_NtGdiScaleViewportExtEx(const syscall_context& c, hdc dc, int32_t x_numerator, int32_t x_denominator,
+                                            int32_t y_numerator, int32_t y_denominator, emulator_pointer previous_extent);
         BOOL handle_NtGdiSetBrushOrg(const syscall_context& c, hdc dc, int x, int y, emulator_pointer prev);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, uint32_t handle_value, uint32_t size, emulator_pointer buffer);
@@ -1962,6 +1968,9 @@ namespace sogen
         add_handler(NtGdiGetDCDword);
         add_handler(NtGdiGetDCPoint);
         add_handler(NtGdiGetAndSetDCDword);
+        add_handler(NtGdiTransformPoints);
+        add_handler(NtGdiScaleWindowExtEx);
+        add_handler(NtGdiScaleViewportExtEx);
         add_handler(NtGdiSetBrushOrg);
         add_handler(NtGdiHfontCreate);
         add_handler(NtGdiExtGetObjectW);
