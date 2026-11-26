@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include <limits>
+#include <map>
 
 #include <low_level_hooks.hpp>
 #include <user_callback_dispatch.hpp>
@@ -17,6 +18,9 @@ namespace sogen::syscalls
     lresult completion_NtUserCallNextHookEx(const syscall_context& c, int code, wparam w_param, lparam l_param, BOOL ansi);
     BOOL handle_NtUserCallMsgFilter(const syscall_context& c, emulator_object<msg> message, int code);
     BOOL completion_NtUserCallMsgFilter(const syscall_context& c, emulator_object<msg> message, int code);
+    BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max);
+    BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd window, UINT filter_min, UINT filter_max,
+                                  UINT remove_message);
     hwnd completion_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
                                          emulator_object<LARGE_STRING> cls_version, emulator_object<LARGE_STRING> window_name, DWORD style,
                                          int x, int y, int width, int height, hwnd parent, hmenu menu, hinstance instance, pointer l_param,
@@ -54,6 +58,13 @@ namespace sogen::test
             uint64_t dispatch;
         };
 
+        struct retrieval_case
+        {
+            bool get_message;
+            UINT remove_message;
+            uint64_t hook_w_param;
+        };
+
         struct install_case
         {
             int type;
@@ -68,6 +79,95 @@ namespace sogen::test
         constexpr uint32_t k_gui_helper_thread = 0xCAFE0001;
         constexpr uint32_t k_non_gui_helper_thread = 0xCAFE0002;
         constexpr uint32_t k_exited_helper_thread = 0xCAFE0003;
+        constexpr uint32_t k_gui_child_thread = 0xCAFE0004;
+        constexpr uint32_t k_non_gui_child_thread = 0xCAFE0005;
+        constexpr uint32_t k_exited_child_thread = 0xCAFE0006;
+        constexpr uint32_t k_terminated_child_thread = 0xCAFE0007;
+        constexpr uint64_t k_child_teb = 0x7FF000;
+
+        struct child_thread_state
+        {
+            uint32_t thread_id;
+            uint64_t win32_thread_info;
+            bool process_exited;
+            bool thread_exited;
+        };
+
+        class child_process_manager final : public process_manager
+        {
+          public:
+            std::map<uint64_t, child_thread_state> children{};
+
+            process_create_result create_process(process_create_request) override
+            {
+                return {.error = process_error::unavailable};
+            }
+
+            process_error resume_process(managed_process) override
+            {
+                return process_error::unavailable;
+            }
+
+            process_error terminate_process(managed_process, uint64_t) override
+            {
+                return process_error::unavailable;
+            }
+
+            process_exit_status_result exit_status(const managed_process process) const override
+            {
+                const auto child = this->children.find(process.value);
+                if (child == this->children.end())
+                {
+                    return {.error = process_error::invalid_process};
+                }
+                return {.status = child->second.process_exited ? std::optional{process_exit{.kind = process_exit_kind::exited, .code = 0}}
+                                                               : std::nullopt};
+            }
+
+            process_thread_information thread_information(const managed_process process, const uint32_t thread_id) override
+            {
+                const auto child = this->children.find(process.value);
+                if (child == this->children.end() || child->second.thread_id != thread_id)
+                {
+                    return {.error = process_error::invalid_process};
+                }
+                return {.teb = k_child_teb, .exited = child->second.thread_exited};
+            }
+
+            process_memory_read_result read_memory(const managed_process process, const uint64_t address,
+                                                   const uint64_t size) const override
+            {
+                const auto child = this->children.find(process.value);
+                if (child == this->children.end() || address != k_child_teb + offsetof(TEB64, Win32ThreadInfo) || size != sizeof(uint64_t))
+                {
+                    return {.error = process_error::unavailable};
+                }
+
+                std::vector<uint8_t> data(sizeof(uint64_t));
+                std::memcpy(data.data(), &child->second.win32_thread_info, data.size());
+                return {.data = std::move(data)};
+            }
+
+            process_memory_result allocate_memory(managed_process, uint64_t, uint64_t, memory_permission, bool, bool) override
+            {
+                return {.error = process_error::unavailable};
+            }
+
+            process_error free_memory(managed_process, uint64_t, uint64_t, bool) override
+            {
+                return process_error::unavailable;
+            }
+
+            process_memory_result protect_memory(managed_process, uint64_t, uint64_t, memory_permission) override
+            {
+                return {.error = process_error::unavailable};
+            }
+
+            process_memory_result write_memory(managed_process, uint64_t, std::span<const uint8_t>) override
+            {
+                return {.error = process_error::unavailable};
+            }
+        };
 
         class WindowHookTest : public testing::Test
         {
@@ -77,6 +177,7 @@ namespace sogen::test
                 emulator_interfaces interfaces{};
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.processes = &this->children;
                 interfaces.console = std::make_unique<null_console_backend>();
                 this->emu = std::make_unique<windows_emulator>(
                     create_x86_64_emulator_from_environment(),
@@ -102,6 +203,27 @@ namespace sogen::test
                 auto& exited = *this->emu->process.threads.get(this->exited_helper);
                 exited.win32k_thread_info = 0x1000;
                 exited.exit_status = STATUS_SUCCESS;
+
+                this->add_child_thread(k_gui_child_thread, 0x1000, false, false);
+                this->add_child_thread(k_non_gui_child_thread, 0, false, false);
+                this->add_child_thread(k_exited_child_thread, 0x1000, true, true);
+                this->add_child_thread(k_terminated_child_thread, 0x1000, false, true);
+            }
+
+            void add_child_thread(const uint32_t thread_id, const uint64_t win32_thread_info, const bool process_exited,
+                                  const bool thread_exited)
+            {
+                const auto process = static_cast<uint64_t>(this->children.children.size()) + 1;
+                this->children.children[process] = {.thread_id = thread_id,
+                                                    .win32_thread_info = win32_thread_info,
+                                                    .process_exited = process_exited,
+                                                    .thread_exited = thread_exited};
+
+                managed_process_thread thread{};
+                thread.process.value = process;
+                thread.process_id = 0x4000 + static_cast<uint32_t>(process);
+                thread.thread_id = thread_id;
+                this->emu->process.managed_threads.store(std::move(thread));
             }
 
             handle add_thread()
@@ -206,6 +328,23 @@ namespace sogen::test
                 });
             }
 
+            bool retrieves_message(const retrieval_case& row)
+            {
+                const emulator_object<msg> message{this->emu->memory, this->message_address};
+                constexpr UINT k_wm_user_1 = 0x401;
+                this->thread().post_message(*this->emu, {.window = 0, .message = k_wm_user_1, .wParam = 0x100, .lParam = 0x22});
+                return this->runs_callback([&](const syscall_context& call) {
+                    if (row.get_message)
+                    {
+                        syscalls::handle_NtUserGetMessage(call, message, 0, 0, 0);
+                    }
+                    else
+                    {
+                        syscalls::handle_NtUserPeekMessage(call, message, 0, 0, 0, row.remove_message);
+                    }
+                });
+            }
+
             syscall_context complete_hook()
             {
                 auto& callbacks = this->thread().callback_stack;
@@ -238,6 +377,7 @@ namespace sogen::test
                 return this->emu->memory.read_memory<hook_callback_args>(callout.buffer);
             }
 
+            child_process_manager children{};
             std::unique_ptr<windows_emulator> emu{};
             handle main_thread{};
             handle gui_helper{};
@@ -262,6 +402,31 @@ namespace sogen::test
             {6, k_hook_proc, 0, k_current_thread, 0, k_error_global_only_hook},
             {13, k_hook_proc, 0, k_current_thread, 0, k_error_global_only_hook},
             {14, k_hook_proc, 0, k_current_thread, 0, k_error_global_only_hook},
+            {6, k_hook_proc, 0, k_gui_helper_thread, 0, k_error_global_only_hook},
+            {13, k_hook_proc, 0, k_gui_helper_thread, 0, k_error_global_only_hook},
+            {14, k_hook_proc, 0, k_gui_helper_thread, 0, k_error_global_only_hook},
+            {6, k_hook_proc, 0, 0x7FFFFFFC, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, 0x7FFFFFFC, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, 0x7FFFFFFC, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, k_non_gui_helper_thread, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, k_non_gui_helper_thread, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, k_non_gui_helper_thread, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, k_exited_helper_thread, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, k_exited_helper_thread, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, k_exited_helper_thread, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, k_gui_child_thread, 0, k_error_global_only_hook},
+            {13, k_hook_proc, 0, k_gui_child_thread, 0, k_error_global_only_hook},
+            {14, k_hook_proc, 0, k_gui_child_thread, 0, k_error_global_only_hook},
+            {6, k_hook_proc, 0, k_non_gui_child_thread, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, k_non_gui_child_thread, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, k_non_gui_child_thread, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, k_exited_child_thread, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, k_exited_child_thread, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, k_exited_child_thread, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, k_terminated_child_thread, 0, k_error_invalid_parameter},
+            {13, k_hook_proc, 0, k_terminated_child_thread, 0, k_error_invalid_parameter},
+            {14, k_hook_proc, 0, k_terminated_child_thread, 0, k_error_invalid_parameter},
+            {6, k_hook_proc, 0, 0, 0, k_error_hook_needs_hmod},
             {7, 0, 0, k_current_thread, 0, k_error_invalid_filter_proc},
             {3, 0, 0, k_current_thread, 0, k_error_invalid_filter_proc},
             {5, 0, 0, k_current_thread, 0, k_error_invalid_filter_proc},
@@ -298,6 +463,14 @@ namespace sogen::test
             EXPECT_EQ(k_no_error, this->last_error()) << "type " << type;
             EXPECT_EQ(FALSE, this->unhook(hook)) << "type " << type;
             EXPECT_EQ(k_error_invalid_hook_handle, this->last_error()) << "type " << type;
+        }
+
+        for (const auto type : {13, 14})
+        {
+            const auto hook = this->install(type, k_hook_proc, 0, 0);
+            EXPECT_NE(0u, hook) << "type " << type;
+            EXPECT_EQ(k_no_error, this->last_error()) << "type " << type;
+            EXPECT_EQ(TRUE, this->unhook(hook)) << "type " << type;
         }
 
         EXPECT_NE(0u, this->install(7, k_hook_proc, 0x7ff751520000, this->thread_id(k_current_thread)));
@@ -386,6 +559,31 @@ namespace sogen::test
         }
         EXPECT_EQ(0u, this->install(7, k_hook_proc, 0, this->thread_id(k_current_thread)));
         EXPECT_EQ(k_error_not_enough_memory, this->last_error());
+    }
+
+    TEST_F(WindowHookTest, GetMessageHooksSeeTheRawRetrievalFlags)
+    {
+        constexpr UINT k_pm_remove = 0x1;
+        constexpr UINT k_pm_noyield = 0x2;
+        constexpr UINT k_pm_qs_postmessage = 0x980000;
+
+        const std::vector<retrieval_case> retrievals{
+            {false, 0, 0x0},
+            {false, k_pm_remove, 0x1},
+            {false, k_pm_remove | k_pm_noyield, 0x3},
+            {false, k_pm_remove | k_pm_qs_postmessage, 0x980001},
+            {true, 0, 0x1},
+        };
+
+        this->install(k_wh_getmessage, k_hook_proc, 0, this->thread_id(k_current_thread));
+        for (size_t i = 0; i < retrievals.size(); ++i)
+        {
+            this->thread().message_queue.clear();
+            ASSERT_TRUE(this->retrieves_message(retrievals[i])) << i;
+            EXPECT_EQ(retrievals[i].hook_w_param, this->dispatched_hook().w_param) << i;
+            this->complete_hook();
+            leave_hook(this->context());
+        }
     }
 
     TEST_F(WindowHookTest, HookChainsRunNewestFirstAndCallNextHookExContinuesThemUntilTheirInstallerEnds)

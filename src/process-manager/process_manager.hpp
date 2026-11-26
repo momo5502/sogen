@@ -314,6 +314,7 @@ namespace sogen
     struct process_thread_information
     {
         uint64_t teb{};
+        bool exited{};
         process_error error{process_error::none};
 
         explicit operator bool() const

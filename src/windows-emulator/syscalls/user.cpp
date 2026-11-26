@@ -4181,6 +4181,48 @@ namespace sogen
                    (c.proc.is_wow64_process && requested_uniqueness == 0);
         }
 
+        bool is_live_child_gui_thread(const syscall_context& c, const DWORD thread_id)
+        {
+            auto* manager = c.win_emu.processes();
+            if (!manager)
+            {
+                return false;
+            }
+
+            for (const auto& child : c.proc.managed_threads | std::views::values)
+            {
+                if (child.thread_id != thread_id)
+                {
+                    continue;
+                }
+
+                const auto exit = manager->exit_status(child.process);
+                if (!exit || exit.status.has_value())
+                {
+                    return false;
+                }
+
+                const auto information = manager->thread_information(child.process, thread_id);
+                if (!information || information.exited || information.teb == 0)
+                {
+                    return false;
+                }
+
+                const auto win32_thread_info =
+                    manager->read_memory(child.process, information.teb + offsetof(TEB64, Win32ThreadInfo), sizeof(uint64_t));
+                if (!win32_thread_info || win32_thread_info.data.size() != sizeof(uint64_t))
+                {
+                    return false;
+                }
+
+                uint64_t value{};
+                std::memcpy(&value, win32_thread_info.data.data(), sizeof(value));
+                return value != 0;
+            }
+
+            return false;
+        }
+
         uint64_t install_window_hook(const syscall_context& c, const hinstance instance, const DWORD thread_id, const int hook_id,
                                      const pointer proc, const BOOL ansi)
         {
@@ -4201,14 +4243,29 @@ namespace sogen
                 return 0;
             }
 
+            auto& thread = c.thread();
+
             const bool low_level = hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll;
-            if ((low_level || hook_id == k_wh_sysmsgfilter) && thread_id != 0)
+            const bool global_only = low_level || hook_id == k_wh_sysmsgfilter;
+
+            emulator_thread* target = nullptr;
+            if (thread_id != 0)
+            {
+                target = c.proc.find_thread_by_id(thread_id);
+                const bool is_gui_thread = target && (target == &thread || target->win32k_thread_info != 0);
+                const bool is_local_gui_thread = is_gui_thread && !target->is_terminated();
+                if (!is_local_gui_thread && !(global_only && is_live_child_gui_thread(c, thread_id)))
+                {
+                    set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                    return 0;
+                }
+            }
+
+            if (global_only && thread_id != 0)
             {
                 set_guest_last_error(c, k_error_global_only_hook);
                 return 0;
             }
-
-            auto& thread = c.thread();
 
             // Low-level hooks are global; they run on the installing thread while it retrieves messages.
             if (low_level)
@@ -4229,14 +4286,6 @@ namespace sogen
                 {
                     set_guest_last_error(c, k_error_hook_needs_hmod);
                 }
-                return 0;
-            }
-
-            auto* target = c.proc.find_thread_by_id(thread_id);
-            const bool is_gui_thread = target && (target == &thread || target->win32k_thread_info != 0);
-            if (!is_gui_thread || target->is_terminated())
-            {
-                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
                 return 0;
             }
 
@@ -5901,7 +5950,7 @@ namespace sogen
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
-                if (dispatch_get_message_hook(c, callback_id::NtUserPeekMessage, *pending_msg, should_remove ? PM_REMOVE : PM_NOREMOVE))
+                if (dispatch_get_message_hook(c, callback_id::NtUserPeekMessage, *pending_msg, remove_message))
                 {
                     return {};
                 }
