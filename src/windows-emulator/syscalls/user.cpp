@@ -4648,6 +4648,7 @@ namespace sogen
                     release_window_create_allocations();
                     c.win_emu.ui().destroy_window(win->handle);
                     c.proc.release_mouse_capture(win->handle);
+                    c.proc.release_update_lock(win->handle);
                     c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
                     (void)c.proc.windows.erase(s.handle);
                     return 0;
@@ -5645,6 +5646,49 @@ namespace sogen
             }
 
             invalidate_window(c, *win, update_rect, erase != FALSE);
+            return TRUE;
+        }
+
+        BOOL handle_NtUserLockWindowUpdate(const syscall_context& c, const hwnd window)
+        {
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_invalid_window_handle = 1400;
+            constexpr uint32_t error_screen_already_locked = 1440;
+
+            const auto* target = window != 0 ? c.proc.windows.get(window) : nullptr;
+            // win32k validates the low 32 bits of a window handle only.
+            if (window != 0 && (!target || static_cast<uint32_t>(target->handle) != static_cast<uint32_t>(window)))
+            {
+                set_guest_last_error(c, error_invalid_window_handle);
+                return FALSE;
+            }
+
+            if (c.proc.update_locked_window == 0)
+            {
+                if (!target)
+                {
+                    set_guest_last_error(c, error_invalid_parameter);
+                    return FALSE;
+                }
+
+                c.proc.update_locked_window = target->handle;
+                c.proc.update_lock_thread_id = c.vcpu.active_thread->id;
+                return TRUE;
+            }
+
+            if (c.proc.update_lock_thread_id != c.vcpu.active_thread->id)
+            {
+                set_guest_last_error(c, error_screen_already_locked);
+                return FALSE;
+            }
+
+            if (target)
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return FALSE;
+            }
+
+            c.proc.release_update_lock(c.proc.update_locked_window);
             return TRUE;
         }
 

@@ -734,6 +734,7 @@ namespace sogen
         BOOL completion_NtUserWaitMessage(const syscall_context& c);
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
+        BOOL handle_NtUserLockWindowUpdate(const syscall_context& c, hwnd window);
         BOOL handle_NtUserGetUpdateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, hwnd hwnd, handle region, BOOL erase);
         BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
@@ -2192,6 +2193,7 @@ namespace sogen
         add_handler(NtUserReplyMessage);
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
+        add_handler(NtUserLockWindowUpdate);
         add_handler(NtUserGetUpdateRect);
         add_handler(NtUserGetUpdateRgn);
         add_handler(NtUserUpdateWindow);

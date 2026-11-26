@@ -625,6 +625,8 @@ namespace sogen
         dxgk_state dxgk{};
         std::optional<handle> etw_notification_event{};
         hwnd mouse_capture_window{};
+        hwnd update_locked_window{};
+        uint32_t update_lock_thread_id{};
         std::optional<ULONG> timer_resolution_request{};
         // The window that currently holds keyboard focus / is the foreground window, and the last known
         // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
@@ -780,6 +782,8 @@ namespace sogen
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);
         void release_mouse_capture(hwnd window);
+        void release_update_lock(hwnd window);
+        void release_update_lock_of_thread(uint32_t locking_thread_id);
         // The storage a pagefile section's views alias, created on first use. 0 when the section's views share one guest
         // backing instead, because they cannot alias host memory or the section only reserves.
         uint64_t section_view_storage(section& section_entry, bool can_alias_host_memory, bool shareable);

@@ -331,6 +331,7 @@ namespace sogen
 
         this->ui_.destroy_window(frame.handle);
         this->proc_.release_mouse_capture(frame.handle);
+        this->proc_.release_update_lock(frame.handle);
         this->proc_.gdi_window_surfaces.erase(static_cast<uint32_t>(frame.handle));
         (void)this->proc_.windows.erase(frame.handle);
     }
