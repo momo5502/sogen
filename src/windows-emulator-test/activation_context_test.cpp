@@ -2,6 +2,8 @@
 
 #include <sxs/activation_context.hpp>
 
+#include "activation_context_captures.hpp"
+
 namespace sogen::test
 {
     namespace
@@ -59,6 +61,30 @@ namespace sogen::test
                 return value;
             }
 
+            struct toc_entry
+            {
+                uint32_t offset{};
+                uint32_t length{};
+                uint32_t format{};
+            };
+
+            static std::optional<toc_entry> find_toc_entry(const std::vector<std::byte>& blob, const uint32_t id)
+            {
+                const auto toc_offset = read_u32(blob, 16);
+                const auto toc_count = read_u32(blob, toc_offset + 4);
+                const auto toc_entries = read_u32(blob, toc_offset + 8);
+                for (uint32_t index = 0; index < toc_count; ++index)
+                {
+                    const size_t entry = toc_entries + index * 16;
+                    if (read_u32(blob, entry) == id)
+                    {
+                        return toc_entry{
+                            .offset = read_u32(blob, entry + 4), .length = read_u32(blob, entry + 8), .format = read_u32(blob, entry + 12)};
+                    }
+                }
+                return std::nullopt;
+            }
+
             struct window_class_entry
             {
                 std::u16string key{};
@@ -100,9 +126,10 @@ namespace sogen::test
                     window_class_section result{.header_size = read_u32(blob, section + 4), .flags = read_u32(blob, section + 16)};
                     const auto count = read_u32(blob, section + 20);
                     const size_t entries = section + read_u32(blob, section + 24);
-                    const size_t hash_table = section + read_u32(blob, section + 32);
-                    const auto bucket_count = read_u32(blob, hash_table);
-                    const size_t buckets = section + read_u32(blob, hash_table + 4);
+                    const auto search_structure = read_u32(blob, section + 32);
+                    const size_t hash_table = section + search_structure;
+                    const auto bucket_count = search_structure == 0 ? 1 : read_u32(blob, hash_table);
+                    const size_t buckets = section + (search_structure == 0 ? 0 : read_u32(blob, hash_table + 4));
                     for (uint32_t entry_index = 0; entry_index < count; ++entry_index)
                     {
                         const size_t entry = entries + entry_index * 24;
@@ -119,17 +146,55 @@ namespace sogen::test
                         parsed.module_offset = read_u32(blob, data + 20);
                         parsed.module = read_string(blob, section + parsed.module_offset, read_u32(blob, data + 16));
 
-                        const size_t bucket = buckets + (parsed.pseudokey % bucket_count) * 8;
-                        const size_t chain = section + read_u32(blob, bucket + 4);
-                        for (uint32_t chain_index = 0; chain_index < read_u32(blob, bucket); ++chain_index)
+                        if (search_structure == 0)
                         {
-                            parsed.reachable_through_hash_table |= read_u32(blob, chain + chain_index * 4) == entry - section;
+                            parsed.reachable_through_hash_table = true;
+                        }
+                        else
+                        {
+                            const size_t bucket = buckets + (parsed.pseudokey % bucket_count) * 8;
+                            const size_t chain = section + read_u32(blob, bucket + 4);
+                            for (uint32_t chain_index = 0; chain_index < read_u32(blob, bucket); ++chain_index)
+                            {
+                                parsed.reachable_through_hash_table |= read_u32(blob, chain + chain_index * 4) == entry - section;
+                            }
                         }
                         result.entries.push_back(std::move(parsed));
                     }
                     return result;
                 }
                 return std::nullopt;
+            }
+
+            static std::vector<std::byte> synthetic_blob(const size_t size, const std::byte fill)
+            {
+                std::vector<std::byte> blob(size, fill);
+                const uint32_t magic = 0x78746341;
+                const auto total_size = static_cast<uint32_t>(size);
+                std::memcpy(blob.data(), &magic, sizeof(magic));
+                std::memcpy(blob.data() + 12, &total_size, sizeof(total_size));
+                return blob;
+            }
+
+            void store_captured(const std::string_view file_name, const std::span<const std::byte> contents) const
+            {
+                std::filesystem::create_directories(this->root / "emulation" / "sxs");
+                std::ofstream stream(this->root / "emulation" / "sxs" / file_name, std::ios::binary);
+                stream.write(reinterpret_cast<const char*>(contents.data()), static_cast<std::streamsize>(contents.size()));
+            }
+
+            static std::string window_class_manifest(const uint32_t window_classes)
+            {
+                const auto count = std::to_string(window_classes);
+                std::string manifest = R"(<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">)"
+                                       R"(<assemblyIdentity type="win32" name="SogenProbe.SdacBuckets)" +
+                                       count + R"(" version="1.0.0.0" processorArchitecture="*"/><file name="sdac_probe_wc)" + count +
+                                       R"(.dll">)";
+                for (uint32_t index = 1; index <= window_classes; ++index)
+                {
+                    manifest += "<windowClass>SogenSdacWc" + count + (index < 10 ? "_0" : "_") + std::to_string(index) + "</windowClass>";
+                }
+                return manifest + "</file></assembly>";
             }
 
             std::filesystem::path root{};
@@ -285,7 +350,73 @@ namespace sogen::test
         };
 
         EXPECT_EQ(pseudokeys("<windowClass>Fen\xC3\xAAtre</windowClass><windowClass>\xC3\xBF</windowClass>"),
-                  (std::vector<uint32_t>{0x1bc8410c, 0x178}));
+                  (std::vector<uint32_t>{0x178, 0x1bc8410c}));
         EXPECT_EQ(pseudokeys("<windowClass>\xC5\xB8</windowClass>"), (std::vector<uint32_t>{0x178}));
+    }
+
+    TEST_F(ActivationContextTest, CapturedSystemDefaultContextIsReturnedVerbatimPerArchitecture)
+    {
+        const auto amd64 = synthetic_blob(0x80, std::byte{0x64});
+        const auto x86 = synthetic_blob(0x58, std::byte{0x86});
+        this->store_captured("system-default-amd64.bin", amd64);
+        this->store_captured("system-default-x86.bin", x86);
+
+        const auto emulation_root = this->root / "emulation";
+        EXPECT_TRUE(sxs::obtain_system_default_activation_context(emulation_root, sxs::system_default_architecture::amd64) == amd64);
+        EXPECT_TRUE(sxs::obtain_system_default_activation_context(emulation_root, sxs::system_default_architecture::x86) == x86);
+    }
+
+    TEST_F(ActivationContextTest, CapturedSystemDefaultContextThatIsNotWholeIsIgnored)
+    {
+        const auto whole = synthetic_blob(0x80, std::byte{0x64});
+        auto truncated = whole;
+        truncated.pop_back();
+        auto extended = whole;
+        extended.push_back(std::byte{0});
+        auto foreign = whole;
+        foreign[0] = std::byte{0};
+
+        const auto emulation_root = this->root / "emulation";
+        for (const auto& contents : {truncated, extended, foreign, std::vector<std::byte>(15, std::byte{0x41})})
+        {
+            this->store_captured("system-default-amd64.bin", contents);
+            EXPECT_TRUE(sxs::obtain_system_default_activation_context(emulation_root, sxs::system_default_architecture::amd64).empty());
+        }
+    }
+
+    TEST_F(ActivationContextTest, RootWithoutTheCapturedSystemDefaultContextHasNone)
+    {
+        EXPECT_TRUE(sxs::obtain_system_default_activation_context({}, sxs::system_default_architecture::amd64).empty());
+        EXPECT_TRUE(
+            sxs::obtain_system_default_activation_context(this->root / "emulation", sxs::system_default_architecture::amd64).empty());
+
+        this->store_captured("system-default-x86.bin", synthetic_blob(0x58, std::byte{0x86}));
+        EXPECT_TRUE(
+            sxs::obtain_system_default_activation_context(this->root / "emulation", sxs::system_default_architecture::amd64).empty());
+    }
+
+    TEST_F(ActivationContextTest, WindowClassBucketCountFollowsTheCapturedSweep)
+    {
+        for (const auto& row : sdac_capture::bucket_sweep)
+        {
+            const auto manifest = window_class_manifest(row.window_classes);
+
+            const auto blob = this->build(file_system{this->root}, manifest);
+            const auto toc = find_toc_entry(blob, 3);
+            ASSERT_TRUE(toc) << row.window_classes << " window classes";
+            EXPECT_EQ(toc->length, row.section_length) << row.window_classes << " window classes";
+            EXPECT_EQ(read_u32(blob, toc->offset + 16), row.flags) << row.window_classes << " window classes";
+            EXPECT_EQ(read_u32(blob, toc->offset + 20), row.window_classes);
+            const auto search_structure = read_u32(blob, toc->offset + 32);
+            EXPECT_EQ(search_structure, row.search_structure_offset) << row.window_classes << " window classes";
+            if (search_structure != 0)
+            {
+                EXPECT_EQ(read_u32(blob, toc->offset + search_structure), row.bucket_count) << row.window_classes << " window classes";
+            }
+            else
+            {
+                EXPECT_EQ(row.bucket_count, 0u);
+            }
+        }
     }
 }

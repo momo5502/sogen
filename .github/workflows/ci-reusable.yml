@@ -176,6 +176,7 @@ jobs:
           New-Item -ItemType Directory -Path shims -Force | Out-Null
           Copy-Item build/release/artifacts/vulkan-shim.dll shims/vulkan-shim-x86.dll -Force
           Copy-Item build/release/artifacts/steamclient.dll shims/steamclient.dll -Force
+          Copy-Item build/release/artifacts/activation-context-dump.exe shims/activation-context-dump-x86.exe -Force
           Remove-Item build/release -Recurse -Force
 
       - name: Enable Developer Command Prompt (x64)
@@ -192,6 +193,8 @@ jobs:
           Move-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
           Copy-Item shims/vulkan-shim-x86.dll build/release/artifacts/vulkan-shim-x86.dll -Force
           Copy-Item shims/steamclient.dll build/release/artifacts/steamclient.dll -Force
+          Move-Item build/release/artifacts/activation-context-dump.exe build/release/artifacts/activation-context-dump-x64.exe -Force
+          Copy-Item shims/activation-context-dump-x86.exe build/release/artifacts/activation-context-dump-x86.exe -Force
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
