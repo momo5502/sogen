@@ -49,7 +49,7 @@ namespace sogen::test
         constexpr uint64_t k_dc_attr_dc_pen_color = 0xCC;
         constexpr uint64_t k_dc_attr_current_position = 0xD8;
         constexpr uint32_t k_logpen_size = 16;
-        constexpr uint32_t k_logbrush_size = 12;
+        constexpr uint32_t k_logbrush_size = 16;
 
         // The expected values were captured on Windows 11 (build 26200) on a 4x4 32bpp memory DC filled with 0x777777;
         // the handle table entries in an x64 process, everything else in x64 and WoW64 processes alike. gdi32 selects a
