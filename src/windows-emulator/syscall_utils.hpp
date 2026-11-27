@@ -248,9 +248,14 @@ namespace sogen
         return context.win_emu.abi().syscall_argument(context.emu, index);
     }
 
-    inline void set_guest_last_error(const syscall_context& c, uint32_t last_error)
+    inline void set_engine_last_error(const syscall_context& c, uint32_t last_error)
     {
         c.vcpu.active_thread->teb64->field<ULONG>(offsetof(TEB64, LastErrorValue)).write(static_cast<ULONG>(last_error));
+    }
+
+    inline void set_guest_last_error(const syscall_context& c, uint32_t last_error)
+    {
+        set_engine_last_error(c, last_error);
 
         if (const auto& teb32 = c.vcpu.active_thread->teb32)
         {
