@@ -71,7 +71,8 @@ namespace sogen
             std::array<uint8_t, 16> guid{};
         };
 
-        // The guest sees its loopback and one connected Ethernet adapter, the interface its traffic leaves through.
+        // Both exist offline too: WinINet's InternetGetConnectedState finds a LAN only on a connected adapter, and the
+        // offline socket factory keeps that adapter's traffic in the emulator.
         constexpr std::array<emulated_interface, 2> k_interfaces{{
             {
                 .index = 1,
@@ -104,32 +105,39 @@ namespace sogen
             },
         }};
 
+        constexpr const emulated_interface& k_loopback = k_interfaces.front();
+        constexpr const emulated_interface& k_ethernet = k_interfaces.back();
+
         constexpr uint32_t k_default_compartment = 1;
         constexpr uint32_t k_status_up = 1;    // NET_IF_ADMIN_STATUS_UP, IfOperStatusUp
         constexpr uint32_t k_connected = 1;    // MediaConnectStateConnected
         constexpr uint32_t k_dedicated = 1;    // NET_IF_CONNECTION_DEDICATED
         constexpr uint32_t k_send_receive = 0; // NET_IF_DIRECTION_SENDRECEIVE
 
-        // Offline the guest has only its loopback, as the AFD address list reports and the offline socket factory serves;
-        // only a live network adds the Ethernet adapter its traffic leaves through.
-        std::span<const emulated_interface> visible_interfaces(const windows_emulator& win_emu)
+        const emulated_interface* find_interface_by_luid(const uint64_t luid)
         {
-            const std::span<const emulated_interface> interfaces{k_interfaces};
-            return win_emu.network_mode() == network::network_mode::live ? interfaces : interfaces.first(1);
+            for (const auto& iface : k_interfaces)
+            {
+                if (iface.luid == luid)
+                {
+                    return &iface;
+                }
+            }
+
+            return nullptr;
         }
 
-        const emulated_interface* find_interface_by_luid(const windows_emulator& win_emu, const uint64_t luid)
+        const emulated_interface* find_interface_by_index(const uint32_t index)
         {
-            const auto interfaces = visible_interfaces(win_emu);
-            const auto entry = std::ranges::find(interfaces, luid, &emulated_interface::luid);
-            return entry == interfaces.end() ? nullptr : &*entry;
-        }
+            for (const auto& iface : k_interfaces)
+            {
+                if (iface.index == index)
+                {
+                    return &iface;
+                }
+            }
 
-        const emulated_interface* find_interface_by_index(const windows_emulator& win_emu, const uint32_t index)
-        {
-            const auto interfaces = visible_interfaces(win_emu);
-            const auto entry = std::ranges::find(interfaces, index, &emulated_interface::index);
-            return entry == interfaces.end() ? nullptr : &*entry;
+            return nullptr;
         }
 
         template <typename T>
@@ -530,7 +538,7 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto* iface = find_interface_by_luid(win_emu, *luid);
+                const auto* iface = find_interface_by_luid(*luid);
                 if (!iface)
                 {
                     return STATUS_NOT_FOUND;
@@ -551,8 +559,7 @@ namespace sogen
                 const auto capacity = static_cast<size_t>(read_size(win_emu, c, count_offset));
                 const bool wants_entries = capacity != 0 && (parameters.key.address || parameters.rw.address ||
                                                              parameters.dynamic.address || parameters.static_parameters.address);
-                const auto interfaces = visible_interfaces(win_emu);
-                const auto count = wants_entries ? std::min(capacity, interfaces.size()) : interfaces.size();
+                const auto count = wants_entries ? std::min(capacity, k_interfaces.size()) : k_interfaces.size();
 
                 if (wants_entries)
                 {
@@ -562,7 +569,7 @@ namespace sogen
 
                     for (size_t index = 0; index < count; ++index)
                     {
-                        const auto& iface = interfaces[index];
+                        const auto& iface = k_interfaces[index];
                         const auto* luid = reinterpret_cast<const uint8_t*>(&iface.luid);
                         write_parameters(win_emu, entry(parameters.key, index), std::span{luid, sizeof(iface.luid)});
                         write_parameters(win_emu, entry(parameters.rw, index), interface_parameters(iface, object, nsi_parameter_type::rw));
@@ -594,8 +601,6 @@ namespace sogen
                 if (ip && object == k_ip_best_route && type == nsi_parameter_type::dynamic && output.size == sizeof(uint32_t) &&
                     offset == (module == nsi_module::ipv4 ? 88u : 124u))
                 {
-                    // GetBestInterfaceEx: loopback destinations stay on the loopback, everything else leaves through Ethernet
-                    // when the network is live; offline everything stays on the loopback, the only interface.
                     std::array<uint8_t, 16> destination{};
                     if (key.address && key.size >= 4 + destination.size())
                     {
@@ -603,14 +608,13 @@ namespace sogen
                     }
                     constexpr std::array<uint8_t, 16> ipv6_loopback = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
                     const bool loopback = module == nsi_module::ipv4 ? destination[0] == 127 : destination == ipv6_loopback;
-                    const auto interfaces = visible_interfaces(win_emu);
                     parameters.resize(offset + sizeof(uint32_t));
-                    put(parameters, offset, interfaces[loopback ? 0 : interfaces.size() - 1].index);
+                    put(parameters, offset, (loopback ? k_loopback : k_ethernet).index);
                 }
                 else if (module == nsi_module::ndis && object == k_ndis_index_luid && type == nsi_parameter_type::static_parameters)
                 {
                     const auto index = read_key<uint32_t>(win_emu, key);
-                    const auto* iface = index ? find_interface_by_index(win_emu, *index) : nullptr;
+                    const auto* iface = index ? find_interface_by_index(*index) : nullptr;
                     if (!iface)
                     {
                         return index ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;
@@ -621,7 +625,7 @@ namespace sogen
                 else if (module == nsi_module::ndis && (object == k_ndis_interface_info || object == k_ndis_interface_enum))
                 {
                     const auto luid = read_key<uint64_t>(win_emu, key);
-                    const auto* iface = luid ? find_interface_by_luid(win_emu, *luid) : nullptr;
+                    const auto* iface = luid ? find_interface_by_luid(*luid) : nullptr;
                     if (!iface)
                     {
                         return luid ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;

@@ -29,7 +29,6 @@ namespace sogen::test
             return create_emulator(emulator_settings{.use_relative_time = true, .network = mode}, {}, std::move(interfaces));
         }
 
-        // The modeled interfaces depend on the network mode, so each mode has its fixture.
         template <network::network_mode Mode>
         class NetworkStoreInterfaceFixture : public testing::Test
         {
@@ -225,22 +224,25 @@ namespace sogen::test
         EXPECT_EQ(7u, this->emu.memory.read_memory<uint32_t>(this->static_address() + 568));  // Ethernet InterfaceIndex
     }
 
-    // Offline the guest has only its loopback, as the AFD address list says: enumerations list it alone, the Ethernet
-    // adapter is not found, and every destination's best interface is the loopback, so the guest takes its offline path.
-    TEST_F(OfflineNetworkStoreInterfaceTest, OnlyTheLoopbackIsReported)
+    // WinINet's _GetNetworkStatus: the best interface for 0.0.0.0, then that interface's row.
+    TEST_F(OfflineNetworkStoreInterfaceTest, TheEthernetAdapterIsAConnectedLanToo)
     {
-        EXPECT_EQ(1u, this->best_interface({8, 8, 8, 8}));
+        EXPECT_EQ(7u, this->best_interface({0, 0, 0, 0}));
         EXPECT_EQ(1u, this->best_interface({127, 0, 0, 1}));
 
         auto r = this->request(ndis_module, 1);
         ASSERT_EQ(STATUS_SUCCESS, this->send(ioctl_enumerate_all_parameters, r, 0x70));
-        EXPECT_EQ(1u, this->emu.memory.read_memory<uint32_t>(this->storage + 0x68));
+        EXPECT_EQ(2u, this->emu.memory.read_memory<uint32_t>(this->storage + 0x68));
 
         this->emu.memory.write_memory(this->key_address(), ethernet_luid);
         r = this->request(ndis_module, 1);
         put(r, 0x28, this->key_address());
         put(r, 0x30, uint32_t{8});
-        EXPECT_EQ(STATUS_NOT_FOUND, this->send(ioctl_get_all_parameters, r, 0x68));
+        put(r, 0x48, this->dynamic_address());
+        put(r, 0x50, uint32_t{656});
+        ASSERT_EQ(STATUS_SUCCESS, this->send(ioctl_get_all_parameters, r, 0x68));
+        EXPECT_EQ(1u, this->emu.memory.read_memory<uint32_t>(this->dynamic_address() + 536)); // IfOperStatusUp
+        EXPECT_EQ(1u, this->emu.memory.read_memory<uint32_t>(this->dynamic_address() + 644)); // MediaConnectStateConnected
     }
 
     // The requests are METHOD_NEITHER: an output buffer that cannot take its write fails the request with nothing written,
