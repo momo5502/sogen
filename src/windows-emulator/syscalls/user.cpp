@@ -18,6 +18,10 @@
 
 namespace sogen
 {
+    namespace syscalls
+    {
+        BOOL erase_window_background(const syscall_context& c, const window& win, hdc dc);
+    }
 
     namespace
     {
@@ -943,7 +947,10 @@ namespace sogen
                 return read_guest_window_text(c, win).size();
 
             case WM_ERASEBKGND:
-                return TRUE;
+                return syscalls::erase_window_background(c, win, static_cast<hdc>(w_param));
+
+            case WM_ICONERASEBKGND:
+                return (win.style & WS_CHILD) == 0 ? TRUE : FALSE;
 
             case WM_PAINT:
                 validate_window(win);
