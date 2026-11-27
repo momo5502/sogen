@@ -82,6 +82,7 @@ namespace sogen
         bool write_pending_status(const syscall_context& c, uint64_t io_status_block);
         NTSTATUS watch(const syscall_context& c, registry_key& key, registry_notify_request request, ULONG filter, bool watch_tree);
         void report_value_change(const syscall_context& c, const registry_key& key);
+        void set_value(const syscall_context& c, const registry_key& key, std::string name, ULONG type, std::span<const std::byte> data);
         void report_sub_key_change(const syscall_context& c, const registry_key& sub_key);
         void close(const syscall_context& c, registry_key& key);
         void end_deleted_key_requests(const syscall_context& c);

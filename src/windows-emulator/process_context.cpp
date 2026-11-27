@@ -6,6 +6,7 @@
 #include "registry/registry_utils.hpp"
 #include "sxs/activation_context.hpp"
 #include "syscall_utils.hpp"
+#include "user_profile.hpp"
 #include "windows_emulator.hpp"
 #include "version/windows_version_manager.hpp"
 
@@ -634,6 +635,9 @@ namespace sogen
 
         this->user_handles.setup(is_wow64_process);
         initialize_user_code_page_tables(win_emu);
+
+        this->accessibility.load(user_profile{win_emu.registry}, this->key_state);
+        this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { this->accessibility.publish(server_info); });
 
         auto [mh, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
         this->default_monitor_handle = mh;
@@ -1293,6 +1297,7 @@ namespace sogen
         buffer.write(this->debug_objects);
         buffer.write_map(this->atoms);
         buffer.write(this->clipboard);
+        buffer.write(this->accessibility);
         buffer.write_map(this->classes);
 
         buffer.write_map(this->apiset);
@@ -1434,6 +1439,7 @@ namespace sogen
         buffer.read(this->debug_objects);
         buffer.read_map(this->atoms);
         buffer.read(this->clipboard);
+        buffer.read(this->accessibility);
         buffer.read_map(this->classes);
 
         buffer.read_map(this->apiset);
