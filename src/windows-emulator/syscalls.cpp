@@ -54,6 +54,11 @@ namespace sogen
         // syscalls/file.cpp
         // Validates an I/O completion event, resolving the handle before checking the type of the object it names.
         NTSTATUS check_completion_event(const syscall_context& c, handle event);
+        NTSTATUS handle_file_io_control(const syscall_context& c, const file& f, handle event, emulator_pointer apc_routine,
+                                        emulator_pointer apc_context,
+                                        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG io_control_code,
+                                        emulator_pointer input_buffer, ULONG input_buffer_length, emulator_pointer output_buffer,
+                                        ULONG output_buffer_length);
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
                                              emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              uint64_t file_information, ULONG length, FILE_INFORMATION_CLASS info_class);
@@ -1220,7 +1225,14 @@ namespace sogen
             auto* device = c.proc.devices.get(resolved_file_handle);
             if (!device)
             {
-                return STATUS_INVALID_HANDLE;
+                const auto* file_entry = c.proc.files.get(resolved_file_handle);
+                if (!file_entry)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                return handle_file_io_control(c, *file_entry, event, apc_routine, apc_context, io_status_block, io_control_code,
+                                              input_buffer, input_buffer_length, output_buffer, output_buffer_length);
             }
 
             // IopXxxControlFile references the file handle first and the event second, so an invalid file handle wins over a
@@ -1249,14 +1261,7 @@ namespace sogen
             context.output_buffer_length = output_buffer_length;
             context.vcpu = &c.vcpu;
 
-            if (c.proc.is_wow64_process && io_status_block)
-            {
-                const auto native_iosb = io_status_block.read();
-                if (native_iosb.Pointer != 0)
-                {
-                    context.wow64_io_status_block.set_address(static_cast<emulator_pointer>(native_iosb.Pointer));
-                }
-            }
+            attach_wow64_io_status_block(c, context);
 
             try
             {

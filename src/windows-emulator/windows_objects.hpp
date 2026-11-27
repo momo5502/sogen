@@ -1313,6 +1313,11 @@ namespace sogen
         std::optional<device_completion_association> completion_association{};
         ULONG completion_notification_flags{};
 
+        std::u16string volume_device_name() const
+        {
+            return windows_path{static_cast<char>('a' + this->drive_number - 1), {}}.volume_device_name();
+        }
+
         bool is_file() const
         {
             return static_cast<bool>(this->handle);

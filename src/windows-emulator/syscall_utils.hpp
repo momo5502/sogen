@@ -243,6 +243,18 @@ namespace sogen
         return h.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
     }
 
+    inline void attach_wow64_io_status_block(const syscall_context& c, io_device_context& context)
+    {
+        if (c.proc.is_wow64_process && context.io_status_block)
+        {
+            const auto native_iosb = context.io_status_block.read();
+            if (native_iosb.Pointer != 0)
+            {
+                context.wow64_io_status_block.set_address(static_cast<emulator_pointer>(native_iosb.Pointer));
+            }
+        }
+    }
+
     inline uint64_t get_syscall_argument(const syscall_context& context, const size_t index)
     {
         return context.win_emu.abi().syscall_argument(context.emu, index);
