@@ -32,6 +32,11 @@ namespace sogen
 
             constexpr ULONG file_io_completion_notification_modes = 0x7;
 
+            ULONG file_attributes_for(const bool is_directory)
+            {
+                return is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE;
+            }
+
             bool is_synchronous(const file& f)
             {
                 return (f.file_mode & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) != 0;
@@ -696,7 +701,7 @@ namespace sogen
                 info.LastWriteTime = current_file.last_write_time;
                 info.ChangeTime = info.LastWriteTime;
 
-                info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                info.FileAttributes = file_attributes_for(current_file.is_directory);
                 info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
                 info.EndOfFile.QuadPart = current_file.file_size;
 
@@ -942,7 +947,7 @@ namespace sogen
                 const emulator_object<FILE_ATTRIBUTE_TAG_INFORMATION> info{c.emu, file_information};
                 FILE_ATTRIBUTE_TAG_INFORMATION i{};
 
-                i.FileAttributes = f->is_directory() ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                i.FileAttributes = file_attributes_for(f->is_directory());
 
                 info.write(i);
 
@@ -1131,7 +1136,7 @@ namespace sogen
                 i.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
                 i.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 i.ChangeTime = i.LastWriteTime;
-                i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                i.FileAttributes = file_attributes_for(is_directory);
 
                 info.write(i);
 
@@ -1470,7 +1475,7 @@ namespace sogen
                 i.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
                 i.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 i.ChangeTime = i.LastWriteTime;
-                i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                i.FileAttributes = file_attributes_for(is_directory);
 
                 const auto file_size = is_directory ? 0LL : file_stat.st_size;
                 i.EndOfFile.QuadPart = file_size;
@@ -2706,7 +2711,7 @@ namespace sogen
                 info.AllocationSize.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
                 info.EndOfFile.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
                 info.ChangeTime = info.LastWriteTime;
-                info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                info.FileAttributes = file_attributes_for((file_stat.st_mode & S_IFDIR) != 0);
             });
 
             return STATUS_SUCCESS;
@@ -2780,7 +2785,7 @@ namespace sogen
                 info.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
                 info.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 info.ChangeTime = info.LastWriteTime;
-                info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                info.FileAttributes = file_attributes_for((file_stat.st_mode & S_IFDIR) != 0);
             });
 
             return STATUS_SUCCESS;
