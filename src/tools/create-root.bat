@@ -36,6 +36,8 @@ MKDIR %EMU_CURSORDIR%
 MKDIR %EMU_FONTDIR%
 MKDIR %EMU_SYSDIR%\en-us
 MKDIR %EMU_SYSDIR_WOW64%\en-us
+MKDIR %EMU_SYSDIR%\wbem
+MKDIR %EMU_SYSDIR_WOW64%\wbem
 MKDIR %EMU_SYSTEMRESOURCESDIR%
 MKDIR %EMU_SORTDIR%
 MKDIR %EMU_WINSXSDIR%
@@ -232,6 +234,7 @@ CALL :collect vcruntime140_1.dll
 CALL :collect vcruntime140_1d.dll
 CALL :collect vcruntime140d.dll
 CALL :collect version.dll
+CALL :collect wbemcomn.dll
 CALL :collect webio.dll
 CALL :collect wer.dll
 CALL :collect win32u.dll
@@ -255,6 +258,7 @@ CALL :collect wlanapi.dll
 CALL :collect wldap32.dll
 CALL :collect wldp.dll
 CALL :collect wmasf.dll
+CALL :collect wmiclnt.dll
 CALL :collect wmvcore.dll
 CALL :collect wow64.dll
 CALL :collect wow64base.dll
@@ -281,6 +285,15 @@ CALL :collect_matching x3daudio1_*.dll
 CALL :collect_matching xapofx1_*.dll
 CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
+
+CALL :collect_wbem esscli.dll
+CALL :collect_wbem fastprox.dll
+CALL :collect_wbem wbemcore.dll
+CALL :collect_wbem wbemdisp.dll
+CALL :collect_wbem wbemess.dll
+CALL :collect_wbem wbemprox.dll
+CALL :collect_wbem wbemsvc.dll
+CALL :collect_wbem wmisvc.dll
 
 CALL :collect locale.nls
 CALL :collect l_intl.nls
@@ -352,6 +365,11 @@ EXIT /B
 :collect
 CALL :collect_file %SYSDIR%, %~1, %EMU_SYSDIR%
 CALL :collect_file %SYSDIR_WOW64%, %~1, %EMU_SYSDIR_WOW64%
+EXIT /B
+
+:collect_wbem
+CALL :collect_file "%WINDIR%\System32\wbem", %~1, %EMU_SYSDIR%\wbem
+CALL :collect_file "%WINDIR%\SysWOW64\wbem", %~1, %EMU_SYSDIR_WOW64%\wbem
 EXIT /B
 
 :collect_matching
