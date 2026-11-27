@@ -52,6 +52,9 @@ REM --- driver unloads. Zink runs directly on Vulkan. A game's own GALLIUM_DRIVE
 REG UNLOAD HKLM\SogenSysSeed >NUL 2>&1
 REG LOAD HKLM\SogenSysSeed "%REGDIR%\SYSTEM"
 REG ADD "HKLM\SogenSysSeed\ControlSet001\Control\Session Manager\Environment" /v GALLIUM_DRIVER /t REG_SZ /d zink /f
+REM --- smss.exe consumes the host's queued file renames at boot, so a booted guest never has them.
+REG DELETE "HKLM\SogenSysSeed\ControlSet001\Control\Session Manager" /v PendingFileRenameOperations /f >NUL 2>&1
+REG DELETE "HKLM\SogenSysSeed\ControlSet001\Control\Session Manager" /v PendingFileRenameOperations2 /f >NUL 2>&1
 REG UNLOAD HKLM\SogenSysSeed
 
 REM --- Audio endpoint seed. Hosts without a local playback device (CI runners, RDP sessions) have no active
