@@ -108,6 +108,9 @@ CALL :collect dwrite.dll
 CALL :collect dxcore.dll
 CALL :collect dxgi.dll
 CALL :collect dxva2.dll
+CALL :collect explorerframe.dll
+CALL :collect_file "%WINDIR%\System32\en-US", explorerframe.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", explorerframe.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect fwpuclnt.dll
 CALL :collect gdi32.dll
 CALL :collect gdi32full.dll
