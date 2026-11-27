@@ -35,8 +35,9 @@ namespace sogen
         }
 
         // Remove the highest nibble since we are not currently handling those memory protection constants
+        // and the PAGE_NOCACHE / PAGE_WRITECOMBINE caching hints, which do not change the access rights
         // https://github.com/winsiderss/phnt/blob/master/ntmmapi.h#L26
-        nt_protection &= ~0xF0000000;
+        nt_protection &= ~(0xF0000000 | PAGE_NOCACHE | PAGE_WRITECOMBINE);
 
         memory_permission common = memory_permission::none;
         switch (nt_protection)
