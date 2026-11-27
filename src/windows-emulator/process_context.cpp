@@ -1494,6 +1494,15 @@ namespace sogen
 
     void process_context::restore_after_state_restore(windows_emulator& win_emu)
     {
+        // A restored thread runs on without the thread switch that otherwise loads its vCPU's GDT.
+        for (uint32_t i = 0; i < win_emu.vcpu_count(); ++i)
+        {
+            if (auto* cpu = dynamic_cast<x86_64_cpu*>(&win_emu.vcpu(i).cpu))
+            {
+                cpu->load_gdt(this->gdt_base + i * GDT_LIMIT, GDT_LIMIT);
+            }
+        }
+
         this->section_views.restore_views(win_emu.memory);
 
         // captureCount lives in guest memory, which a snapshot taken before it was maintained restores as 0 while
