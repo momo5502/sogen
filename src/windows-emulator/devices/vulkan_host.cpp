@@ -2226,6 +2226,17 @@ namespace sogen
             return params;
         }
 
+        bool restorable(const pipeline_params& create) const
+        {
+            const auto stage_restorable = [this](const pipeline_stage_params& stage) {
+                return stage.shader.code != nullptr || this->shader_modules.contains(stage.shader.module);
+            };
+            const auto library_restorable = [this](const std::shared_ptr<const pipeline_params>& library) {
+                return this->restorable(*library);
+            };
+            return std::ranges::all_of(create.stages, stage_restorable) && std::ranges::all_of(create.library_creates, library_restorable);
+        }
+
         struct sampler_data
         {
             VkSampler handle{};
@@ -15038,13 +15049,7 @@ namespace sogen
         buffer.write(static_cast<uint64_t>(impl.pipelines.size()));
         for (const auto& [id, pipeline] : impl.pipelines)
         {
-            const auto restorable = [&](const impl::shader_stage_params& stage) {
-                return stage.code != nullptr || impl.shader_modules.contains(stage.module);
-            };
-
-            if (pipeline.create.stages.empty() ||
-                !std::ranges::all_of(pipeline.create.stages,
-                                     [&](const impl::pipeline_stage_params& stage) { return restorable(stage.shader); }))
+            if (!impl.restorable(pipeline.create))
             {
                 throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
             }
