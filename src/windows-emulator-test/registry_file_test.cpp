@@ -1363,6 +1363,31 @@ namespace sogen::test
         EXPECT_EQ(profile_class_size, read_header<KEY_FULL_INFORMATION>(output).MaxClassLength);
     }
 
+    TEST_F(RegistrySyscallTest, FullInformationReportsTheLongestValueNameAndDataAmongTheValuesTheKeyHas)
+    {
+        const auto path = uR"(\Registry\Machine\System\CurrentControlSet\Control\ProductOptions)";
+        const auto key = this->emu->registry.get_key(utils::path_key{path});
+        ASSERT_TRUE(key.has_value());
+
+        constexpr std::string_view overlay_only_name = "OverlayOnlyValueWithTheLongestName";
+        const auto replacement_size = big_data_segment_size + 0x1000;
+        ASSERT_TRUE(this->emu->registry.delete_value(*key, "ProductPolicy"));
+        this->emu->registry.set_value(*key, "Pair", REG_BINARY, std::vector<std::byte>(replacement_size));
+        this->emu->registry.set_value(*key, std::string{overlay_only_name}, REG_DWORD, std::vector<std::byte>(sizeof(DWORD)));
+
+        handle product_options{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(path, product_options));
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(product_options, KeyFullInformation, 0x100, output, result_length));
+
+        const auto info = read_header<KEY_FULL_INFORMATION>(output);
+        EXPECT_EQ(2u, info.Values);
+        EXPECT_EQ(overlay_only_name.size() * sizeof(char16_t), info.MaxValueNameLength);
+        EXPECT_EQ(replacement_size, info.MaxValueDataLength);
+    }
+
     TEST_F(RegistrySyscallTest, NodeInformationPlacesTheClassAtTheNextUlongAfterTheNameC6C8)
     {
         handle profile_list{};
