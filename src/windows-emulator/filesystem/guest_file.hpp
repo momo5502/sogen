@@ -64,6 +64,7 @@ namespace sogen
         std::optional<windows_path> rename_target_{};
         bool delete_on_close_{false};
         std::shared_ptr<file_state> state_{};
+        std::optional<struct compat_stat> opened_stat_{};
         uint64_t posix_owner_{0};
 
         [[nodiscard]] bool owns_posix_unlink() const;

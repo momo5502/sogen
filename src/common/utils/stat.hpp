@@ -3,6 +3,7 @@
 #include <platform/platform.hpp>
 
 #include <filesystem>
+#include <optional>
 
 namespace sogen
 {
@@ -24,6 +25,8 @@ namespace sogen
 
     bool compat_fstat(int fd, struct compat_stat* stat);
     bool compat_stat(const std::filesystem::path& file_name, struct compat_stat* stat);
+
+    std::optional<std::filesystem::path> compat_find_path_by_inode(const std::filesystem::path& search_root, uint64_t inode);
 
     LARGE_INTEGER convert_timespec_to_filetime(timespec timespec);
 } // namespace sogen

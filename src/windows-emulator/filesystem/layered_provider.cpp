@@ -576,6 +576,26 @@ namespace sogen
         return entries;
     }
 
+    std::optional<windows_path> layered_provider::find_path_by_file_id(const uint64_t file_id) const
+    {
+        for (const auto* layer : {this->upper_.get(), this->lower_.get()})
+        {
+            const auto path = layer->find_path_by_file_id(file_id);
+            if (!path)
+            {
+                continue;
+            }
+
+            const auto visible = this->stat(*path);
+            if (visible && visible->st_ino == file_id)
+            {
+                return path;
+            }
+        }
+
+        return std::nullopt;
+    }
+
     std::vector<std::u16string> layered_provider::list_names(const windows_path& path) const
     {
         this->journal_.refresh();

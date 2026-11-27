@@ -213,6 +213,41 @@ namespace sogen
         return resolved->provider->stat(resolved->relative);
     }
 
+    std::optional<windows_path> file_system::find_by_file_id(const char drive, const uint64_t file_id) const
+    {
+        const auto drive_letter = utils::string::char_to_lower(drive);
+
+        std::optional<windows_path> best{};
+        for (const auto& [mount_point, entry] : this->mounts_)
+        {
+            if (mount_point.get_drive() != drive_letter)
+            {
+                continue;
+            }
+
+            const auto relative = entry.provider->find_path_by_file_id(file_id);
+            if (!relative)
+            {
+                continue;
+            }
+
+            auto candidate = mount_point / *relative;
+            const auto resolved = this->resolve(candidate);
+            if (!resolved || resolved->provider != entry.provider.get())
+            {
+                continue;
+            }
+
+            if (!best || candidate.depth() < best->depth() ||
+                (candidate.depth() == best->depth() && candidate.u16string() < best->u16string()))
+            {
+                best = std::move(candidate);
+            }
+        }
+
+        return best;
+    }
+
     std::vector<directory_entry> file_system::list_directory(const windows_path& path) const
     {
         std::vector<directory_entry> entries{};

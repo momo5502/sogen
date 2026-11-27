@@ -500,6 +500,37 @@ namespace sogen
         return file_stat;
     }
 
+    std::optional<windows_path> host_directory_provider::find_path_by_file_id(const uint64_t file_id) const
+    {
+        const auto host_path = compat_find_path_by_inode(this->target_, file_id);
+        if (!host_path)
+        {
+            return std::nullopt;
+        }
+
+        std::error_code ec{};
+        const auto root = weakly_canonical(this->target_, ec);
+        if (ec)
+        {
+            return std::nullopt;
+        }
+
+        const auto found = weakly_canonical(*host_path, ec);
+        if (ec || !is_subpath(root, found))
+        {
+            return std::nullopt;
+        }
+
+        windows_path path = windows_path{found.lexically_relative(root)}.lexically_normal();
+        const auto resolved = this->stat(path);
+        if (!resolved || resolved->st_ino != file_id)
+        {
+            return std::nullopt;
+        }
+
+        return path;
+    }
+
     std::vector<directory_entry> host_directory_provider::list(const windows_path& path) const
     {
         std::vector<directory_entry> entries{};

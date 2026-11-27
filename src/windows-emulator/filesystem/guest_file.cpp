@@ -36,6 +36,10 @@ namespace sogen
           io_(std::move(io)),
           state_(file_sys.open_file_state(path_))
     {
+        if (!this->io_)
+        {
+            this->opened_stat_ = file_sys.stat(this->path_);
+        }
     }
 
     guest_file::~guest_file()
@@ -60,6 +64,7 @@ namespace sogen
             this->rename_target_ = std::exchange(obj.rename_target_, std::nullopt);
             this->delete_on_close_ = std::exchange(obj.delete_on_close_, false);
             this->state_ = std::move(obj.state_);
+            this->opened_stat_ = std::exchange(obj.opened_stat_, std::nullopt);
             this->posix_owner_ = std::exchange(obj.posix_owner_, 0);
         }
 
@@ -103,6 +108,11 @@ namespace sogen
 
     std::optional<struct compat_stat> guest_file::stat() const
     {
+        if (!this->io_)
+        {
+            return this->opened_stat_;
+        }
+
         return this->io_->stat();
     }
 
@@ -158,6 +168,10 @@ namespace sogen
         {
             buffer.write(this->io_->tell());
         }
+        else
+        {
+            buffer.write_optional(this->opened_stat_);
+        }
     }
 
     void guest_file::deserialize(utils::buffer_deserializer& buffer)
@@ -166,6 +180,7 @@ namespace sogen
         this->rename_target_.reset();
         this->delete_on_close_ = false;
         this->state_.reset();
+        this->opened_stat_.reset();
         this->posix_owner_ = 0;
 
         this->file_sys_ = &buffer.read<file_system_wrapper>().get();
@@ -203,6 +218,7 @@ namespace sogen
 
         if (!buffer.read<bool>())
         {
+            buffer.read_optional(this->opened_stat_);
             return;
         }
 

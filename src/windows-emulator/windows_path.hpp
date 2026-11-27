@@ -115,29 +115,7 @@ namespace sogen
 
         std::u16string u16string() const
         {
-            std::u16string path{};
-            if (this->drive_)
-            {
-                path.push_back(static_cast<char16_t>(*this->drive_));
-                path.push_back(u':');
-            }
-
-            for (const auto& folder : this->folders_)
-            {
-                if (!path.empty())
-                {
-                    path.push_back(u'\\');
-                }
-
-                path.append(folder);
-            }
-
-            if (this->is_absolute() && this->folders_.empty())
-            {
-                path.push_back(u'\\');
-            }
-
-            return path;
+            return this->join(this->folders_);
         }
 
         std::string string() const
@@ -153,6 +131,16 @@ namespace sogen
             }
 
             return std::u16string(windows_path_detail::unc_prefix) + this->u16string();
+        }
+
+        std::u16string to_spelled_unc_path() const
+        {
+            if (this->is_relative())
+            {
+                return this->join(this->spelled_folders_);
+            }
+
+            return std::u16string(windows_path_detail::unc_prefix) + this->join(this->spelled_folders_);
         }
 
         // Keeps the case the path was given in, so files and directories are created on the host the way the guest
@@ -347,6 +335,33 @@ namespace sogen
         // Components in lower case, which identify the path, and as they were given.
         std::list<std::u16string> folders_{};
         std::list<std::u16string> spelled_folders_{};
+
+        std::u16string join(const std::list<std::u16string>& folders) const
+        {
+            std::u16string path{};
+            if (this->drive_)
+            {
+                path.push_back(static_cast<char16_t>(*this->drive_));
+                path.push_back(u':');
+            }
+
+            for (const auto& folder : folders)
+            {
+                if (!path.empty())
+                {
+                    path.push_back(u'\\');
+                }
+
+                path.append(folder);
+            }
+
+            if (this->is_absolute() && folders.empty())
+            {
+                path.push_back(u'\\');
+            }
+
+            return path;
+        }
 
         void canonicalize()
         {
