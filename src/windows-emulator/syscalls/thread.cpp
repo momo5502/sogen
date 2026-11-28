@@ -1243,6 +1243,7 @@ namespace sogen
             }
 
             thread->suspended += 1;
+            thread->unlink_object_wait();
 
             if (thread == c.vcpu.active_thread)
             {
@@ -1296,6 +1297,7 @@ namespace sogen
                 thread->suspended -= 1;
                 if (old_count == 1)
                 {
+                    thread->resume_object_wait(c.win_emu);
                     c.win_emu.wake_idle_vcpu();
                 }
             }

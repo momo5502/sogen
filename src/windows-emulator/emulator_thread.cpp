@@ -6,6 +6,7 @@
 #include "io_completion_wait.hpp"
 #include "worker_factory_support.hpp"
 #include "debug_object.hpp"
+#include "object_wait_list.hpp"
 #include "syscall_utils.hpp"
 #include "window_hooks.hpp"
 
@@ -471,7 +472,7 @@ namespace sogen
                 // nothing, so re-signaling one would undo another process's reset.
                 if (auto* event = c.events.get_by_index(ref.index); event && event->type == SynchronizationEvent)
                 {
-                    event->set_signaled(true);
+                    signal_event(*event);
                 }
                 break;
 
@@ -479,13 +480,14 @@ namespace sogen
                 if (auto* mutant = c.mutants.get_by_index(ref.index))
                 {
                     mutant->unlock_and_restore(mutant::make_owner(c.process_id, current_thread_id), taken_as == wait_state::abandoned);
+                    hand_over_mutant(*mutant, c.process_id);
                 }
                 break;
 
             case handle_types::semaphore:
                 if (auto* semaphore = c.semaphores.get_by_index(ref.index))
                 {
-                    std::ignore = semaphore->release(1);
+                    release_semaphore_units(*semaphore, semaphore->release(1).first);
                 }
                 break;
 
@@ -1069,6 +1071,7 @@ namespace sogen
     {
         ++this->ended_waits;
         this->pending_status = status;
+        this->unlink_object_wait();
         this->user_apc_ended_wait = false;
         this->message_wait_return_register.reset();
         this->await_time = {};
@@ -1771,12 +1774,7 @@ namespace sogen
                             continue;
                         }
 
-                        if (this->await_msg_mask.has_value())
-                        {
-                            this->mark_queue_status_changed(QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
-                        }
-
-                        this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));
+                        this->satisfy_object_wait(i, *consumed_state == wait_state::abandoned);
                         return true;
                     }
                 }
@@ -1838,7 +1836,13 @@ namespace sogen
                 return true;
             }
 
-            return complete_if_timed_out(STATUS_TIMEOUT);
+            if (complete_if_timed_out(STATUS_TIMEOUT))
+            {
+                return true;
+            }
+
+            this->link_object_wait(win_emu);
+            return false;
         }
 
         if (this->await_console_io)
@@ -2020,8 +2024,10 @@ namespace sogen
             return due_time.has_value() && *due_time != infinite && *due_time < now;
         };
 
-        // switch_to_thread runs a thread with an APC to deliver or a message hook to call, whatever it waits for.
-        if (this->message_wait_return_register.has_value() || this->has_pending_alertable_apc())
+        // switch_to_thread runs a thread with an APC to deliver or a message hook to call, whatever it waits for, and
+        // is_thread_ready ends an alertable wait whose alert is pending first.
+        if (this->message_wait_return_register.has_value() || this->has_pending_alertable_apc() ||
+            (this->user_alerted && !this->user_apc_ended_wait && this->is_in_alertable_wait()))
         {
             return false;
         }
@@ -2032,9 +2038,16 @@ namespace sogen
             return !this->alerted && !is_due(this->await_time);
         }
 
-        if (this->await_msg_mask.has_value() || !this->await_objects.empty() || this->await_file_io.has_value())
+        if (this->await_msg_mask.has_value() || this->await_file_io.has_value())
         {
             return false;
+        }
+
+        if (!this->await_objects.empty())
+        {
+            const auto on_every_list = this->await_object_lists.size() == this->await_objects.size() &&
+                                       std::ranges::none_of(this->await_object_lists, [](const object_wait_list* list) { return !list; });
+            return on_every_list && !is_due(this->await_time);
         }
 
         if (this->await_time.has_value())
@@ -2054,6 +2067,128 @@ namespace sogen
         const auto* completion = static_cast<const io_completion*>(wait.io_completion_object);
         return completion && wait.io_completion_generation == process.io_completions.generation() && completion->queue.empty() &&
                !is_due(wait.timeout);
+    }
+
+    void emulator_thread::link_object_wait(windows_emulator& win_emu)
+    {
+        for (auto i = this->await_objects.size(); i < this->await_object_lists.size(); ++i)
+        {
+            if (auto* list = this->await_object_lists[i])
+            {
+                list->unlink(*this, static_cast<uint32_t>(i));
+            }
+        }
+
+        const auto one_object_can_end_the_wait = this->await_any || (this->await_objects.size() == 1 && !this->await_msg_mask.has_value());
+        if (this->user_apc_ended_wait || !one_object_can_end_the_wait)
+        {
+            this->unlink_object_wait();
+            return;
+        }
+
+        auto& process = win_emu.process;
+        this->await_object_cache.resize(this->await_objects.size());
+        this->await_object_lists.resize(this->await_objects.size());
+
+        for (uint32_t i = 0; i < this->await_objects.size(); ++i)
+        {
+            const auto& ref = this->await_objects[i];
+            auto& cached = this->await_object_cache[i];
+            if (!(cached.reference == ref))
+            {
+                cached = {.reference = ref};
+            }
+
+            object_wait_list* list = nullptr;
+            if (!ref.is_pseudo())
+            {
+                switch (ref.object_type())
+                {
+                case handle_types::event:
+                    if (auto* e = process.events.get_cached(ref, cached.object, cached.generation); e && !e->shared)
+                    {
+                        list = &e->waiters;
+                    }
+                    break;
+
+                case handle_types::semaphore:
+                    if (auto* s = process.semaphores.get_cached(ref, cached.object, cached.generation))
+                    {
+                        list = &s->waiters;
+                    }
+                    break;
+
+                case handle_types::mutant:
+                    if (auto* m = process.mutants.get_cached(ref, cached.object, cached.generation); m && !m->shared)
+                    {
+                        list = &m->waiters;
+                    }
+                    break;
+
+                default:
+                    break;
+                }
+            }
+
+            auto* linked = this->await_object_lists[i];
+            if (linked == list)
+            {
+                continue;
+            }
+
+            if (linked)
+            {
+                linked->unlink(*this, i);
+            }
+
+            if (list)
+            {
+                list->link(*this, i);
+            }
+        }
+    }
+
+    void emulator_thread::unlink_object_wait()
+    {
+        for (uint32_t i = 0; i < this->await_object_lists.size(); ++i)
+        {
+            if (auto* list = this->await_object_lists[i])
+            {
+                list->unlink(*this, i);
+            }
+        }
+
+        this->await_object_lists.clear();
+    }
+
+    void emulator_thread::satisfy_object_wait(const uint32_t index, const bool abandoned)
+    {
+        if (this->await_msg_mask.has_value())
+        {
+            this->mark_queue_status_changed(QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
+        }
+
+        this->mark_as_ready(static_cast<NTSTATUS>((abandoned ? STATUS_ABANDONED_WAIT_0 : STATUS_WAIT_0) + index));
+    }
+
+    void emulator_thread::resume_object_wait(windows_emulator& win_emu)
+    {
+        if (this->suspended != 0 || this->is_terminated() || this->await_objects.empty() || this->is_await_time_over(win_emu.clock()))
+        {
+            return;
+        }
+
+        this->await_object_cache.resize(this->await_objects.size());
+        for (uint32_t i = 0; i < this->await_objects.size(); ++i)
+        {
+            if (observe_cached_object_signal(win_emu, this->await_objects[i], this->await_object_cache[i], this->id) !=
+                wait_state::not_signaled)
+            {
+                return;
+            }
+        }
+
+        this->link_object_wait(win_emu);
     }
 
     void emulator_thread::setup_if_necessary(cpu_interface& emu, const process_context& context)
