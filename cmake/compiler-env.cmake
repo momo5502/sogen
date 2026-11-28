@@ -204,6 +204,11 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
 
   # Asyncify's Binaryen pass makes each Wasm link memory-hungry; linking several executables at once can exhaust a CI
   # runner's memory, which then drops the job.
+  # CMake only reads CMAKE_JOB_POOLS while the JOB_POOLS property is unset.
+  get_property(job_pools_defined GLOBAL PROPERTY JOB_POOLS SET)
+  if(NOT job_pools_defined)
+    set_property(GLOBAL PROPERTY JOB_POOLS ${CMAKE_JOB_POOLS})
+  endif()
   set_property(GLOBAL APPEND PROPERTY JOB_POOLS emscripten_link=1)
   set(CMAKE_JOB_POOL_LINK emscripten_link)
 
