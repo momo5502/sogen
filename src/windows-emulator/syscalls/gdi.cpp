@@ -97,8 +97,9 @@ namespace sogen
                           "client drawing brush index must be inside server info brush table");
 
             constexpr uint32_t k_logfontw_size = 0x5C;
-            constexpr uint32_t k_logbrush_size = 0x0C;
+            constexpr uint32_t k_logbrush_size = 0x10;
             constexpr uint32_t k_logpen_size = 0x10;
+            constexpr uint32_t k_extlogpen_size = 0x20;
             constexpr uint32_t k_bitmap_size = 0x18;
 
             constexpr uint32_t k_textmetric_size = 0x3C;
@@ -143,6 +144,14 @@ namespace sogen
             constexpr int16_t k_gdi_batch_cmd_delete_region = 8;
             constexpr uint32_t k_gdibs_no_rect = 0x80000000u;
             constexpr uint32_t k_ps_solid = 0;
+            constexpr uint32_t k_ps_null = 5;
+            constexpr uint32_t k_bs_solid = 0;
+            constexpr uint32_t k_bs_null = 1;
+            constexpr uint32_t k_bs_pattern = 3;
+            constexpr uint64_t k_gdi_brush_attr_style_offset = 0x08;
+            constexpr uint64_t k_gdi_brush_attr_hatch_offset = 0x10;
+            constexpr uint64_t k_gdi_pen_attr_style_offset = 0x08;
+            constexpr uint64_t k_gdi_pen_attr_width_offset = 0x0C;
             constexpr size_t k_gdi_poly_pat_blt_rect_offset = 0x30;
             constexpr size_t k_gdi_pat_rect_size = 0x18;
 
@@ -1375,6 +1384,52 @@ namespace sogen
                 return true;
             }
 
+            struct gdi_brush_attr
+            {
+                uint32_t style{};
+                uint32_t color{};
+                uint64_t hatch{};
+            };
+
+            gdi_brush_attr read_gdi_brush_attr(const syscall_context& c, const uint64_t attr)
+            {
+                gdi_brush_attr brush{};
+                brush.color = c.win_emu.memory.read_memory<uint32_t>(attr + sizeof(uint32_t));
+                brush.style = c.win_emu.memory.read_memory<uint32_t>(attr + k_gdi_brush_attr_style_offset);
+                brush.hatch = c.win_emu.memory.read_memory<uint64_t>(attr + k_gdi_brush_attr_hatch_offset);
+                return brush;
+            }
+
+            void write_gdi_brush_attr(const syscall_context& c, const uint64_t attr, const gdi_brush_attr& brush)
+            {
+                c.win_emu.memory.write_memory(attr + sizeof(uint32_t), brush.color);
+                c.win_emu.memory.write_memory(attr + k_gdi_brush_attr_style_offset, brush.style);
+                c.win_emu.memory.write_memory(attr + k_gdi_brush_attr_hatch_offset, brush.hatch);
+            }
+
+            struct gdi_pen_attr
+            {
+                uint32_t style{};
+                uint32_t width{};
+                uint32_t color{};
+            };
+
+            gdi_pen_attr read_gdi_pen_attr(const syscall_context& c, const uint64_t attr)
+            {
+                gdi_pen_attr pen{};
+                pen.color = c.win_emu.memory.read_memory<uint32_t>(attr + sizeof(uint32_t));
+                pen.style = c.win_emu.memory.read_memory<uint32_t>(attr + k_gdi_pen_attr_style_offset);
+                pen.width = c.win_emu.memory.read_memory<uint32_t>(attr + k_gdi_pen_attr_width_offset);
+                return pen;
+            }
+
+            void write_gdi_pen_attr(const syscall_context& c, const uint64_t attr, const gdi_pen_attr& pen)
+            {
+                c.win_emu.memory.write_memory(attr + sizeof(uint32_t), pen.color);
+                c.win_emu.memory.write_memory(attr + k_gdi_pen_attr_style_offset, pen.style);
+                c.win_emu.memory.write_memory(attr + k_gdi_pen_attr_width_offset, pen.width);
+            }
+
             uint32_t read_dc_attr_colorref(const syscall_context& c, const uint64_t address)
             {
                 uint32_t colorref = 0;
@@ -2234,14 +2289,29 @@ namespace sogen
 
                     const uint64_t handle64 = handle;
                     write_gdi_object_slot(c, seed.index, handle64);
-                    if (seed.type == k_gdi_brush_type)
+                    uint64_t attr = 0;
+                    if (seed.type == k_gdi_brush_type && get_gdi_object_address(c, handle, k_gdi_brush_type, attr))
                     {
-                        set_gdi_object_color(c, handle, k_gdi_brush_type, stock_brush_color(seed.index));
+                        if (seed.index == k_stock_null_brush_index)
+                        {
+                            write_gdi_brush_attr(c, attr, {.style = k_bs_null, .color = 0, .hatch = 0});
+                        }
+                        else
+                        {
+                            write_gdi_brush_attr(c, attr, {.style = k_bs_solid, .color = stock_brush_color(seed.index), .hatch = 0});
+                        }
                     }
-                    else if (seed.type == k_gdi_pen_type)
+                    else if (seed.type == k_gdi_pen_type && get_gdi_object_address(c, handle, k_gdi_pen_type, attr))
                     {
-                        const uint32_t color = seed.index == k_stock_white_pen_index ? 0x00FFFFFFu : 0x00000000u;
-                        set_gdi_object_color(c, handle, k_gdi_pen_type, color);
+                        if (seed.index == k_stock_null_pen_index)
+                        {
+                            write_gdi_pen_attr(c, attr, {.style = k_ps_null, .width = 1, .color = 0});
+                        }
+                        else
+                        {
+                            const uint32_t color = seed.index == k_stock_white_pen_index ? 0x00FFFFFFu : 0x00000000u;
+                            write_gdi_pen_attr(c, attr, {.style = k_ps_solid, .width = 0, .color = color});
+                        }
                     }
                     else if (seed.type == k_gdi_font_type)
                     {
@@ -2579,10 +2649,6 @@ namespace sogen
                 {
                 case k_gdi_palette_type:
                     return k_palette_object_size;
-                case k_gdi_brush_type:
-                    return k_logbrush_size;
-                case k_gdi_pen_type:
-                    return k_logpen_size;
                 case k_gdi_font_type:
                     return k_logfontw_size;
                 case k_gdi_bitmap_type:
@@ -3135,20 +3201,39 @@ namespace sogen
             return handle;
         }
 
-        uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, const handle /*bitmap*/, const uint32_t /*unused*/)
+        uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, const handle bitmap, const uint32_t /*unused*/)
         {
-            return allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size, false);
+            const auto handle_value = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size, false);
+            uint64_t brush_attr = 0;
+            if (handle_value != 0 && get_gdi_object_address(c, handle_value, k_gdi_brush_type, brush_attr))
+            {
+                write_gdi_brush_attr(c, brush_attr, {.style = k_bs_pattern, .color = 0, .hatch = bitmap.bits});
+            }
+            return handle_value;
         }
 
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, const uint32_t style, const uint32_t width, const uint32_t color)
         {
+            if (style == k_ps_null)
+            {
+                auto null_pen = read_gdi_object_slot(c, k_stock_null_pen_index);
+                if (null_pen == 0 && ensure_gdi_shared_table(c) != 0)
+                {
+                    seed_gdi_stock_objects(c);
+                    null_pen = read_gdi_object_slot(c, k_stock_null_pen_index);
+                }
+
+                return null_pen;
+            }
+
             // On Windows only solid pens of width 0, the pens gdi32 can cache, have a user attribute. gdi32 deletes the
             // others at once instead of queueing the delete in the GDI batch.
             const auto handle = allocate_gdi_object(c, k_gdi_pen_type, k_gdi_pen_attr_size, style == k_ps_solid && width == 0);
             uint64_t pen_attr = 0;
             if (handle != 0 && get_gdi_object_address(c, static_cast<uint32_t>(handle), k_gdi_pen_type, pen_attr))
             {
-                c.emu.write_memory(pen_attr + sizeof(uint32_t), &color, sizeof(color));
+                const auto absolute_width = static_cast<int32_t>(width) < 0 ? 0u - width : width;
+                write_gdi_pen_attr(c, pen_attr, {.style = style, .width = absolute_width, .color = color});
             }
             return handle;
         }
@@ -4172,6 +4257,64 @@ namespace sogen
             return handle;
         }
 
+        namespace
+        {
+            bool is_word_aligned(const emulator_pointer address)
+            {
+                return (address & 1) == 0;
+            }
+
+            uint32_t get_brush_object(const syscall_context& c, const uint64_t attr, const uint32_t size, const emulator_pointer buffer)
+            {
+                if (buffer == 0)
+                {
+                    return k_logbrush_size;
+                }
+
+                if (size == 0 || !is_word_aligned(buffer))
+                {
+                    return 0;
+                }
+
+                const auto brush = read_gdi_brush_attr(c, attr);
+                std::array<uint8_t, k_logbrush_size> object{};
+                std::memcpy(object.data(), &brush.style, sizeof(brush.style));
+                std::memcpy(object.data() + sizeof(uint32_t), &brush.color, sizeof(brush.color));
+                std::memcpy(object.data() + (2 * sizeof(uint32_t)), &brush.hatch, sizeof(brush.hatch));
+
+                return c.emu.try_write_memory(buffer, object.data(), std::min(size, k_logbrush_size)) ? k_logbrush_size : 0;
+            }
+
+            uint32_t get_pen_object(const syscall_context& c, const uint64_t attr, const uint32_t size, const emulator_pointer buffer)
+            {
+                if (buffer == 0)
+                {
+                    return k_logpen_size;
+                }
+
+                if (!is_word_aligned(buffer))
+                {
+                    return 0;
+                }
+
+                const auto pen = read_gdi_pen_attr(c, attr);
+                if (pen.style == k_ps_null && size == k_extlogpen_size)
+                {
+                    std::array<uint8_t, k_extlogpen_size> ext_object{};
+                    std::memcpy(ext_object.data(), &pen.style, sizeof(pen.style));
+                    return c.emu.try_write_memory(buffer, ext_object.data(), ext_object.size()) ? k_extlogpen_size : 0;
+                }
+
+                if (size < k_logpen_size)
+                {
+                    return 0;
+                }
+
+                const std::array<uint32_t, 4> object{pen.style, pen.width, 0, pen.color};
+                return c.emu.try_write_memory(buffer, object.data(), sizeof(object)) ? k_logpen_size : 0;
+            }
+        }
+
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, const uint32_t handle_value, const uint32_t size,
                                            const emulator_pointer buffer)
         {
@@ -4183,6 +4326,16 @@ namespace sogen
             }
 
             const auto object_type = gdi_object_type(entry);
+            if (object_type == k_gdi_brush_type)
+            {
+                return get_brush_object(c, entry.Object, size, buffer);
+            }
+
+            if (object_type == k_gdi_pen_type)
+            {
+                return get_pen_object(c, entry.Object, size, buffer);
+            }
+
             const uint32_t object_size = get_gdi_object_size(object_type);
             if (object_size == 0)
             {
