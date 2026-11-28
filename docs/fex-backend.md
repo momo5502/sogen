@@ -103,6 +103,14 @@ the backend cannot run JIT code on a device.
   no-access page raises `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]` = 0, where Windows
   reports a write. Stores, including stores to read-only memory, are write faults. When no ESR
   describing a data abort is available, the `STLR`-only `decode_arm64_store` is still the fallback.
+- **On Linux, drivers that import only anonymous host pointers refuse the GPU bridge's imports.**
+  Guest memory is a shared mapping of a memfd. `allocate_imported_memory` in `gpu_bridge.cpp` hands
+  such pages to `vkAllocateMemory` through `VkImportMemoryHostPointerInfoEXT`
+  (`vulkan_host::import_host_memory`), and amdgpu's userptr import, which libdrm requests
+  with `AMDGPU_GEM_USERPTR_ANONONLY`, rejects file-backed pages with `EPERM`. The bridge then falls
+  back to driver-allocated memory, which for a 32-bit guest or a snapshot is not placed where the
+  guest needs it. This is unverified on hardware, and whether Mesa's RADV takes that path is not
+  confirmed.
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the
@@ -152,13 +160,12 @@ again after a restore, so a thread may come back on another vCPU.
   record the vCPU count and the GDT allocation covers only the saved vCPUs, so
   `refresh_execution_context` points a vCPU past it at memory beyond that allocation, and a WoW64
   thread writes its FS descriptor there.
-- **On Linux, a host copy can widen protection for the whole process.** A host read or write of
-  guest memory that lacks the permission it needs changes the host protection while it copies, so
-  another vCPU's guest access to that memory during the copy does not fault. macOS has no such
-  window: it copies through a private alias of the host pages and never changes their protection.
-- **Linux tracked memory has a flush window.** The cache flush that brings a stale tracked chunk up to
-  date needs the chunk readable, so another vCPU can read its old cache lines between the protection
-  change and the flush.
+- **On Linux, a host copy to memory the guest maps from a driver can widen protection for the whole
+  process.** Guest memory is backed by one memfd, so a host read or write of guest memory that lacks
+  the permission it needs copies through a private alias of the same pages and never changes the guest's
+  protection, as on macOS. Memory a driver provides through host memory mapping is not part of that
+  backing and has no second view: a copy to or from it that needs more access changes the host
+  protection while it copies, so another vCPU's guest access during the copy does not fault.
 
 A misaligned `LDAR`/`STLR` that faults goes to FEXCore's `HandleUnalignedAccess`, which backpatches
 translated code and emulates host code with naturally aligned atomics. Neither keeps an access that

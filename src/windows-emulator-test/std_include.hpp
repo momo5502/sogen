@@ -2,6 +2,7 @@
 
 #define SOGEN_WINDOWS_EMULATOR_TEST_STD_INCLUDE
 
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <csignal>
@@ -16,10 +17,13 @@
 #include <iterator>
 #include <limits>
 #include <random>
+#include <string>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #ifdef __MINGW64__
 #include <unistd.h>

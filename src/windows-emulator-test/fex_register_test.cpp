@@ -8,6 +8,14 @@
 #include <sys/mman.h>
 #endif
 
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/uio.h>
+#include <unistd.h>
+
+#include <utils/finally.hpp>
+#endif
+
 namespace sogen::test
 {
     namespace
@@ -154,6 +162,151 @@ namespace sogen::test
         EXPECT_EQ(observed_size, 8u);
         EXPECT_EQ(observed_operation, memory_operation::read);
         EXPECT_EQ(observed_type, memory_violation_type::unmapped);
+    }
+#endif
+
+#ifdef __linux__
+    namespace
+    {
+        constexpr size_t host_copy_region_size = 0x1000000;
+
+        struct host_copy_case
+        {
+            memory_permission permission;
+            bool probe_with_write;
+        };
+
+        constexpr std::array host_copy_cases{
+            host_copy_case{.permission = memory_permission::none, .probe_with_write = false},
+            host_copy_case{.permission = memory_permission::read, .probe_with_write = true},
+        };
+
+        bool process_access_succeeds(const uint64_t address, const bool write)
+        {
+            std::byte byte{};
+            const iovec local{.iov_base = &byte, .iov_len = sizeof(byte)};
+            const iovec remote{.iov_base = reinterpret_cast<void*>(address), .iov_len = sizeof(byte)};
+            const auto transferred = write ? ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0)
+                                           : ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
+            return transferred == static_cast<ssize_t>(sizeof(byte));
+        }
+
+        class access_prober
+        {
+          public:
+            access_prober(const uint64_t address, const bool write)
+                : thread_([this, address, write] {
+                      while (!stop_)
+                      {
+                          probing_ = true;
+                          if (process_access_succeeds(address, write))
+                          {
+                              ++permitted_accesses_;
+                          }
+                      }
+                  })
+            {
+            }
+
+            ~access_prober()
+            {
+                stop();
+            }
+
+            access_prober(const access_prober&) = delete;
+            access_prober& operator=(const access_prober&) = delete;
+
+            void wait_until_probing() const
+            {
+                while (!probing_)
+                {
+                    std::this_thread::yield();
+                }
+            }
+
+            size_t stop()
+            {
+                stop_ = true;
+                if (thread_.joinable())
+                {
+                    thread_.join();
+                }
+
+                return permitted_accesses_;
+            }
+
+          private:
+            std::atomic<bool> stop_{false};
+            std::atomic<bool> probing_{false};
+            std::atomic<size_t> permitted_accesses_{0};
+            std::thread thread_;
+        };
+    }
+
+    TEST(FexMemoryTest, HostCopyLeavesGuestProtectionUntouched)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        const std::array<std::byte, 1> accessible{};
+        if (!process_access_succeeds(reinterpret_cast<uint64_t>(accessible.data()), false))
+        {
+            GTEST_SKIP() << "process_vm_readv is not available";
+        }
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        for (const auto& test_case : host_copy_cases)
+        {
+            const uint64_t region = memory.allocate_memory(host_copy_region_size, memory_permission::read_write);
+            ASSERT_NE(region, 0u);
+            ASSERT_TRUE(memory.protect_memory(region, host_copy_region_size, test_case.permission));
+
+            access_prober prober{region, test_case.probe_with_write};
+            prober.wait_until_probing();
+
+            const std::vector<std::byte> pattern(host_copy_region_size, std::byte{0xA5});
+            std::vector<std::byte> read_back(host_copy_region_size);
+            memory.write_memory(region, pattern.data(), pattern.size());
+            memory.read_memory(region, read_back.data(), read_back.size());
+            const auto permitted_accesses = prober.stop();
+
+            EXPECT_EQ(permitted_accesses, 0u);
+            EXPECT_EQ(read_back, pattern);
+        }
+    }
+
+    TEST(FexMemoryTest, FileSizeLimitBelowTheGuestBackingFailsWithAMessage)
+    {
+        if (!try_create_fex_emulator())
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        rlimit original{};
+        ASSERT_EQ(::getrlimit(RLIMIT_FSIZE, &original), 0);
+
+        const rlimit limited{.rlim_cur = 1 << 20, .rlim_max = original.rlim_max};
+        if (::setrlimit(RLIMIT_FSIZE, &limited) != 0)
+        {
+            GTEST_SKIP() << "RLIMIT_FSIZE cannot be lowered";
+        }
+
+        const auto restore_limit = utils::finally([&] { ::setrlimit(RLIMIT_FSIZE, &original); });
+
+        try
+        {
+            create_x86_64_emulator(backend_type::fex);
+            ADD_FAILURE() << "the backend started with a file size limit below the size of its guest memory";
+        }
+        catch (const std::runtime_error& error)
+        {
+            EXPECT_NE(std::string(error.what()).find("RLIMIT_FSIZE"), std::string::npos);
+        }
     }
 #endif
 

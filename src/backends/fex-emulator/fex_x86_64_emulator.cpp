@@ -40,10 +40,14 @@
 #endif
 #include <asm/hwcap.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <linux/memfd.h>
 #include <linux/prctl.h>
 #include <sys/auxv.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #else
 #include <execinfo.h>
@@ -64,6 +68,7 @@
 #include <cstring>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -351,6 +356,137 @@ namespace sogen::fex
                    MAP_FAILED;
         }
 
+#ifndef MFD_EXEC
+        constexpr unsigned int MFD_EXEC = 0x10U;
+#endif
+
+        // The 48-bit limit of an arm64 user address space; mmap hands out addresses up to it, which find_host_address_end
+        // does not report.
+        constexpr uint64_t guest_backing_size = uint64_t{1} << 48;
+
+        // The pages behind all guest memory. Every guest view is a mapping of this file at an offset equal to its own
+        // host address, so a second view of any part of guest memory is a plain mmap of the same offset, and one that
+        // the guest's mprotect of its own view does not affect.
+        class guest_backing_linux
+        {
+          public:
+            explicit guest_backing_linux(const uint64_t size)
+                : descriptor_(create_descriptor())
+            {
+                if (const auto limit = file_size_limit(); limit < size)
+                {
+                    ::close(this->descriptor_);
+                    throw std::runtime_error("FEX backend needs a file size limit of at least " + std::to_string(size) +
+                                             " bytes to back guest memory, but RLIMIT_FSIZE is " + std::to_string(limit));
+                }
+
+                if (::ftruncate(this->descriptor_, static_cast<off_t>(size)) != 0)
+                {
+                    const int error = errno;
+                    ::close(this->descriptor_);
+                    throw std::runtime_error(std::string("FEX backend failed to size the guest memory backing: ") + std::strerror(error));
+                }
+            }
+
+            ~guest_backing_linux()
+            {
+                ::close(this->descriptor_);
+            }
+
+            guest_backing_linux(const guest_backing_linux&) = delete;
+            guest_backing_linux& operator=(const guest_backing_linux&) = delete;
+
+            void* map(const uint64_t address, const size_t size, const int protection, const int flags) const
+            {
+                return ::mmap(reinterpret_cast<void*>(address), size, protection, MAP_SHARED | flags, this->descriptor_,
+                              static_cast<off_t>(address));
+            }
+
+            void* map_anywhere(const uint64_t address, const size_t size) const
+            {
+                return ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, this->descriptor_, static_cast<off_t>(address));
+            }
+
+            void discard(const uint64_t address, const size_t size) const
+            {
+                if (::fallocate(this->descriptor_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(address),
+                                static_cast<off_t>(size)) != 0)
+                {
+                    throw std::runtime_error("FEX backend failed to release guest memory pages");
+                }
+            }
+
+          private:
+            int descriptor_{};
+
+            // The kernel rejects an explicit MFD_EXEC with EINVAL before Linux 6.3 and with EACCES under vm.memfd_noexec=2.
+            // Without it a memfd is non-executable only through execve; mapping it with PROT_EXEC is unaffected.
+            static int create_descriptor()
+            {
+                constexpr const char* name = "sogen-guest-memory";
+                long descriptor = ::syscall(SYS_memfd_create, name, static_cast<unsigned long>(MFD_CLOEXEC | MFD_EXEC));
+                if (descriptor < 0 && (errno == EINVAL || errno == EACCES))
+                {
+                    descriptor = ::syscall(SYS_memfd_create, name, static_cast<unsigned long>(MFD_CLOEXEC));
+                }
+
+                if (descriptor < 0)
+                {
+                    const int error = errno;
+                    throw std::runtime_error(std::string("FEX backend failed to create the guest memory backing: ") + std::strerror(error));
+                }
+
+                return static_cast<int>(descriptor);
+            }
+
+            // ftruncate beyond the limit raises SIGXFSZ, which kills the process instead of returning an error.
+            static uint64_t file_size_limit()
+            {
+                rlimit limit{};
+                if (::getrlimit(RLIMIT_FSIZE, &limit) != 0 || limit.rlim_cur == RLIM_INFINITY)
+                {
+                    return std::numeric_limits<uint64_t>::max();
+                }
+
+                return static_cast<uint64_t>(limit.rlim_cur);
+            }
+        };
+
+        // A mapping of the host pages behind a range of guest memory, made for the length of one host copy. The guest's
+        // own mapping keeps its protection, so a vCPU running guest code over the same pages is still faulted.
+        class private_host_alias
+        {
+          public:
+            private_host_alias(const guest_backing_linux& backing, const uint64_t host_address, const size_t size)
+                : offset_(static_cast<size_t>(host_address & (page_size - 1))),
+                  size_((this->offset_ + size + page_size - 1) & ~(page_size - 1)),
+                  alias_(backing.map_anywhere(host_address - this->offset_, this->size_))
+            {
+                if (this->alias_ == MAP_FAILED)
+                {
+                    throw std::runtime_error("FEX backend failed to alias host memory for a copy");
+                }
+            }
+
+            ~private_host_alias()
+            {
+                ::munmap(this->alias_, this->size_);
+            }
+
+            private_host_alias(const private_host_alias&) = delete;
+            private_host_alias& operator=(const private_host_alias&) = delete;
+
+            void* data() const
+            {
+                return static_cast<std::byte*>(this->alias_) + this->offset_;
+            }
+
+          private:
+            size_t offset_{};
+            size_t size_{};
+            void* alias_{};
+        };
+
         FEXCore::HostFeatures fetch_host_features_linux()
         {
             FEXCore::HostFeatures features{};
@@ -510,10 +646,10 @@ namespace sogen::fex
         // Host code copies through this to memory the guest declared inaccessible, which leaves the protection that every
         // vCPU runs under untouched. Hardware watchpoints match virtual addresses, so the guest's watched pages do not
         // trigger on it.
-        class private_host_alias_apple
+        class private_host_alias
         {
           public:
-            private_host_alias_apple(const uint64_t host_address, const size_t size)
+            private_host_alias(const uint64_t host_address, const size_t size)
                 : source_(host_page_align_down_apple(host_address)),
                   size_(static_cast<size_t>(host_page_align_up_apple(host_address + size) - this->source_)),
                   offset_(static_cast<size_t>(host_address - this->source_))
@@ -536,13 +672,13 @@ namespace sogen::fex
                 this->alias_ = alias;
             }
 
-            ~private_host_alias_apple()
+            ~private_host_alias()
             {
                 ::vm_deallocate(mach_task_self(), this->alias_, this->size_);
             }
 
-            private_host_alias_apple(const private_host_alias_apple&) = delete;
-            private_host_alias_apple& operator=(const private_host_alias_apple&) = delete;
+            private_host_alias(const private_host_alias&) = delete;
+            private_host_alias& operator=(const private_host_alias&) = delete;
 
             void* data() const
             {
@@ -1589,8 +1725,8 @@ namespace sogen::fex
             return esr != nullptr && (esr->esr & esr_write_not_read) != 0;
         }
 
-        // arm64 kernels with 4KB pages have 39 or 48 virtual address bits, and ones with 64KB pages 42 or 52, but
-        // mmap hands out nothing above 47 bits unless asked to.
+        // arm64 kernels with 4KB pages have 39 or 48 virtual address bits, and ones with 64KB pages 42 or 52. The result
+        // is at most 47 bits, although mmap hands out addresses up to 48 bits.
         uint64_t find_host_address_end()
         {
             for (const int bits : {47, 42})
@@ -2344,12 +2480,18 @@ namespace sogen::fex
 #ifdef __APPLE__
             if (needs_temporary_read && !this->hypervisor_)
             {
-                this->read_through_alias_apple(address, data, size);
+                this->read_through_alias(address, data, size);
                 return true;
             }
 
             this->disarm_watchpoints_over_apple(address, size);
 #else
+            if (needs_temporary_read && this->range_is_backed_by_guest_memory(address, size))
+            {
+                this->read_through_alias(address, data, size);
+                return true;
+            }
+
             if (needs_temporary_read)
             {
                 this->set_temporary_access(address, size, memory_permission::read, true);
@@ -2429,12 +2571,18 @@ namespace sogen::fex
 #ifdef __APPLE__
             if (needs_temporary_write && !this->hypervisor_)
             {
-                this->write_through_alias_apple(address, data, size);
+                this->write_through_alias(address, data, size);
                 return true;
             }
 
             this->disarm_watchpoints_over_apple(address, size);
 #else
+            if (needs_temporary_write && this->range_is_backed_by_guest_memory(address, size))
+            {
+                this->write_through_alias(address, data, size);
+                return true;
+            }
+
             if (needs_temporary_write)
             {
                 this->set_temporary_access(address, size, memory_permission::write, true);
@@ -3170,7 +3318,8 @@ namespace sogen::fex
         {
             const exclusive_tables_lock lock(this->tables_mutex_);
             if (size == 0 || address % page_size != 0 || size % page_size != 0 || !this->is_range_mapped(address, size) ||
-                !this->range_has_permission(address, size, memory_permission::read_write))
+                !this->range_has_permission(address, size, memory_permission::read_write) ||
+                !this->range_is_backed_by_guest_memory(address, size))
             {
                 return false;
             }
@@ -3395,28 +3544,41 @@ namespace sogen::fex
             }
         }
 
+        bool flush_through_alias(const uint64_t address, const size_t size) const
+        {
+            try
+            {
+                this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                    const auto alias = this->alias_host_memory(host_address, span_size);
+                    flush_cache_lines(alias.data(), span_size);
+                });
+            }
+            catch (const std::runtime_error&)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected unless the chunk is written
         // already, so that a write still marks it written. Cleaning makes the guest's unflushed writes visible as well,
-        // but the chunk keeps counting as written so that they are still flushed through the device.
+        // but the chunk keeps counting as written so that they are still flushed through the device. The flush goes through
+        // an alias, so that no vCPU can read the chunk before it is done and the guest's protection of its parts does not
+        // matter.
         bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) const
         {
+            if (!this->flush_through_alias(chunk_address, chunk_size))
+            {
+                return false;
+            }
+
             const auto access = chunk.written ? tracked_access::full : tracked_access::read_only;
             if (!this->restrict_protection(chunk_address, chunk_size, access))
             {
                 return false;
             }
 
-            // dc civac needs read access, which the guest may have taken away from parts of the chunk.
-            this->for_each_mapped_piece(
-                chunk_address, chunk_size, [&](const uint64_t piece_address, const size_t piece_size, const memory_permission permissions) {
-                    if ((permissions & memory_permission::read) != memory_permission::none)
-                    {
-                        this->for_each_host_span(piece_address, piece_size,
-                                                 [&](const uint64_t host_address, const size_t span_size, size_t) {
-                                                     flush_cache_lines(reinterpret_cast<const void*>(host_address), span_size);
-                                                 });
-                    }
-                });
             chunk.stale = false;
             return true;
         }
@@ -3582,8 +3744,7 @@ namespace sogen::fex
                     throw std::runtime_error("FEX backend failed to protect a guest address reservation");
                 }
 #else
-                void* result = ::mmap(reinterpret_cast<void*>(host_address), span_size, PROT_NONE,
-                                      MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                void* result = this->guest_backing_.map(host_address, span_size, PROT_NONE, MAP_FIXED_NOREPLACE);
                 if (result == MAP_FAILED && errno != EEXIST)
                 {
                     throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
@@ -3613,6 +3774,7 @@ namespace sogen::fex
             });
         }
 
+#ifdef __APPLE__
         static void replace_host_span(const uint64_t host_address, const size_t size, const int protection)
         {
             void* result = ::mmap(reinterpret_cast<void*>(host_address), size, protection,
@@ -3622,6 +3784,18 @@ namespace sogen::fex
                 throw std::runtime_error("FEX backend failed to replace a claimed host range");
             }
         }
+#else
+        void replace_host_span(const uint64_t host_address, const size_t size, const int protection) const
+        {
+            void* result = this->guest_backing_.map(host_address, size, protection, MAP_FIXED);
+            if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != host_address)
+            {
+                throw std::runtime_error("FEX backend failed to replace a claimed host range");
+            }
+
+            this->guest_backing_.discard(host_address, size);
+        }
+#endif
 
         // Inside the low window a released range goes back to being reserved, so no other host allocation can
         // take it while the window still backs the guest's low 4GB.
@@ -3635,6 +3809,9 @@ namespace sogen::fex
                 else
                 {
                     ::munmap(reinterpret_cast<void*>(host_address), span_size);
+#ifndef __APPLE__
+                    this->guest_backing_.discard(host_address, span_size);
+#endif
                 }
             });
         }
@@ -3651,7 +3828,18 @@ namespace sogen::fex
                 throw std::logic_error("FEX backend must enable the low guest window before mapping guest memory below 4GB");
             }
 
-            void* window = ::mmap(nullptr, low_guest_window_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            void* const reservation = ::mmap(nullptr, low_guest_window_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            void* window = reservation;
+#ifndef __APPLE__
+            if (reservation != MAP_FAILED)
+            {
+                window = this->guest_backing_.map(reinterpret_cast<uint64_t>(reservation), low_guest_window_size, PROT_NONE, MAP_FIXED);
+                if (window == MAP_FAILED)
+                {
+                    ::munmap(reservation, low_guest_window_size);
+                }
+            }
+#endif
             if (window == MAP_FAILED)
             {
                 throw std::runtime_error("FEX backend failed to reserve the host window for the guest's low 4GB");
@@ -3688,17 +3876,16 @@ namespace sogen::fex
         void reserve_guest_arena()
         {
 #ifdef __APPLE__
-            constexpr int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+            void* arena = ::mmap(reinterpret_cast<void*>(guest_arena_base), guest_arena_size, PROT_NONE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 #else
             if (guest_arena_base + guest_arena_size > this->host_address_end_)
             {
                 return;
             }
 
-            constexpr int flags = MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+            void* arena = this->guest_backing_.map(guest_arena_base, guest_arena_size, PROT_NONE, MAP_FIXED_NOREPLACE);
 #endif
-
-            void* arena = ::mmap(reinterpret_cast<void*>(guest_arena_base), guest_arena_size, PROT_NONE, flags, -1, 0);
             if (arena == MAP_FAILED)
             {
                 return;
@@ -3838,8 +4025,16 @@ namespace sogen::fex
             return std::nullopt;
         }
 
+        private_host_alias alias_host_memory(const uint64_t host_address, const size_t size) const
+        {
 #ifdef __APPLE__
-        bool host_buffer_overlaps_guest_range_apple(const void* buffer, const size_t size, const uint64_t address) const
+            return private_host_alias(host_address, size);
+#else
+            return private_host_alias(this->guest_backing_, host_address, size);
+#endif
+        }
+
+        bool host_buffer_overlaps_guest_range(const void* buffer, const size_t size, const uint64_t address) const
         {
             const auto buffer_start = reinterpret_cast<uint64_t>(buffer);
             bool overlaps = false;
@@ -3851,10 +4046,10 @@ namespace sogen::fex
 
         // memmove cannot tell that the alias and a host buffer inside the guest range are the same pages, so such a
         // buffer is staged outside the range first.
-        void write_through_alias_apple(const uint64_t address, const void* data, const size_t size) const
+        void write_through_alias(const uint64_t address, const void* data, const size_t size) const
         {
             std::vector<std::byte> staged{};
-            if (this->host_buffer_overlaps_guest_range_apple(data, size, address))
+            if (this->host_buffer_overlaps_guest_range(data, size, address))
             {
                 const auto* bytes = static_cast<const std::byte*>(data);
                 staged.assign(bytes, bytes + size);
@@ -3862,16 +4057,16 @@ namespace sogen::fex
             }
 
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
-                const private_host_alias_apple alias(host_address, span_size);
+                const auto alias = this->alias_host_memory(host_address, span_size);
                 std::memcpy(alias.data(), static_cast<const std::byte*>(data) + offset, span_size);
             });
         }
 
-        void read_through_alias_apple(const uint64_t address, void* data, const size_t size) const
+        void read_through_alias(const uint64_t address, void* data, const size_t size) const
         {
             std::vector<std::byte> staged{};
             auto* destination = static_cast<std::byte*>(data);
-            const bool overlaps = this->host_buffer_overlaps_guest_range_apple(data, size, address);
+            const bool overlaps = this->host_buffer_overlaps_guest_range(data, size, address);
             if (overlaps)
             {
                 staged.resize(size);
@@ -3879,7 +4074,7 @@ namespace sogen::fex
             }
 
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
-                const private_host_alias_apple alias(host_address, span_size);
+                const auto alias = this->alias_host_memory(host_address, span_size);
                 std::memcpy(destination + offset, alias.data(), span_size);
             });
 
@@ -3888,7 +4083,29 @@ namespace sogen::fex
                 std::memmove(data, staged.data(), size);
             }
         }
-#else
+
+#ifndef __APPLE__
+        // Memory the guest maps from a driver (map_host_memory) is not part of the backing: it has no second view to
+        // copy through.
+        bool range_is_backed_by_guest_memory(const uint64_t address, const size_t size) const
+        {
+            uint64_t cursor = address;
+            const uint64_t end = address + size;
+
+            while (cursor < end)
+            {
+                const auto it = this->find_region_containing(cursor);
+                if (it == this->regions_.end() || !it->second.owned)
+                {
+                    return false;
+                }
+
+                cursor = it->first + it->second.size;
+            }
+
+            return true;
+        }
+
         // For loader-privileged writes: sogen itself writing guest memory it declared read-only, such as
         // a PE section's initial file content before its final permission is locked in. Needed because
         // this backend enforces the declared permission through real host protection, unlike Unicorn's
@@ -4281,7 +4498,7 @@ namespace sogen::fex
 
                 if (needs_temporary_write && !this->hypervisor_)
                 {
-                    const private_host_alias_apple alias(this->to_host_address(zero_start), zero_size);
+                    const auto alias = this->alias_host_memory(this->to_host_address(zero_start), zero_size);
                     std::memset(alias.data(), 0, zero_size);
                     continue;
                 }
@@ -6318,6 +6535,7 @@ namespace sogen::fex
 
 #ifdef __linux__
         uint64_t host_address_end_{find_host_address_end()};
+        guest_backing_linux guest_backing_{guest_backing_size};
 #endif
         uint64_t guest_arena_{};
 
