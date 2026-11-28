@@ -23,6 +23,7 @@ namespace sogen
 
     class windows_emulator;
     struct vcpu_context;
+    class emulator_thread;
 
     void dispatch_exception(windows_emulator& win_emu, vcpu_context& vcpu, DWORD status,
                             const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters);
@@ -58,7 +59,10 @@ namespace sogen
     NTSTATUS get_general_protection_fault_status(std::span<const uint8_t> instruction, bool is_32bit);
     void dispatch_general_protection_fault(windows_emulator& win_emu, vcpu_context& vcpu);
     void dispatch_integer_division_by_zero(windows_emulator& win_emu, vcpu_context& vcpu);
-    void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu);
+    void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu, bool raised_by_trap_flag = false);
+    bool is_taken_branch(std::span<const uint8_t> instruction, uint32_t eflags, uint64_t rcx, bool is_32bit);
+    bool continue_branch_step(windows_emulator& win_emu, vcpu_context& vcpu);
+    void remember_branch_step(windows_emulator& win_emu, emulator_thread& thread, x86_64_cpu& cpu, uint64_t address);
     void dispatch_breakpoint(windows_emulator& win_emu, vcpu_context& vcpu);
 
 } // namespace sogen

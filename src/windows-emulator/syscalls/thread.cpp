@@ -104,6 +104,16 @@ namespace sogen
             {
             }
 
+            void remember_branch_step_after_context_write(const syscall_context& c, emulator_thread& thread, const CONTEXT64&)
+            {
+                auto& cpu = c.x64_cpu();
+                remember_branch_step(c.win_emu, thread, cpu, cpu.read_instruction_pointer());
+            }
+
+            void remember_branch_step_after_context_write(const syscall_context&, emulator_thread&, const arm64_context&)
+            {
+            }
+
             // RtlpWow64CtxToAmd64 widens a 32-bit context's debug registers and sets DR7.LE when DR7 enables none of L0-L3
             // while DR0-DR3 hold an address, so a breakpoint staged before it is enabled reads back: RtlpWow64CtxFromAmd64
             // reports them only while DR7 sets an L, LE or GE bit.
@@ -320,6 +330,7 @@ namespace sogen
                     {
                         keep_trap_frame(c, *thread, debug_registers);
                     }
+                    remember_branch_step_after_context_write(c, *thread, debug_registers);
 
                     if (needs_switch)
                     {
@@ -1394,7 +1405,9 @@ namespace sogen
             }
             else
             {
-                cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context), c.proc.is_wow64_process);
+                const auto context = c.emu.read_memory<CONTEXT64>(thread_context);
+                cpu_context::restore(c.x64_cpu(), context, c.proc.is_wow64_process);
+                remember_branch_step_after_context_write(c, c.thread(), context);
             }
 
             // KeTestAlertThread takes a pending user-mode alert; only without one does it have queued user APCs delivered.
@@ -1720,6 +1733,7 @@ namespace sogen
                 {
                     keep_trap_frame(c, *thread, context);
                 }
+                remember_branch_step_after_context_write(c, *thread, context);
                 return true;
             });
             if (!accessed)
@@ -2037,6 +2051,7 @@ namespace sogen
             syscalls::access_thread_context<Context>(c, thread, [&] {
                 syscalls::load_context(c, context);
                 syscalls::keep_trap_frame(c, thread, context);
+                syscalls::remember_branch_step_after_context_write(c, thread, context);
                 if constexpr (std::is_same_v<Context, arm64_context>)
                 {
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
@@ -2126,6 +2141,7 @@ namespace sogen
                 const auto debug_registers = syscalls::widened_wow64_debug_registers(update);
                 cpu_context::restore(c.x64_cpu(), debug_registers, c.proc.is_wow64_process);
                 syscalls::keep_trap_frame(c, thread, debug_registers);
+                syscalls::remember_branch_step_after_context_write(c, thread, debug_registers);
                 return true;
             }
 
@@ -2153,6 +2169,7 @@ namespace sogen
             native.Dr7 = merged.Dr7;
             syscalls::load_context(c, native);
             syscalls::keep_trap_frame(c, thread, native);
+            syscalls::remember_branch_step_after_context_write(c, thread, native);
             in_registers = true;
             return true;
         });
