@@ -142,6 +142,8 @@ Windows ARM64 executables run the same way, from an emulation root created with 
 
 `--backend` overrides environment-based selection. Outside Windows ARM64, where Unicorn's ARM64 backend is not built, `EMULATOR_UNICORN=1` runs ARM64 guests on Unicorn instead of the hypervisor.
 
+MinGW executables and shared libraries are fully stripped, including Debug and RelWithDebInfo builds. This prevents embedded DWARF from making large PE images unloadable; MinGW artifacts do not retain host debug symbols.
+
 ## macOS Programs (Rudimentary)
 
 macOS support is at an early stage. Sogen runs x86-64 macOS command-line programs through the real dyld and the system's dyld shared cache, which is enough for simple tools like `echo`. Most other programs still stop at an unimplemented syscall.

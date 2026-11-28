@@ -362,17 +362,23 @@ endfunction()
 ##########################################
 
 function(sogen_strip_target target)
-  # Keep symbols for builds whose whole point is debuggability: Debug, RelWithDebInfo, and any
-  # sanitizer build (stripping there yields unusable ASAN/UBSan stack traces).
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR SOGEN_ENABLE_SANITIZER)
+  # MinGW embeds DWARF in the PE image, which can grow large enough for the Windows loader to reject it.
+  if(NOT MINGW AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR SOGEN_ENABLE_SANITIZER))
     return()
   endif()
 
-  if(MSVC OR SOGEN_ENABLE_SANITIZER OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  if(MSVC OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     return()
   endif()
 
-  find_program(STRIP_COMMAND NAMES strip llvm-strip)
+  if(MINGW)
+    if(NOT CMAKE_STRIP)
+      message(FATAL_ERROR "MinGW builds require the toolchain's strip command")
+    endif()
+    set(STRIP_COMMAND "${CMAKE_STRIP}")
+  else()
+    find_program(STRIP_COMMAND NAMES strip llvm-strip)
+  endif()
   if(NOT STRIP_COMMAND)
     message(WARNING "strip command not found, target ${target} will not be stripped.")
     return()
