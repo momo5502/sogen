@@ -4,6 +4,7 @@
 #include "../emulator_utils.hpp"
 #include "../gdi_clip.hpp"
 #include "../gdi_font_signature.hpp"
+#include "../gdi_mapping.hpp"
 #include "../syscall_utils.hpp"
 
 #include <array>
@@ -34,7 +35,7 @@ namespace sogen
             constexpr int32_t k_gdi_dc_object_brush = 0x100000;
             constexpr int32_t k_gdi_dc_object_pen = 0x300000;
 
-            constexpr uint32_t k_gdi_dc_attr_size = 0x130;
+            constexpr uint32_t k_gdi_dc_attr_size = 0x1C0;
             constexpr uint32_t k_gdi_brush_attr_size = 0x20;
             constexpr uint32_t k_gdi_pen_attr_size = 0x20;
             constexpr uint32_t k_gdi_bitmap_attr_size = 0x20;
@@ -63,6 +64,16 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
+            constexpr uint32_t k_gdi_dc_attr_world_to_device_offset = 0x20;
+            constexpr uint32_t k_gdi_dc_attr_device_to_world_offset = 0x44;
+            constexpr uint32_t k_gdi_dc_attr_map_mode_offset = 0x68;
+            constexpr uint32_t k_gdi_dc_attr_window_org_x_offset = 0x130;
+            constexpr uint32_t k_gdi_dc_attr_window_org_y_offset = 0x138;
+            constexpr uint32_t k_gdi_dc_attr_window_ext_offset = 0x13C;
+            constexpr uint32_t k_gdi_dc_attr_viewport_org_offset = 0x144;
+            constexpr uint32_t k_gdi_dc_attr_viewport_ext_offset = 0x14C;
+            constexpr uint32_t k_gdi_dc_attr_xform_flags_offset = 0x154;
+            constexpr uint32_t k_gdi_xform_page_translation_changed = 0x2000;
 
             constexpr uint32_t k_error_invalid_handle = 6;
             constexpr uint8_t k_r2_copypen = 13;
@@ -2259,10 +2270,92 @@ namespace sogen
                 seed_user_system_color_brushes(c);
             }
 
+            struct gdi_cached_matrix
+            {
+                float m11{1.0f};
+                float m12{};
+                float m21{};
+                float m22{1.0f};
+                float dx{};
+                float dy{};
+                int32_t fixed_dx{};
+                int32_t fixed_dy{};
+                uint32_t flags{0x42};
+            };
+
+            static_assert(sizeof(gdi_cached_matrix) == k_gdi_dc_attr_device_to_world_offset - k_gdi_dc_attr_world_to_device_offset);
+
+            std::optional<uint64_t> find_mapping_dc_attr(const syscall_context& c, const hdc dc)
+            {
+                uint64_t dc_attr{};
+                if (!c.proc.gdi_dc_states.contains(static_cast<uint32_t>(dc)) ||
+                    !get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return std::nullopt;
+                }
+
+                return dc_attr;
+            }
+
+            gdi::display_metrics display_metrics_of(const process_context& proc)
+            {
+                return {.width = proc.display_width, .height = proc.display_height, .dpi = k_default_dpi};
+            }
+
+            std::optional<gdi::dc_mapping> load_dc_mapping(const syscall_context& c, const uint64_t dc_attr)
+            {
+                gdi::dc_mapping mapping{};
+                auto& memory = c.win_emu.memory;
+                if (!memory.try_read_memory(dc_attr + k_gdi_dc_attr_map_mode_offset, &mapping.map_mode, sizeof(mapping.map_mode)) ||
+                    !memory.try_read_memory(dc_attr + k_gdi_dc_attr_window_org_x_offset, &mapping.window_org.x, sizeof(int32_t)) ||
+                    !memory.try_read_memory(dc_attr + k_gdi_dc_attr_window_org_y_offset, &mapping.window_org.y, sizeof(int32_t)) ||
+                    !memory.try_read_memory(dc_attr + k_gdi_dc_attr_window_ext_offset, &mapping.window_ext, sizeof(mapping.window_ext)) ||
+                    !memory.try_read_memory(dc_attr + k_gdi_dc_attr_viewport_org_offset, &mapping.viewport_org,
+                                            sizeof(mapping.viewport_org)) ||
+                    !memory.try_read_memory(dc_attr + k_gdi_dc_attr_viewport_ext_offset, &mapping.viewport_ext,
+                                            sizeof(mapping.viewport_ext)))
+                {
+                    return std::nullopt;
+                }
+
+                gdi::fit_isotropic_viewport(mapping);
+                return mapping;
+            }
+
+            // gdi32 trusts its cached matrices whenever flXform is clean, so a change made here has to stay dirty.
+            bool store_dc_mapping(const syscall_context& c, const uint64_t dc_attr, const gdi::dc_mapping& mapping)
+            {
+                uint32_t xform_flags{};
+                if (!c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_xform_flags_offset, &xform_flags, sizeof(xform_flags)))
+                {
+                    return false;
+                }
+
+                xform_flags |= k_gdi_xform_page_translation_changed;
+                return c.emu.try_write_memory(dc_attr + k_gdi_dc_attr_map_mode_offset, &mapping.map_mode, sizeof(mapping.map_mode)) &&
+                       c.emu.try_write_memory(dc_attr + k_gdi_dc_attr_window_ext_offset, &mapping.window_ext, sizeof(mapping.window_ext)) &&
+                       c.emu.try_write_memory(dc_attr + k_gdi_dc_attr_viewport_ext_offset, &mapping.viewport_ext,
+                                              sizeof(mapping.viewport_ext)) &&
+                       c.emu.try_write_memory(dc_attr + k_gdi_dc_attr_xform_flags_offset, &xform_flags, sizeof(xform_flags));
+            }
+
+            void initialize_dc_mapping(const syscall_context& c, const uint64_t dc_attr)
+            {
+                const gdi::dc_mapping mapping{};
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_map_mode_offset, &mapping.map_mode, sizeof(mapping.map_mode));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_window_ext_offset, &mapping.window_ext, sizeof(mapping.window_ext));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_viewport_ext_offset, &mapping.viewport_ext, sizeof(mapping.viewport_ext));
+
+                const gdi_cached_matrix identity{};
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_world_to_device_offset, &identity, sizeof(identity));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_device_to_world_offset, &identity, sizeof(identity));
+            }
+
             void initialize_dc_attr(const syscall_context& c, const uint64_t dc_attr)
             {
                 std::array<uint8_t, k_gdi_dc_attr_size> zeroed{};
                 c.emu.write_memory(dc_attr, zeroed.data(), zeroed.size());
+                initialize_dc_mapping(c, dc_attr);
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_rop2_offset, &k_r2_copypen, sizeof(k_r2_copypen));
 
                 constexpr uint32_t white = 0x00FFFFFFu;
@@ -4000,7 +4093,9 @@ namespace sogen
         {
             constexpr uint32_t redirected_dc_flag = 0x40;
             constexpr uint32_t get_dc_origin = 0x20;
-            if ((index & ~redirected_dc_flag) != get_dc_origin || result == 0)
+            constexpr uint32_t get_viewport_extent = 1;
+            const auto point_kind = index & ~redirected_dc_flag;
+            if ((point_kind != get_dc_origin && point_kind != get_viewport_extent) || result == 0)
             {
                 return FALSE;
             }
@@ -4010,6 +4105,15 @@ namespace sogen
             if (state == c.proc.gdi_dc_states.end() || !get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
             {
                 return FALSE;
+            }
+
+            if (point_kind == get_viewport_extent)
+            {
+                const auto mapping = load_dc_mapping(c, dc_attr);
+                return mapping && store_dc_mapping(c, dc_attr, *mapping) &&
+                               c.emu.try_write_memory(result, &mapping->viewport_ext, sizeof(mapping->viewport_ext))
+                           ? TRUE
+                           : FALSE;
             }
 
             POINT origin{};
@@ -7160,16 +7264,142 @@ namespace sogen
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, const hdc dc, const uint32_t method, const uint32_t value,
                                           const emulator_pointer result)
         {
-            constexpr uint32_t set_map_mode = 8;
-            constexpr uint32_t text_map_mode = 1;
+            constexpr uint32_t set_map_mode_method = 8;
 
-            if (dc == 0 || result == 0 || method != set_map_mode || value != text_map_mode)
+            if (dc == 0 || result == 0 || method != set_map_mode_method)
             {
                 return FALSE;
             }
 
-            c.emu.write_memory(result, &text_map_mode, sizeof(text_map_mode));
-            return TRUE;
+            const auto dc_attr = find_mapping_dc_attr(c, dc);
+            auto mapping = dc_attr ? load_dc_mapping(c, *dc_attr) : std::nullopt;
+            if (!mapping)
+            {
+                return FALSE;
+            }
+
+            const auto previous = gdi::set_map_mode(*mapping, static_cast<int32_t>(value), display_metrics_of(c.proc));
+            const auto previous_value = static_cast<uint32_t>(previous.value_or(0));
+            if (!c.emu.try_write_memory(result, &previous_value, sizeof(previous_value)))
+            {
+                return FALSE;
+            }
+
+            return previous && !store_dc_mapping(c, *dc_attr, *mapping) ? FALSE : TRUE;
+        }
+
+        BOOL handle_NtGdiTransformPoints(const syscall_context& c, const hdc dc, const emulator_pointer source,
+                                         const emulator_pointer destination, const int32_t count, const uint32_t mode)
+        {
+            constexpr size_t chunk_size = 256;
+            constexpr uint32_t mode_mask = 0x7FFFFFFF;
+            constexpr uint32_t logical_to_device_mode = 1;
+            constexpr uint32_t logical_to_device_fixed_point_mode = 2;
+
+            const auto dc_attr = find_mapping_dc_attr(c, dc);
+            auto mapping = dc_attr ? load_dc_mapping(c, *dc_attr) : std::nullopt;
+            if (!mapping)
+            {
+                return FALSE;
+            }
+
+            const auto conversion = mode & mode_mask;
+            if (conversion > logical_to_device_fixed_point_mode)
+            {
+                return FALSE;
+            }
+
+            if (count <= 0)
+            {
+                return TRUE;
+            }
+
+            const auto convert = [&](const gdi::mapping_vec& point) {
+                switch (conversion)
+                {
+                case logical_to_device_mode:
+                    return gdi::logical_to_device(*mapping, point);
+                case logical_to_device_fixed_point_mode:
+                    return gdi::logical_to_device_fixed_point(*mapping, point);
+                default:
+                    return gdi::device_to_logical(*mapping, point);
+                }
+            };
+            if (source == 0 || destination == 0 || !convert({}))
+            {
+                return FALSE;
+            }
+
+            std::array<gdi::mapping_vec, chunk_size> points{};
+            for (size_t done = 0; done < static_cast<size_t>(count); done += chunk_size)
+            {
+                const auto chunk = std::min(chunk_size, static_cast<size_t>(count) - done);
+                const auto bytes = chunk * sizeof(gdi::mapping_vec);
+                if (!c.win_emu.memory.try_read_memory(source + done * sizeof(gdi::mapping_vec), points.data(), bytes))
+                {
+                    return FALSE;
+                }
+
+                for (size_t i = 0; i < chunk; ++i)
+                {
+                    points[i] = *convert(points[i]);
+                }
+
+                if (!c.emu.try_write_memory(destination + done * sizeof(gdi::mapping_vec), points.data(), bytes))
+                {
+                    return FALSE;
+                }
+            }
+
+            return store_dc_mapping(c, *dc_attr, *mapping) ? TRUE : FALSE;
+        }
+
+        BOOL handle_NtGdiScaleWindowExtEx(const syscall_context& c, const hdc dc, const int32_t x_numerator, const int32_t x_denominator,
+                                          const int32_t y_numerator, const int32_t y_denominator, const emulator_pointer previous_extent)
+        {
+            const auto dc_attr = find_mapping_dc_attr(c, dc);
+            auto mapping = dc_attr ? load_dc_mapping(c, *dc_attr) : std::nullopt;
+            if (!mapping)
+            {
+                return FALSE;
+            }
+
+            const auto previous = mapping->window_ext;
+            if (!gdi::scale_window_extent(*mapping, x_numerator, x_denominator, y_numerator, y_denominator))
+            {
+                return FALSE;
+            }
+
+            if (previous_extent != 0 && !c.emu.try_write_memory(previous_extent, &previous, sizeof(previous)))
+            {
+                return FALSE;
+            }
+
+            return store_dc_mapping(c, *dc_attr, *mapping) ? TRUE : FALSE;
+        }
+
+        BOOL handle_NtGdiScaleViewportExtEx(const syscall_context& c, const hdc dc, const int32_t x_numerator, const int32_t x_denominator,
+                                            const int32_t y_numerator, const int32_t y_denominator, const emulator_pointer previous_extent)
+        {
+            const auto dc_attr = find_mapping_dc_attr(c, dc);
+            auto mapping = dc_attr ? load_dc_mapping(c, *dc_attr) : std::nullopt;
+            if (!mapping)
+            {
+                return FALSE;
+            }
+
+            const auto previous = mapping->viewport_ext;
+            if (previous_extent != 0 && !c.emu.try_write_memory(previous_extent, &previous, sizeof(previous)))
+            {
+                return FALSE;
+            }
+
+            if (!gdi::scale_viewport_extent(*mapping, x_numerator, x_denominator, y_numerator, y_denominator))
+            {
+                return FALSE;
+            }
+
+            return store_dc_mapping(c, *dc_attr, *mapping) ? TRUE : FALSE;
         }
 
         uint32_t handle_NtGdiGetGlyphIndicesW(const syscall_context& c, const hdc dc, const emulator_pointer text, const int32_t char_count,
