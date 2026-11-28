@@ -104,8 +104,8 @@ namespace sogen
                 const auto loader_sp = align_down(context_address - 0x10, 0x10) + 8;
 
                 install_thread_environment(cpu, bootstrap.teb);
-                native.reg<uint16_t>(x86_register::fpcw, 0x037F);
-                native.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
+                native.reg<uint16_t>(x86_register::fpcw, cpu_context::initial_x87_control);
+                native.reg<uint32_t>(x86_register::mxcsr, cpu_context::initial_mxcsr);
                 native.reg(x86_register::rsp, initial_sp);
                 // KiInitializeContextThread puts a new thread's context, whose EFlags is 0, through KxContextToKframes:
                 // its trap frame's EFlags holds IF only. PspInitializeThunkContext hands LdrInitializeThunk that frame

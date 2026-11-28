@@ -1002,21 +1002,20 @@ namespace sogen
             // EFlags - standard initial flags
             ctx.Context.EFlags = 0x202; // IF (Interrupt Flag) set
 
-            // Seed WOW64 floating-point state with sane defaults
             memset(&ctx.Context.FloatSave, 0, sizeof(ctx.Context.FloatSave));
-            ctx.Context.FloatSave.ControlWord = 0x037F;
+            ctx.Context.FloatSave.ControlWord = cpu_context::initial_x87_control;
             ctx.Context.FloatSave.StatusWord = 0;
             ctx.Context.FloatSave.TagWord = 0xFFFF;
             ctx.Context.FloatSave.Cr0NpxState = 0;
 
             XMM_SAVE_AREA32 xmm_state{};
-            xmm_state.ControlWord = 0x037F;
+            xmm_state.ControlWord = cpu_context::initial_x87_control;
             xmm_state.StatusWord = 0;
             // FXSAVE abridged x87 tag: 1 bit per register, 1=valid, 0=empty. A fresh FPU has an empty stack,
             // so this must be 0x00. 0xFF marks all 8 registers valid (a full stack), which makes the first
             // guest x87 FLD overflow and produce the x87 indefinite (NaN) under hardware (WHP) execution.
             xmm_state.TagWord = 0x00;
-            xmm_state.MxCsr = 0x1F80;
+            xmm_state.MxCsr = cpu_context::initial_mxcsr;
             xmm_state.MxCsr_Mask = 0xFFFFFFFF;
 
             memset(&ctx.Context.ExtendedRegisters, 0, sizeof(ctx.Context.ExtendedRegisters));
@@ -2273,12 +2272,11 @@ namespace sogen
         setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
         emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
-        // x86 power-on defaults: all exceptions masked, round-to-nearest. Some backends initialise these
-        // registers to 0, leaving every floating-point exception unmasked - including the near-ubiquitous
-        // inexact/precision condition - so guest code reading the live control word via fnstcw (e.g. the
+        // Some backends initialise these registers to 0, leaving every floating-point exception unmasked - including the
+        // near-ubiquitous inexact/precision condition - so guest code reading the live control word via fnstcw (e.g. the
         // CRT's pow/_except1 path) raises a STATUS_FLOAT_INEXACT_RESULT that never occurs on real Windows.
-        emu.reg<uint16_t>(x86_register::fpcw, 0x037F);
-        emu.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
+        emu.reg<uint16_t>(x86_register::fpcw, cpu_context::initial_x87_control);
+        emu.reg<uint32_t>(x86_register::mxcsr, cpu_context::initial_mxcsr);
         // KiInitializeContextThread puts a new thread's context, whose EFlags is 0, through KxContextToKframes: its
         // trap frame's EFlags holds IF only. PspInitializeThunkContext hands LdrInitializeThunk that frame as its CONTEXT.
         emu.reg<uint32_t>(x86_register::eflags, cpu_context::eflags_interrupt | cpu_context::eflags_always_one);
