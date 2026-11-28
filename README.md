@@ -105,8 +105,6 @@ See `examples/python/README.md` for setup details and a larger example.
 > [!TIP]  
 > Checkout the [Wiki](https://github.com/momo5502/sogen/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
 
-MinGW executables and shared libraries are fully stripped, including Debug and RelWithDebInfo builds. This prevents embedded DWARF from making large PE images unloadable; MinGW artifacts do not retain host debug symbols.
-
 1\. Checkout the code:
 
 ```bash
