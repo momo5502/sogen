@@ -449,6 +449,7 @@ namespace sogen
         NtUserFillWindow,
         NtUserCallNextHookEx,
         NtUserCallMsgFilter,
+        NtUserMoveWindow,
     };
 
     struct callback_frame
