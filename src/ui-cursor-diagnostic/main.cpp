@@ -32,6 +32,17 @@ namespace
         }
     }
 
+    // The checks make one guest window at a time, so the backend's host window is the only SDL window.
+    SDL_Window* host_window()
+    {
+        int count{};
+        auto* windows = SDL_GetWindows(&count);
+        auto* window = windows && count == 1 ? windows[0] : nullptr;
+        SDL_free(windows);
+        require(window != nullptr, "The guest window has no host window");
+        return window;
+    }
+
     int check_cursors(std::unique_ptr<sogen::ui_backend>& ui)
     {
         auto* fallback = SDL_GetDefaultCursor();
@@ -132,6 +143,9 @@ namespace
         const auto destroy_surface = reinterpret_cast<PFN_vkDestroySurfaceKHR>(get_instance_proc_addr(instance, "vkDestroySurfaceKHR"));
 
         const auto surface = ui.create_vulkan_surface(window_id, sogen::pack_vulkan_handle(instance));
+        std::vector<uint32_t> pixels(64 * 48);
+        ui.present_surface(window_id, {.width = 64, .height = 48, .stride = 64 * 4, .pixels = pixels.data()});
+        const bool renderer_after_surface = SDL_GetRenderer(host_window()) != nullptr;
         if (surface != 0)
         {
             destroy_surface(instance, sogen::unpack_vulkan_handle<VkSurfaceKHR>(surface), nullptr);
@@ -139,8 +153,45 @@ namespace
         ui.destroy_window(window_id);
         destroy_instance(instance, nullptr);
         require(surface != 0, "The window got no Vulkan surface");
+        require(!renderer_after_surface, "A window with a Vulkan surface got a renderer");
 
         std::cout << "Vulkan window checks passed\n";
+        return 0;
+    }
+
+    int check_window_renderers(sogen::ui_backend& ui)
+    {
+        // The check counts renderers, not what draws them: the software renderer works wherever video does.
+        SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, "software", SDL_HINT_OVERRIDE);
+
+        ui.pump_events();
+        const sogen::ui_window_desc hidden{.handle = window_id,
+                                           .rect = {.left = 0, .top = 0, .right = 64, .bottom = 48},
+                                           .style = WS_POPUP,
+                                           .visible = false,
+                                           .top_level = true};
+
+        ui.create_window(hidden);
+        auto* window = host_window();
+        require(SDL_GetRenderer(window) == nullptr, "A hidden window that was never drawn into has a renderer");
+        ui.set_window_visible(window_id, true, false);
+        require(SDL_GetRenderer(window) != nullptr, "A window got no renderer when it was shown");
+        ui.destroy_window(window_id);
+
+        ui.create_window(hidden);
+        std::vector<uint32_t> pixels(64 * 48, 0xFF204060u);
+        ui.present_surface(window_id, {.width = 64, .height = 48, .stride = 64 * 4, .pixels = pixels.data()});
+        require(SDL_GetRenderer(host_window()) != nullptr, "A hidden window got no renderer when it was drawn into");
+        ui.destroy_window(window_id);
+
+        auto shown = hidden;
+        shown.style |= WS_VISIBLE;
+        shown.visible = true;
+        ui.create_window(shown);
+        require(SDL_GetRenderer(host_window()) != nullptr, "A window created shown has no renderer");
+        ui.destroy_window(window_id);
+
+        std::cout << "Window renderer checks passed\n";
         return 0;
     }
 
@@ -191,9 +242,10 @@ int main(int argc, char** argv)
 {
     const bool check = argc == 2 && std::string_view{argv[1]} == "--check";
     const bool check_vulkan = argc == 2 && std::string_view{argv[1]} == "--check-vulkan-windows";
-    if (argc != 1 && !check && !check_vulkan)
+    const bool check_renderers = argc == 2 && std::string_view{argv[1]} == "--check-window-renderers";
+    if (argc != 1 && !check && !check_vulkan && !check_renderers)
     {
-        std::cerr << "Usage: ui-cursor-diagnostic [--check | --check-vulkan-windows]\n";
+        std::cerr << "Usage: ui-cursor-diagnostic [--check | --check-vulkan-windows | --check-window-renderers]\n";
         return 1;
     }
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
@@ -217,6 +269,10 @@ int main(int argc, char** argv)
         if (check_vulkan)
         {
             return check_vulkan_windows(*ui);
+        }
+        if (check_renderers)
+        {
+            return check_window_renderers(*ui);
         }
         show_cursors(*ui);
         return 0;

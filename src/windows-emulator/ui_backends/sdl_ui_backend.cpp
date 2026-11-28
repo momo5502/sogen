@@ -695,6 +695,7 @@ namespace sogen
                 bool has_surface{};
                 bool translucent{};
                 bool popup{};
+                bool vulkan_surface{};
                 std::vector<uint32_t> blended_pixels{};
                 ui_surface_desc popup_surface{};
                 std::vector<uint8_t> popup_pixels{};
@@ -1115,6 +1116,7 @@ namespace sogen
                         render_window(*state);
                         return uint64_t{};
                     }
+                    state->vulkan_surface = true;
                     return pack_vulkan_handle(surface);
                 });
             }
@@ -1158,11 +1160,15 @@ namespace sogen
                     return;
                 }
 
-                auto* renderer = SDL_CreateRenderer(window, nullptr);
-                if (!renderer)
+                SDL_Renderer* renderer{};
+                if ((flags & SDL_WINDOW_HIDDEN) == 0)
                 {
-                    SDL_DestroyWindow(window);
-                    return;
+                    renderer = SDL_CreateRenderer(window, nullptr);
+                    if (!renderer)
+                    {
+                        SDL_DestroyWindow(window);
+                        return;
+                    }
                 }
 
                 auto& state = this->windows_[desc.handle];
@@ -1222,8 +1228,8 @@ namespace sogen
                 const Uint64 flags =
                     SDL_WINDOW_BORDERLESS | SDL_WINDOW_UTILITY | SDL_WINDOW_NOT_FOCUSABLE | (state.desc.visible ? 0 : SDL_WINDOW_HIDDEN);
                 auto* window = create_host_window(state.desc, flags, client_width(state.desc), client_height(state.desc));
-                auto* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
-                if (!renderer)
+                auto* renderer = window && state.desc.visible ? SDL_CreateRenderer(window, nullptr) : nullptr;
+                if (!window || (state.desc.visible && !renderer))
                 {
                     if (window)
                     {
@@ -1257,8 +1263,8 @@ namespace sogen
                     return;
                 }
 
-                auto* renderer = SDL_CreateRenderer(window, nullptr);
-                if (!renderer)
+                auto* renderer = state.desc.visible ? SDL_CreateRenderer(window, nullptr) : nullptr;
+                if (state.desc.visible && !renderer)
                 {
                     SDL_DestroyWindow(window);
                     return;
@@ -1312,7 +1318,7 @@ namespace sogen
                     }
 
                     this->create_popup_host(*state);
-                    if (state->renderer && !state->popup_pixels.empty())
+                    if (!state->popup_pixels.empty() && ensure_renderer(*state))
                     {
                         auto surface = state->popup_surface;
                         surface.pixels = state->popup_pixels.data();
@@ -1540,6 +1546,10 @@ namespace sogen
                     if (auto* state = this->resolve_window(window))
                     {
                         state->desc.visible = visible;
+                        if (visible && !state->renderer && ensure_renderer(*state))
+                        {
+                            render_window(*state);
+                        }
                         if (state->popup)
                         {
                             if (visible)
@@ -1620,14 +1630,14 @@ namespace sogen
                     copy.pixels = pixels.empty() ? nullptr : pixels.data();
 
                     // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
-                    // which has no SDL renderer of its own. Composite its surface onto the top-level
+                    // which has no SDL window of its own. Composite its surface onto the top-level
                     // ancestor -- the window that actually owns the on-screen SDL window and renderer.
                     auto* state = this->resolve_window(window);
-                    if (state && !state->renderer)
+                    if (state && !state->window)
                     {
                         state = this->resolve_window(this->get_top_level_ancestor(window));
                     }
-                    if (state && state->renderer)
+                    if (state && ensure_renderer(*state))
                     {
                         update_surface_texture(*state, copy);
                         render_window(*state);
@@ -1991,6 +2001,19 @@ namespace sogen
                 default:
                     return SDL_PIXELFORMAT_BGRA32;
                 }
+            }
+
+            // On Windows each SDL renderer is a Direct3D 11 device of its own, and every device loads and opens the GPU's
+            // user-mode driver, which takes tens of milliseconds. Most hidden guest windows are never shown or drawn into, so
+            // a host window gets its renderer when it first is. A window a Vulkan surface presents into never gets one again:
+            // it would bind that window to a DXGI swap chain (see create_vulkan_surface).
+            static bool ensure_renderer(window_state& state)
+            {
+                if (!state.renderer && state.window && !state.vulkan_surface)
+                {
+                    state.renderer = SDL_CreateRenderer(state.window, nullptr);
+                }
+                return state.renderer != nullptr;
             }
 
             static void destroy_window_resources(window_state& state)
