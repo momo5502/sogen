@@ -1450,6 +1450,30 @@ namespace sogen
                 return colorref_to_bgra(colorref);
             }
 
+            std::optional<uint32_t> get_pen_color(const syscall_context& c, const uint32_t pen_handle)
+            {
+                uint64_t pen_attr = 0;
+                if (!get_gdi_object_address(c, pen_handle, k_gdi_pen_type, pen_attr))
+                {
+                    return std::nullopt;
+                }
+
+                uint32_t colorref = 0;
+                c.win_emu.memory.try_read_memory(pen_attr + sizeof(uint32_t), &colorref, sizeof(colorref));
+                return colorref_to_bgra(colorref);
+            }
+
+            std::optional<uint32_t> get_pen_color_in_dc(const syscall_context& c, const std::optional<uint64_t> dc_attr,
+                                                        const uint32_t pen_handle)
+            {
+                if (dc_attr && pen_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_pen_index)))
+                {
+                    return read_dc_attr_colorref(c, *dc_attr + k_gdi_dc_attr_dc_pen_color_offset);
+                }
+
+                return get_pen_color(c, pen_handle);
+            }
+
             uint32_t get_dc_pen_color(const syscall_context& c, const hdc dc)
             {
                 uint64_t dc_attr = 0;
@@ -1465,20 +1489,7 @@ namespace sogen
                     return 0xFF000000u;
                 }
 
-                if (pen_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_pen_index)))
-                {
-                    return read_dc_attr_colorref(c, dc_attr + k_gdi_dc_attr_dc_pen_color_offset);
-                }
-
-                uint64_t pen_attr = 0;
-                if (!get_gdi_object_address(c, pen_handle, k_gdi_pen_type, pen_attr))
-                {
-                    return 0xFF000000u;
-                }
-
-                uint32_t colorref = 0;
-                c.win_emu.memory.try_read_memory(pen_attr + sizeof(uint32_t), &colorref, sizeof(colorref));
-                return colorref_to_bgra(colorref);
+                return get_pen_color_in_dc(c, dc_attr, pen_handle).value_or(0xFF000000u);
             }
 
             void set_dc_current_point(const syscall_context& c, const hdc dc, const int32_t x, const int32_t y)
@@ -1530,6 +1541,34 @@ namespace sogen
                 }
 
                 return get_brush_color_in_dc(c, dc, brush_handle);
+            }
+
+            std::optional<uint32_t> get_poly_pat_blt_color(const syscall_context& c, const hdc dc, const uint64_t brush_field)
+            {
+                const auto handle_value = static_cast<uint32_t>(brush_field);
+                GDI_HANDLE_ENTRY64 entry{};
+                uint64_t entry_addr = 0;
+                if (brush_field != 0)
+                {
+                    if (read_gdi_entry_for_handle(c, handle_value, entry, entry_addr) && gdi_object_type(entry) == k_gdi_brush_type)
+                    {
+                        return get_brush_color_in_dc(c, dc, handle_value);
+                    }
+
+                    if (handle_value == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_null_pen_index)))
+                    {
+                        return std::nullopt;
+                    }
+
+                    uint64_t dc_attr = 0;
+                    const auto dc_resolved = get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr);
+                    if (const auto pen_color = get_pen_color_in_dc(c, dc_resolved ? std::optional{dc_attr} : std::nullopt, handle_value))
+                    {
+                        return pen_color;
+                    }
+                }
+
+                return get_dc_brush_color(c, dc);
             }
 
             // Reads a COLORREF directly out of the DC_ATTR (the user-mode block gdi32 updates on
@@ -2883,6 +2922,20 @@ namespace sogen
                 }
 
                 return out;
+            }
+
+            void fill_rect_rop3(gdi_bitmap_surface& surface, const gdi::clip_region& visible, const int64_t left, const int64_t top,
+                                const int64_t right, const int64_t bottom, const uint8_t rop3, const uint32_t pattern)
+            {
+                visible.for_each_span(
+                    clamped_to_surface(surface, std::min(left, right), std::min(top, bottom), std::max(left, right), std::max(top, bottom)),
+                    [&](const LONG x_begin, const LONG x_end, const LONG y) {
+                        auto* row = surface_row(surface, y);
+                        for (auto x = x_begin; x < x_end; ++x)
+                        {
+                            row[x] = apply_rop3(rop3, 0, row[x], pattern) | 0xFF000000u;
+                        }
+                    });
             }
 
             // Windows fails a request whose output would exceed this many bytes before writing anything.
@@ -5730,6 +5783,11 @@ namespace sogen
             }
 
             const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
+            if (rop3_uses_source(rop3))
+            {
+                return FALSE;
+            }
+
             const auto color = get_dc_brush_color(c, dc);
             if (!color && rop3_uses_pattern(rop3))
             {
@@ -5741,17 +5799,9 @@ namespace sogen
                 accumulate_drawing_bounds(c, dc, x, y, static_cast<int64_t>(x) + width, static_cast<int64_t>(y) + height);
             }
 
-            const auto pattern = color.value_or(0);
             const int64_t left = static_cast<int64_t>(x) + origin_x;
             const int64_t top = static_cast<int64_t>(y) + origin_y;
-            visible.for_each_span(clamped_to_surface(*surface, left, top, left + width, top + height),
-                                  [&](const LONG x_begin, const LONG x_end, const LONG row_y) {
-                                      auto* row = surface_row(*surface, row_y);
-                                      for (auto px = x_begin; px < x_end; ++px)
-                                      {
-                                          row[px] = apply_rop3(rop3, 0, row[px], pattern) | 0xFF000000u;
-                                      }
-                                  });
+            fill_rect_rop3(*surface, visible, left, top, left + width, top + height, rop3, color.value_or(0));
             return TRUE;
         }
 
@@ -5817,9 +5867,31 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD /*rop*/, const emulator_pointer poly,
-                                    const DWORD count, const DWORD /*mode*/)
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD rop, const emulator_pointer poly, const DWORD count,
+                                    const DWORD mode)
         {
+            if (count == 0)
+            {
+                return TRUE;
+            }
+
+            if (poly == 0)
+            {
+                return FALSE;
+            }
+
+            if (!c.proc.gdi_dc_states.contains(static_cast<uint32_t>(dc)))
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return FALSE;
+            }
+
+            constexpr DWORD k_max_poly_pat_blt_count = 0xAAAAAAA;
+            if (count > k_max_poly_pat_blt_count)
+            {
+                return FALSE;
+            }
+
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
@@ -5830,14 +5902,17 @@ namespace sogen
                 return FALSE;
             }
 
-            if (poly == 0 || count == 0 || count > 0x1000)
+            constexpr DWORD k_ppb_brush = 0;
+            const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
+            if (mode != k_ppb_brush || rop3_uses_source(rop3))
             {
                 return FALSE;
             }
 
             // POLYPATBLT entry (verified at runtime against this build's gdi32): { int x; int y; int cx; int cy; HBRUSH hbr; }
             // i.e. position + size, NOT a RECT with right/bottom. Button frame draws pass thin edges such as
-            // {x=96, y=4, cx=1, cy=20}, which only make sense as width/height. HBRUSH is at +0x10 on x64.
+            // {x=96, y=4, cx=1, cy=20}, which only make sense as width/height. HBRUSH is a QWORD at +0x10;
+            // wow64win's whNtGdiPolyPatBlt hands a 32-bit guest's entries to this handler in the same 0x18 layout.
             constexpr uint64_t k_entry_size = 0x18;
             constexpr uint64_t k_brush_offset = 0x10;
             for (DWORD i = 0; i < count; ++i)
@@ -5851,16 +5926,18 @@ namespace sogen
                     return FALSE;
                 }
 
-                const auto color = brush != 0 ? get_brush_color_in_dc(c, dc, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
-                if (color)
+                const auto color = get_poly_pat_blt_color(c, dc, brush);
+                if (!color && rop3_uses_pattern(rop3))
                 {
-                    fill_rect(*surface, visible, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x,
-                              rect[1] + rect[3] + origin_y, *color);
-                    if (rect[2] != 0 && rect[3] != 0)
-                    {
-                        accumulate_drawing_bounds(c, dc, rect[0], rect[1], static_cast<int64_t>(rect[0]) + rect[2],
-                                                  static_cast<int64_t>(rect[1]) + rect[3]);
-                    }
+                    continue;
+                }
+
+                fill_rect_rop3(*surface, visible, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x,
+                               rect[1] + rect[3] + origin_y, rop3, color.value_or(0));
+                if (rect[2] != 0 && rect[3] != 0)
+                {
+                    accumulate_drawing_bounds(c, dc, rect[0], rect[1], static_cast<int64_t>(rect[0]) + rect[2],
+                                              static_cast<int64_t>(rect[1]) + rect[3]);
                 }
             }
             return TRUE;
