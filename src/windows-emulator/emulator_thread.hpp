@@ -718,6 +718,8 @@ namespace sogen
         std::optional<emulator_object<USER_CLIENTTHREADINFO>> client_thread_info;
         hwnd active_window{};
         hwnd focus_window{};
+        // TIF_ALLOWFOREGROUNDACTIVATE: the thread may bring the next window it activates to the foreground.
+        bool foreground_activation_allowed{};
 
         std::vector<std::byte> last_registers{};
         // Set while the thread has not run since it was created or a context was written to it: what KxContextToKframes
@@ -974,6 +976,7 @@ namespace sogen
             buffer.write_optional(this->client_thread_info);
             buffer.write(this->active_window);
             buffer.write(this->focus_window);
+            buffer.write(this->foreground_activation_allowed);
 
             buffer.write_vector(this->last_registers);
             buffer.write_optional(this->trap_frame);
@@ -1075,6 +1078,7 @@ namespace sogen
             buffer.read_optional(this->client_thread_info, [this] { return emulator_object<USER_CLIENTTHREADINFO>(*this->memory_ptr); });
             buffer.read(this->active_window);
             buffer.read(this->focus_window);
+            buffer.read(this->foreground_activation_allowed);
 
             buffer.read_vector(this->last_registers);
             buffer.read_optional(this->trap_frame);

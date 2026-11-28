@@ -1240,6 +1240,7 @@ namespace sogen
         buffer.write(this->update_locked_window);
         buffer.write(this->update_lock_thread_id);
         buffer.write(this->foreground_window);
+        buffer.write(this->foreground_activation_allowed);
         buffer.write_optional(this->timer_resolution_request);
         buffer.write_optional(this->cursor_clip);
         buffer.write(this->cursor_x);
@@ -1382,6 +1383,7 @@ namespace sogen
         buffer.read(this->update_locked_window);
         buffer.read(this->update_lock_thread_id);
         buffer.read(this->foreground_window);
+        buffer.read(this->foreground_activation_allowed);
         buffer.read_optional(this->timer_resolution_request);
         buffer.read_optional(this->cursor_clip);
         buffer.read(this->cursor_x);
