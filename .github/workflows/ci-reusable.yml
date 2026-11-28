@@ -1427,10 +1427,20 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Flutter's Gradle tooling resolves kotlin-dsl from the Plugin Portal, which intermittently fails. Main builds
+      # save the downloaded dependencies and other branches only read them; the pinned Flutter release keeps that
+      # dependency set stable. Flutter generates the app's Gradle wrapper; the only committed wrapper JARs belong to
+      # submodules this job never runs, and SDL's is not one Gradle published, so wrapper validation stays off.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: false
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.50.1
 
       # dart format reads the page width from analysis_options.yaml, which includes a package.
       - name: Fetch App Dependencies
