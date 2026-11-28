@@ -139,6 +139,8 @@ namespace sogen
         std::optional<registry_value> get_value(const registry_key& key, std::string_view name);
         std::optional<registry_value> get_value(const registry_key& key, size_t index);
         size_t get_value_count(const registry_key& key);
+        using value_visitor = std::function<bool(const registry_value&)>;
+        void for_each_value(const registry_key& key, const value_visitor& visit);
         void set_value(const registry_key& key, std::string name, uint32_t type, std::span<const std::byte> data);
         bool delete_value(const registry_key& key, std::string_view name);
 
@@ -200,6 +202,8 @@ namespace sogen
         std::map<utils::path_key, overlay_bucket> overlay_values_{};
         std::map<utils::path_key, uint64_t> key_generations_{};
 
+        static bool walk_values(const overlay_bucket* bucket, const std::optional<exposed_hive_key>& backing_key, bool skip_hive_values,
+                                const value_visitor& visit);
         utils::path_key normalize_path(utils::path_key path) const;
         std::optional<utils::path_key> get_unmapped_sub_key_path(const registry_key& parent, std::u16string_view relative_path) const;
         static const utils::path_key& get_full_key_path(const registry_key& key);

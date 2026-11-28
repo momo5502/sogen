@@ -219,16 +219,12 @@ namespace sogen
                             std::max(max_sub_key_name_length, static_cast<ULONG>(u8_to_u16(*name).size() * sizeof(char16_t)));
                     }
                 }
-                for (size_t index = 0; index < c.win_emu.registry.get_value_count(*key); ++index)
-                {
-                    const auto value = c.win_emu.registry.get_value(*key, index);
-                    if (value)
-                    {
-                        max_value_name_length =
-                            std::max(max_value_name_length, static_cast<ULONG>(u8_to_u16(value->name).size() * sizeof(char16_t)));
-                        max_value_data_length = std::max(max_value_data_length, static_cast<ULONG>(value->data.size()));
-                    }
-                }
+                c.win_emu.registry.for_each_value(*key, [&](const registry_value& value) {
+                    max_value_name_length =
+                        std::max(max_value_name_length, static_cast<ULONG>(u8_to_u16(value.name).size() * sizeof(char16_t)));
+                    max_value_data_length = std::max(max_value_data_length, static_cast<ULONG>(value.data.size()));
+                    return true;
+                });
                 return std::tuple{max_sub_key_name_length, max_value_name_length, max_value_data_length};
             };
 
