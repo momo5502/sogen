@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "syscall_dispatcher.hpp"
+#include "clipboard_messages.hpp"
 #include "cpu_context.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
@@ -885,10 +886,13 @@ namespace sogen
         uint32_t handle_NtUserGetClipboardSequenceNumber(const syscall_context& c);
         BOOL handle_NtUserOpenClipboard(const syscall_context& c, hwnd window, emulator_object<BOOL> emptied);
         BOOL handle_NtUserCloseClipboard(const syscall_context& c);
+        BOOL completion_NtUserCloseClipboard(const syscall_context& c);
         BOOL handle_NtUserEmptyClipboard(const syscall_context& c);
+        BOOL completion_NtUserEmptyClipboard(const syscall_context& c);
         BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& c, hwnd window);
         BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& c, hwnd window);
         uint64_t handle_NtUserGetClipboardData(const syscall_context& c, uint32_t format, emulator_object<GETCLIPBDATA> request);
+        uint64_t completion_NtUserGetClipboardData(const syscall_context& c, uint32_t format, emulator_object<GETCLIPBDATA> request);
         uint64_t handle_NtUserConvertMemHandle(const syscall_context& c, emulator_pointer data, uint32_t size);
         NTSTATUS handle_NtUserCreateLocalMemHandle(const syscall_context& c, uint64_t handle, emulator_pointer buffer, uint32_t size,
                                                    emulator_object<uint32_t> needed);
@@ -899,7 +903,10 @@ namespace sogen
         int32_t handle_NtUserGetPriorityClipboardFormat(const syscall_context& c, emulator_pointer formats, int32_t count);
         int32_t handle_NtUserGetClipboardFormatName(const syscall_context& c, uint32_t format, emulator_pointer buffer, int32_t max_count);
         hwnd handle_NtUserGetClipboardOwner(const syscall_context& c);
-        hwnd handle_NtUserGetClipboardViewer();
+        hwnd handle_NtUserGetClipboardViewer(const syscall_context& c);
+        hwnd handle_NtUserSetClipboardViewer(const syscall_context& c, hwnd window);
+        hwnd completion_NtUserSetClipboardViewer(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserChangeClipboardChain(const syscall_context& c, hwnd window, hwnd next);
         hwnd handle_NtUserGetOpenClipboardWindow(const syscall_context& c);
         BOOL handle_NtUserGetUpdatedClipboardFormats(const syscall_context& c, emulator_pointer formats, uint32_t count,
                                                      emulator_object<uint32_t> returned);
@@ -2466,6 +2473,8 @@ namespace sogen
         add_handler(NtUserGetClipboardFormatName);
         add_handler(NtUserGetClipboardOwner);
         add_handler(NtUserGetClipboardViewer);
+        add_handler(NtUserSetClipboardViewer);
+        add_handler(NtUserChangeClipboardChain);
         add_handler(NtUserGetOpenClipboardWindow);
         add_handler(NtUserGetUpdatedClipboardFormats);
         add_handler(NtUserGetProcessDpiAwarenessContext);
@@ -2522,6 +2531,10 @@ namespace sogen
         add_callback(NtUserSetWindowLongPtr, window_style_change_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_callback(NtUserSetFocus, focus_change_state);
+        add_callback(NtUserEmptyClipboard, clipboard_message_state);
+        add_callback(NtUserCloseClipboard, clipboard_message_state);
+        add_callback(NtUserGetClipboardData, clipboard_message_state);
+        add_callback(NtUserSetClipboardViewer, clipboard_message_state);
         add_stateless_callback(NtUserGetControlBrush);
         add_stateless_callback(NtUserGetControlColor);
         add_stateless_callback(NtUserFillWindow);

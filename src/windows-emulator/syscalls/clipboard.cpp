@@ -2,6 +2,9 @@
 #include "../syscall_dispatcher.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../clipboard_messages.hpp"
+
+#include <utility>
 
 namespace sogen
 {
@@ -50,6 +53,63 @@ namespace sogen
             hwnd existing_window(const syscall_context& c, const hwnd window)
             {
                 return c.proc.windows.get(window) ? window : 0;
+            }
+
+            const window* messageable_window(const syscall_context& c, const hwnd handle)
+            {
+                const auto* win = c.proc.windows.get(handle);
+                return win && win->thread_id == c.thread().id ? win : nullptr;
+            }
+
+            void post_clipboard_update(const syscall_context& c, const uint64_t format_count)
+            {
+                for (const auto listener : c.proc.clipboard.listeners)
+                {
+                    const auto* win = c.proc.windows.get(listener);
+                    auto* thread = win ? c.proc.find_thread_by_id(win->thread_id) : nullptr;
+                    if (thread && !thread->is_terminated())
+                    {
+                        msg update{};
+                        update.window = listener;
+                        update.message = WM_CLIPBOARDUPDATE;
+                        update.wParam = format_count;
+                        thread->post_message(c.win_emu, update);
+                    }
+                }
+            }
+
+            bool viewer_notification_in_progress(const syscall_context& c)
+            {
+                const auto* thread = c.proc.find_thread_by_id(c.proc.clipboard.notifying_thread);
+                return thread && !thread->is_terminated();
+            }
+
+            bool notify_viewer(const syscall_context& c, const callback_id id, clipboard_message_state state)
+            {
+                auto& clipboard = c.proc.clipboard;
+                const auto* viewer = messageable_window(c, clipboard.viewer);
+                if (!viewer || viewer_notification_in_progress(c))
+                {
+                    return false;
+                }
+
+                clipboard.notifying_thread = c.thread().id;
+                dispatch_clipboard_message(c, id, std::move(state), *viewer, WM_DRAWCLIPBOARD, existing_window(c, clipboard.owner));
+                return true;
+            }
+
+            uint64_t finish_get_clipboard_data(const syscall_context& c, clipboard_state& clipboard, const uint32_t format,
+                                               const emulator_object<GETCLIPBDATA> request)
+            {
+                const auto data = clipboard.data(format);
+                if (!data)
+                {
+                    set_guest_last_error(c, error_not_found);
+                    return 0;
+                }
+
+                request.try_write({.format = data->format, .global_handle = data->memory_handle, .locale = 0});
+                return data->handle;
             }
 
             bool is_registered_format(const syscall_context& c, const uint32_t format)
@@ -103,11 +163,40 @@ namespace sogen
                 return FALSE;
             }
 
-            clipboard->close();
+            if (clipboard->close() && !notify_viewer(c, callback_id::NtUserCloseClipboard, {}))
+            {
+                post_clipboard_update(c, clipboard->entries.size());
+            }
+
+            return TRUE;
+        }
+
+        BOOL completion_NtUserCloseClipboard(const syscall_context& c)
+        {
+            c.proc.clipboard.notifying_thread = 0;
+            post_clipboard_update(c, c.proc.clipboard.entries.size());
             return TRUE;
         }
 
         BOOL handle_NtUserEmptyClipboard(const syscall_context& c)
+        {
+            auto* clipboard = clipboard_opened_by_caller(c);
+            if (!clipboard)
+            {
+                return FALSE;
+            }
+
+            if (const auto* owner = messageable_window(c, clipboard->owner))
+            {
+                dispatch_clipboard_message(c, callback_id::NtUserEmptyClipboard, {}, *owner, WM_DESTROYCLIPBOARD, 0);
+                return FALSE;
+            }
+
+            clipboard->empty();
+            return TRUE;
+        }
+
+        BOOL completion_NtUserEmptyClipboard(const syscall_context& c)
         {
             auto* clipboard = clipboard_opened_by_caller(c);
             if (!clipboard)
@@ -155,15 +244,29 @@ namespace sogen
                 return 0;
             }
 
-            const auto data = clipboard->data(format);
-            if (!data)
+            const auto* entry = clipboard->find(format);
+            if (entry && !entry->synthesized && entry->handle == 0)
             {
-                set_guest_last_error(c, error_not_found);
-                return 0;
+                if (const auto* owner = messageable_window(c, clipboard->owner))
+                {
+                    clipboard_message_state state{};
+                    state.result = clipboard->modified;
+                    clipboard->rendering = true;
+                    dispatch_clipboard_message(c, callback_id::NtUserGetClipboardData, std::move(state), *owner, WM_RENDERFORMAT, format);
+                    return 0;
+                }
             }
 
-            request.try_write({.format = data->format, .global_handle = data->memory_handle, .locale = 0});
-            return data->handle;
+            return finish_get_clipboard_data(c, *clipboard, format, request);
+        }
+
+        uint64_t completion_NtUserGetClipboardData(const syscall_context& c, const uint32_t format,
+                                                   const emulator_object<GETCLIPBDATA> request)
+        {
+            c.proc.clipboard.modified = c.get_completion_state<clipboard_message_state>().result != 0;
+            c.proc.clipboard.rendering = false;
+
+            return finish_get_clipboard_data(c, c.proc.clipboard, format, request);
         }
 
         uint64_t handle_NtUserConvertMemHandle(const syscall_context& c, const emulator_pointer data, const uint32_t size)
@@ -326,9 +429,43 @@ namespace sogen
             return existing_window(c, c.proc.clipboard.owner);
         }
 
-        hwnd handle_NtUserGetClipboardViewer()
+        hwnd handle_NtUserGetClipboardViewer(const syscall_context& c)
         {
-            return 0;
+            return existing_window(c, c.proc.clipboard.viewer);
+        }
+
+        hwnd handle_NtUserSetClipboardViewer(const syscall_context& c, const hwnd window)
+        {
+            if (!c.proc.windows.get(window))
+            {
+                return 0;
+            }
+
+            auto& clipboard = c.proc.clipboard;
+            clipboard_message_state state{};
+            state.result = existing_window(c, clipboard.viewer);
+            clipboard.viewer = window;
+
+            const auto previous = state.result;
+            return notify_viewer(c, callback_id::NtUserSetClipboardViewer, std::move(state)) ? 0 : previous;
+        }
+
+        hwnd completion_NtUserSetClipboardViewer(const syscall_context& c, const hwnd /*window*/)
+        {
+            c.proc.clipboard.notifying_thread = 0;
+            return c.get_completion_state<clipboard_message_state>().result;
+        }
+
+        BOOL handle_NtUserChangeClipboardChain(const syscall_context& c, const hwnd window, const hwnd next)
+        {
+            auto& clipboard = c.proc.clipboard;
+            if (window == 0 || clipboard.viewer != window)
+            {
+                return FALSE;
+            }
+
+            clipboard.viewer = next;
+            return TRUE;
         }
 
         hwnd handle_NtUserGetOpenClipboardWindow(const syscall_context& c)

@@ -1,11 +1,20 @@
 #include "std_include.hpp"
 
+#include <user_callback_dispatch.hpp>
+#include <window_destroy_orchestrator.hpp>
+
 namespace sogen::syscalls
 {
     uint32_t handle_NtUserGetClipboardSequenceNumber(const syscall_context& c);
     BOOL handle_NtUserOpenClipboard(const syscall_context& c, hwnd window, emulator_object<BOOL> emptied);
     BOOL handle_NtUserCloseClipboard(const syscall_context& c);
+    BOOL completion_NtUserCloseClipboard(const syscall_context& c);
     BOOL handle_NtUserEmptyClipboard(const syscall_context& c);
+    BOOL completion_NtUserEmptyClipboard(const syscall_context& c);
+    uint64_t completion_NtUserGetClipboardData(const syscall_context& c, uint32_t format, emulator_object<GETCLIPBDATA> request);
+    hwnd handle_NtUserSetClipboardViewer(const syscall_context& c, hwnd window);
+    hwnd completion_NtUserSetClipboardViewer(const syscall_context& c, hwnd window);
+    BOOL handle_NtUserChangeClipboardChain(const syscall_context& c, hwnd window, hwnd next);
     BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& c, hwnd window);
     BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& c, hwnd window);
     uint64_t handle_NtUserGetClipboardData(const syscall_context& c, uint32_t format, emulator_object<GETCLIPBDATA> request);
@@ -19,7 +28,7 @@ namespace sogen::syscalls
     int32_t handle_NtUserGetPriorityClipboardFormat(const syscall_context& c, emulator_pointer formats, int32_t count);
     int32_t handle_NtUserGetClipboardFormatName(const syscall_context& c, uint32_t format, emulator_pointer buffer, int32_t max_count);
     hwnd handle_NtUserGetClipboardOwner(const syscall_context& c);
-    hwnd handle_NtUserGetClipboardViewer();
+    hwnd handle_NtUserGetClipboardViewer(const syscall_context& c);
     hwnd handle_NtUserGetOpenClipboardWindow(const syscall_context& c);
     BOOL handle_NtUserGetUpdatedClipboardFormats(const syscall_context& c, emulator_pointer formats, uint32_t count,
                                                  emulator_object<uint32_t> returned);
@@ -61,6 +70,38 @@ namespace sogen::test
             bool operator==(const outcome&) const = default;
         };
 
+        struct dword_callback_args
+        {
+            uint64_t pwnd;
+            uint32_t msg;
+            uint64_t w_param;
+            uint64_t l_param;
+            uint64_t x_param;
+            uint64_t xpfn_proc;
+        };
+
+        constexpr uint32_t wm_renderformat = 0x0305;
+        constexpr uint32_t wm_renderallformats = 0x0306;
+        constexpr uint32_t wm_destroyclipboard = 0x0307;
+        constexpr uint32_t wm_drawclipboard = 0x0308;
+        constexpr uint32_t wm_clipboardupdate = 0x031D;
+
+        struct delivered
+        {
+            delivered(const hwnd window, const uint32_t message, const uint64_t w_param)
+                : window(window),
+                  message(message),
+                  w_param(w_param)
+            {
+            }
+
+            hwnd window;
+            uint32_t message;
+            uint64_t w_param;
+
+            bool operator==(const delivered&) const = default;
+        };
+
         struct row
         {
             row(std::string label, const outcome expected, std::function<uint64_t()> call)
@@ -97,6 +138,11 @@ namespace sogen::test
                 this->helper_thread = this->create_thread(12, false);
                 this->run_on(this->main_thread);
 
+                const auto stack = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
+                this->context().x64_cpu().reg(x86_register::rsp, stack + 0x10000);
+                const auto code = this->emu->memory.allocate_memory(0x1000, memory_permission::read_exec);
+                this->context().x64_cpu().reg(x86_register::rip, code);
+
                 this->scratch = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
                 this->window_a = this->create_window(this->emu->process.threads.get(this->main_thread)->id);
                 this->window_b = this->create_window(this->emu->process.threads.get(this->main_thread)->id);
@@ -119,6 +165,7 @@ namespace sogen::test
                 win.handle = handle.bits;
                 win.thread_id = thread_id;
                 win.guest.access([&](USER_WINDOW& guest) { guest.hWnd = handle.bits; });
+                this->windows_by_guest[win.guest.value()] = win.handle;
                 return win.handle;
             }
 
@@ -159,14 +206,126 @@ namespace sogen::test
                 return syscalls::handle_NtUserOpenClipboard(this->context(), window, emptied);
             }
 
-            uint64_t close()
+            template <typename Handler, typename Completion>
+            uint64_t drive(Handler&& handler, Completion&& completion, const std::function<void(const delivered&)>& on_message = {})
             {
-                return syscalls::handle_NtUserCloseClipboard(this->context());
+                auto call = this->context();
+                auto result = static_cast<uint64_t>(handler(call));
+                bool pending = call.run_callback;
+                while (pending)
+                {
+                    const auto rsp = this->context().x64_cpu().read_stack_pointer();
+                    const auto callout = this->emu->memory.read_memory<user_callout_frame>(rsp);
+                    const auto args = this->emu->memory.read_memory<dword_callback_args>(callout.buffer);
+                    const delivered message{this->windows_by_guest.at(args.pwnd), args.msg, args.w_param};
+                    this->messages.push_back(message);
+
+                    auto& callbacks = this->thread().callback_stack;
+                    auto frame = std::move(callbacks.back());
+                    callbacks.pop_back();
+                    frame.restore_registers(this->emu->vcpu(0).cpu);
+
+                    if (on_message)
+                    {
+                        on_message(message);
+                    }
+
+                    auto done = this->context();
+                    done.is_callback_completion = true;
+                    done.current_completion_state = frame.state.get();
+                    result = static_cast<uint64_t>(completion(done));
+                    pending = done.run_callback;
+                }
+                return result;
             }
 
-            uint64_t empty()
+            uint64_t close(const std::function<void(const delivered&)>& on_message = {})
             {
-                return syscalls::handle_NtUserEmptyClipboard(this->context());
+                return this->drive([](const syscall_context& c) { return syscalls::handle_NtUserCloseClipboard(c); },
+                                   [](const syscall_context& c) { return syscalls::completion_NtUserCloseClipboard(c); }, on_message);
+            }
+
+            uint64_t empty(const std::function<void(const delivered&)>& on_message = {})
+            {
+                return this->drive([](const syscall_context& c) { return syscalls::handle_NtUserEmptyClipboard(c); },
+                                   [](const syscall_context& c) { return syscalls::completion_NtUserEmptyClipboard(c); }, on_message);
+            }
+
+            uint64_t get_data(const uint32_t format, const std::function<void(const delivered&)>& on_message = {})
+            {
+                const emulator_object<GETCLIPBDATA> request{this->emu->memory, this->scratch + 0x8300};
+                return this->drive(
+                    [&](const syscall_context& c) { return syscalls::handle_NtUserGetClipboardData(c, format, request); },
+                    [&](const syscall_context& c) { return syscalls::completion_NtUserGetClipboardData(c, format, request); }, on_message);
+            }
+
+            uint64_t set_viewer(const hwnd window, const std::function<void(const delivered&)>& on_message = {})
+            {
+                return this->drive([&](const syscall_context& c) { return syscalls::handle_NtUserSetClipboardViewer(c, window); },
+                                   [&](const syscall_context& c) { return syscalls::completion_NtUserSetClipboardViewer(c, window); },
+                                   on_message);
+            }
+
+            uint64_t change_chain(const hwnd window, const hwnd next)
+            {
+                return syscalls::handle_NtUserChangeClipboardChain(this->context(), window, next);
+            }
+
+            uint64_t add_listener(const hwnd window)
+            {
+                return syscalls::handle_NtUserAddClipboardFormatListener(this->context(), window);
+            }
+
+            void publish(const hwnd window, const std::vector<uint32_t>& formats, const bool delayed = false)
+            {
+                ASSERT_EQ(1u, this->open(window));
+                ASSERT_EQ(1u, this->empty());
+                for (const auto format : formats)
+                {
+                    ASSERT_EQ(1u, delayed ? this->set(format, 0, false) : this->set(format, 0x1000 + format));
+                }
+                ASSERT_EQ(1u, this->close());
+            }
+
+            void answer_render_request(const delivered& message)
+            {
+                if (message.message == wm_renderformat)
+                {
+                    EXPECT_EQ(1u, this->set(static_cast<uint32_t>(message.w_param), 0x2000 + message.w_param, false));
+                }
+            }
+
+            size_t delivered_count(const uint32_t message) const
+            {
+                return static_cast<size_t>(std::ranges::count(this->messages, message, &delivered::message));
+            }
+
+            std::vector<uint64_t> take_updates()
+            {
+                std::vector<uint64_t> format_counts{};
+                for (const auto& queued : this->thread().message_queue)
+                {
+                    if (queued.message == wm_clipboardupdate)
+                    {
+                        format_counts.push_back(queued.wParam);
+                    }
+                }
+
+                this->thread().message_queue.clear();
+                return format_counts;
+            }
+
+            std::vector<uint32_t> destroy_steps(const hwnd window)
+            {
+                window_destroy_data state{};
+                const window_destroy_orchestrator orchestrator{state, this->context()};
+                orchestrator.start(*this->emu->process.windows.get(window));
+                std::vector<uint32_t> steps{};
+                while (const auto step = orchestrator.advance())
+                {
+                    steps.push_back(step->message.message);
+                }
+                return steps;
             }
 
             uint64_t set(const uint32_t format, const uint64_t data, const bool global_handle = true)
@@ -223,6 +382,8 @@ namespace sogen::test
             hwnd window_a{};
             hwnd window_b{};
             int32_t last_name_result{};
+            std::map<uint64_t, hwnd> windows_by_guest{};
+            std::vector<delivered> messages{};
         };
     }
 
@@ -767,5 +928,229 @@ namespace sogen::test
         EXPECT_EQ(dib, *restored.memory(dib_handle));
         ASSERT_NE(nullptr, restored.memory(converted));
         EXPECT_EQ(v5, *restored.memory(converted));
+    }
+
+    TEST_F(ClipboardTest, EmptyingTheClipboardTellsThePreviousOwnerItsDataIsDestroyed)
+    {
+        this->publish(this->window_a, {cf_unicodetext});
+        EXPECT_TRUE(this->messages.empty());
+
+        ASSERT_EQ(1u, this->open(this->window_b));
+        ASSERT_EQ(1u, this->empty());
+        EXPECT_EQ((std::vector<delivered>{{this->window_a, wm_destroyclipboard, 0}}), this->messages);
+        EXPECT_EQ(this->window_b, this->emu->process.clipboard.owner);
+        EXPECT_EQ(0, this->count());
+
+        this->messages.clear();
+        ASSERT_EQ(1u, this->empty());
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_destroyclipboard, 0}}), this->messages);
+        ASSERT_EQ(1u, this->close());
+
+        this->messages.clear();
+        ASSERT_EQ(1u, this->open(0));
+        ASSERT_EQ(1u, this->empty());
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_destroyclipboard, 0}}), this->messages);
+        this->messages.clear();
+        ASSERT_EQ(1u, this->empty());
+        EXPECT_TRUE(this->messages.empty());
+    }
+
+    TEST_F(ClipboardTest, ReadingADelayedFormatAsksTheOwnerToRenderItWithoutCountingAChange)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+        const auto render = [&](const delivered& message) { this->answer_render_request(message); };
+
+        this->publish(this->window_a, {cf_unicodetext, format_a}, true);
+        ASSERT_EQ(1u, this->add_listener(this->window_b));
+        this->take_updates();
+        ASSERT_EQ(1u, this->open(this->window_a));
+        const auto sequence = this->sequence();
+
+        EXPECT_EQ((outcome{0x2000 + cf_unicodetext, k_untouched}), this->run([&] { return this->get_data(cf_unicodetext, render); }));
+        EXPECT_EQ((std::vector<delivered>{{this->window_a, wm_renderformat, cf_unicodetext}}), this->messages);
+        EXPECT_EQ((outcome{0x2000 + cf_unicodetext, k_untouched}), this->run([&] { return this->get_data(cf_text, render); }));
+        EXPECT_EQ(1u, this->messages.size());
+        EXPECT_EQ((outcome{0x2000 + format_a, k_untouched}), this->run([&] { return this->get_data(format_a, render); }));
+        EXPECT_EQ((delivered{this->window_a, wm_renderformat, format_a}), this->messages.back());
+        EXPECT_EQ(sequence, this->sequence());
+
+        ASSERT_EQ(1u, this->close());
+        EXPECT_EQ(sequence, this->sequence());
+        EXPECT_TRUE(this->take_updates().empty());
+    }
+
+    TEST_F(ClipboardTest, ClosingTheClipboardInTheRenderHandlerDoesNotHideLaterChanges)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+        const uint32_t format_b = this->emu->process.add_or_find_atom(u"SogenProbeFmtB_23824_105290500");
+
+        this->publish(this->window_a, {format_a}, true);
+        ASSERT_EQ(1u, this->open(this->window_a));
+        const auto sequence = this->sequence();
+        this->run([&] { return this->get_data(format_a, [&](const delivered&) { this->close(); }); });
+
+        ASSERT_EQ(1u, this->open(this->window_a));
+        ASSERT_EQ(1u, this->set(format_b, 0x3300));
+        EXPECT_EQ(sequence + 1, this->sequence());
+    }
+
+    TEST_F(ClipboardTest, AFormatRenderedByAHandlerThatClosesTheClipboardIsStillReturned)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+
+        this->publish(this->window_a, {format_a}, true);
+        ASSERT_EQ(1u, this->open(this->window_a));
+
+        EXPECT_EQ((outcome{0x2000 + format_a, k_untouched}), this->run([&] {
+            return this->get_data(format_a, [&](const delivered& message) {
+                this->answer_render_request(message);
+                EXPECT_EQ(1u, this->close());
+            });
+        }));
+    }
+
+    TEST_F(ClipboardTest, ARenderThatReadsAnotherDelayedFormatStillCountsTheOwnersSet)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+        const uint32_t format_b = this->emu->process.add_or_find_atom(u"SogenProbeFmtB_23824_105290500");
+        const auto render = [&](const delivered& message) { this->answer_render_request(message); };
+
+        this->publish(this->window_a, {format_a, format_b}, true);
+        ASSERT_EQ(1u, this->open(this->window_a));
+        const auto sequence = this->sequence();
+
+        EXPECT_EQ((outcome{0x2000 + format_a, k_untouched}), this->run([&] {
+            return this->get_data(format_a, [&](const delivered& message) {
+                EXPECT_EQ(0x2000 + format_b, this->get_data(format_b, render));
+                render(message);
+            });
+        }));
+        EXPECT_EQ(sequence + 1, this->sequence());
+    }
+
+    TEST_F(ClipboardTest, ClosingAModifiedClipboardPostsTheFormatCountToTheListeners)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+        const uint32_t format_b = this->emu->process.add_or_find_atom(u"SogenProbeFmtB_23824_105290500");
+
+        ASSERT_EQ(1u, this->add_listener(this->window_b));
+        ASSERT_EQ(1u, this->open(0));
+        ASSERT_EQ(1u, this->close());
+        EXPECT_TRUE(this->take_updates().empty());
+
+        ASSERT_EQ(1u, this->open(this->window_a));
+        ASSERT_EQ(1u, this->empty());
+        ASSERT_EQ(1u, this->set(cf_unicodetext, 0x3000));
+        EXPECT_TRUE(this->take_updates().empty());
+        ASSERT_EQ(1u, this->close());
+        EXPECT_EQ((std::vector<uint64_t>{4}), this->take_updates());
+
+        this->publish(this->window_a, {format_a});
+        EXPECT_EQ((std::vector<uint64_t>{1}), this->take_updates());
+
+        ASSERT_EQ(1u, this->open(this->window_a));
+        ASSERT_EQ(1u, this->set(format_b, 0x3200));
+        ASSERT_EQ(1u, this->close());
+        EXPECT_EQ((std::vector<uint64_t>{2}), this->take_updates());
+    }
+
+    TEST_F(ClipboardTest, TheViewerChainIsSetChangedAndRead)
+    {
+        EXPECT_EQ(0u, syscalls::handle_NtUserGetClipboardViewer(this->context()));
+        EXPECT_EQ((outcome{0, k_untouched}), this->run([&] { return this->set_viewer(this->window_b); }));
+        EXPECT_EQ(this->window_b, syscalls::handle_NtUserGetClipboardViewer(this->context()));
+
+        EXPECT_EQ((outcome{1, k_untouched}), this->run([&] { return this->change_chain(this->window_b, 0); }));
+        EXPECT_EQ(0u, syscalls::handle_NtUserGetClipboardViewer(this->context()));
+        EXPECT_EQ((outcome{0, k_untouched}), this->run([&] { return this->change_chain(this->window_b, 0); }));
+    }
+
+    TEST_F(ClipboardTest, SettingTheViewerNotifiesItWhetherOrNotTheClipboardHoldsFormats)
+    {
+        EXPECT_EQ((outcome{0, k_untouched}), this->run([&] { return this->set_viewer(this->window_b); }));
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_drawclipboard, 0}}), this->messages);
+        ASSERT_EQ(1u, this->change_chain(this->window_b, 0));
+
+        this->publish(this->window_a, {cf_unicodetext});
+        this->messages.clear();
+        EXPECT_EQ((outcome{0, k_untouched}), this->run([&] { return this->set_viewer(this->window_b); }));
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_drawclipboard, this->window_a}}), this->messages);
+    }
+
+    TEST_F(ClipboardTest, ClosingAModifiedClipboardNotifiesTheViewerWithTheOwnerOrZeroOnceItIsGone)
+    {
+        ASSERT_EQ(0u, this->set_viewer(this->window_b));
+
+        ASSERT_EQ(1u, this->open(this->window_a));
+        ASSERT_EQ(1u, this->empty());
+        ASSERT_EQ(1u, this->set(cf_unicodetext, 0x3000));
+        this->messages.clear();
+        ASSERT_EQ(1u, this->close());
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_drawclipboard, this->window_a}}), this->messages);
+
+        this->messages.clear();
+        ASSERT_EQ(1u, this->open(0));
+        ASSERT_EQ(1u, this->close());
+        EXPECT_TRUE(this->messages.empty());
+
+        this->destroy_steps(this->window_a);
+        ASSERT_EQ(1u, this->open(0));
+        ASSERT_EQ(1u, this->set(cf_unicodetext, 0x3400));
+        ASSERT_EQ(1u, this->close());
+        EXPECT_EQ((std::vector<delivered>{{this->window_b, wm_drawclipboard, 0}}), this->messages);
+    }
+
+    TEST_F(ClipboardTest, AViewerThatChangesTheClipboardInItsHandlerIsNotifiedOnce)
+    {
+        const uint32_t format_a = this->emu->process.add_or_find_atom(u"SogenProbeFmt_23824_105290500");
+        const uint32_t format_b = this->emu->process.add_or_find_atom(u"SogenProbeFmtB_23824_105290500");
+        ASSERT_EQ(0u, this->set_viewer(this->window_b));
+        ASSERT_EQ(1u, this->add_listener(this->window_a));
+
+        ASSERT_EQ(1u, this->open(this->window_a));
+        ASSERT_EQ(1u, this->empty());
+        ASSERT_EQ(1u, this->set(cf_unicodetext, 0x3000));
+        this->messages.clear();
+        this->take_updates();
+        ASSERT_EQ(1u, this->close([&](const delivered& message) {
+            if (message.message == wm_drawclipboard)
+            {
+                EXPECT_TRUE(this->take_updates().empty());
+                this->publish(this->window_a, {format_a});
+            }
+        }));
+        EXPECT_EQ(1u, this->delivered_count(wm_drawclipboard));
+        EXPECT_EQ((std::vector<uint64_t>{1, 1}), this->take_updates());
+
+        this->messages.clear();
+        this->publish(this->window_a, {format_b});
+        EXPECT_EQ(1u, this->delivered_count(wm_drawclipboard));
+    }
+
+    TEST_F(ClipboardTest, ASnapshotTakenWhileTheViewerIsBeingNotifiedKeepsTheViewerAndTheNotification)
+    {
+        clipboard_state restored{};
+        const auto snapshot = [&](const delivered&) {
+            utils::buffer_serializer serializer{};
+            this->emu->process.clipboard.serialize(serializer);
+            utils::buffer_deserializer deserializer{serializer.get_buffer()};
+            restored.deserialize(deserializer);
+        };
+
+        ASSERT_EQ(0u, this->set_viewer(this->window_b, snapshot));
+        EXPECT_EQ(this->window_b, restored.viewer);
+        EXPECT_EQ(this->thread().id, restored.notifying_thread);
+        EXPECT_EQ(0u, this->emu->process.clipboard.notifying_thread);
+    }
+
+    TEST_F(ClipboardTest, DestroyingTheOwnerWindowSendsRenderAllFormatsAndNoOtherWindowDoes)
+    {
+        this->publish(this->window_a, {cf_unicodetext});
+
+        EXPECT_EQ((std::vector<uint32_t>{WM_UAHDESTROYWINDOW, WM_DESTROY, WM_NCDESTROY}), this->destroy_steps(this->window_b));
+        EXPECT_EQ(this->window_a, syscalls::handle_NtUserGetClipboardOwner(this->context()));
+
+        EXPECT_EQ(1, std::ranges::count(this->destroy_steps(this->window_a), wm_renderallformats));
+        EXPECT_EQ(0u, syscalls::handle_NtUserGetClipboardOwner(this->context()));
     }
 }

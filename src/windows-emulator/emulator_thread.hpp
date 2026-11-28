@@ -450,6 +450,10 @@ namespace sogen
         NtUserCallNextHookEx,
         NtUserCallMsgFilter,
         NtUserMoveWindow,
+        NtUserEmptyClipboard,
+        NtUserCloseClipboard,
+        NtUserGetClipboardData,
+        NtUserSetClipboardViewer,
     };
 
     struct callback_frame

@@ -230,6 +230,11 @@ namespace sogen
             };
         }
 
+        if (this->proc_.clipboard.owner == win.handle)
+        {
+            frame.message_queue.insert(frame.message_queue.begin() + 1, {.message = WM_RENDERALLFORMATS, .wParam = 0, .lParam = 0});
+        }
+
         if (is_direct_target && (win.style & WS_CHILD) != 0 && (win.ex_style & WS_EX_NOPARENTNOTIFY) == 0 && win.parent_handle != 0)
         {
             uint64_t child_id{};
