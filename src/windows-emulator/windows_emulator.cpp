@@ -245,6 +245,17 @@ namespace sogen
             return is_key_down_message(message) || is_key_up_message(message);
         }
 
+        // win32kbase's ProcessKeyboardInputWorker filters each keyboard input before its low-level hooks run, one input at a
+        // time; SendInput's keys skip the filters (win32kfull's xxxInternalKeyEventDirect).
+        void run_accessibility_filters(process_context& process, const ui_event& event)
+        {
+            if (!event.injected && is_keyboard_message(event.message))
+            {
+                const auto key = side_virtual_key(static_cast<uint32_t>(event.wParam & 0xFF), event.lParam);
+                process.accessibility.filter_key(key, is_key_down_message(event.message), process.key_state);
+            }
+        }
+
         // Window button message -> RAWMOUSE usButtonFlags transition bit (winuser.h RI_MOUSE_* values).
         uint16_t raw_mouse_button_flags(const uint32_t message, const uint64_t wparam)
         {
@@ -2385,6 +2396,11 @@ namespace sogen
             std::ranges::sort(hooks, std::greater{});
         }
 
+        if (pending.empty())
+        {
+            run_accessibility_filters(this->process, event);
+        }
+
         // Input already waiting for hooks keeps everything after it waiting too, so the guest sees it in order.
         if (hooks.empty() && (pending.empty() || !is_input_message(event.message)))
         {
@@ -2481,12 +2497,13 @@ namespace sogen
             {
                 const auto event = front.event;
                 pending.erase(pending.begin());
+                this->deliver_ui_event(event);
                 if (!pending.empty())
                 {
                     pending.front().waiting_since = now;
+                    run_accessibility_filters(this->process, pending.front().event);
                 }
 
-                this->deliver_ui_event(event);
                 continue;
             }
 
@@ -2544,6 +2561,7 @@ namespace sogen
             if (!pending.empty())
             {
                 pending.front().waiting_since = now;
+                run_accessibility_filters(this->process, pending.front().event);
             }
         }
         else if (!front.hooks.empty())

@@ -4,6 +4,7 @@
 #include "../keyboard_layout.hpp"
 #include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
+#include "../system_parameters.hpp"
 #include "../win32k_userconnect.hpp"
 #include "../window_destroy_orchestrator.hpp"
 #include "../window_hooks.hpp"
@@ -9530,13 +9531,6 @@ namespace sogen
                 constexpr uint32_t getminimizedmetrics = 0x002B;
                 constexpr uint32_t geticonmetrics = 0x002D;
                 constexpr uint32_t getworkarea = 0x0030;
-                constexpr uint32_t getfilterkeys = 0x0032;
-                constexpr uint32_t gettogglekeys = 0x0034;
-                constexpr uint32_t getmousekeys = 0x0036;
-                constexpr uint32_t getstickykeys = 0x003A;
-                constexpr uint32_t getaccesstimeout = 0x003C;
-                constexpr uint32_t getsoundsentry = 0x0040;
-                constexpr uint32_t gethighcontrast = 0x0042;
                 constexpr uint32_t getanimation = 0x0048;
                 constexpr uint32_t getdeskwallpaper = 0x0073;
                 constexpr uint32_t getlogicaldpioverride = 0x009E;
@@ -9554,8 +9548,6 @@ namespace sogen
                 constexpr uint32_t getfasttaskswitch = 0x0023;
                 constexpr uint32_t getdragfullwindows = 0x0026;
                 constexpr uint32_t getkeyboardcues = 0x100A;
-                constexpr uint32_t getkeyboardpref = 0x0044;
-                constexpr uint32_t getscreenreader = 0x0046;
                 constexpr uint32_t getfontsmoothing = 0x004A;
                 constexpr uint32_t getlowpowertimeout = 0x004F;
                 constexpr uint32_t getpowerofftimeout = 0x0050;
@@ -9610,12 +9602,10 @@ namespace sogen
                 constexpr uint32_t getflatmenu = 0x1022;
                 constexpr uint32_t getdropshadow = 0x1024;
                 constexpr uint32_t getblocksendinputresets = 0x1026;
-                constexpr uint32_t getshowsounds = 0x0038;
                 constexpr uint32_t getserialkeys = 0x003E;
                 constexpr uint32_t getdefaultinputlang = 0x0059;
                 constexpr uint32_t getwindowsextension = 0x005C;
                 constexpr uint32_t getmousetrails = 0x005E;
-                constexpr uint32_t getaudiodescription = 0x0074;
                 constexpr uint32_t getscreensavesecure = 0x0076;
                 constexpr uint32_t gethungapptimeout = 0x0078;
                 constexpr uint32_t getwaittokilltimeout = 0x007A;
@@ -9660,8 +9650,6 @@ namespace sogen
                 {.action = spi_action::getfasttaskswitch, .value = 1},
                 {.action = spi_action::getdragfullwindows, .value = 1},
                 {.action = spi_action::getkeyboardcues, .value = 0},
-                {.action = spi_action::getkeyboardpref, .value = 0},
-                {.action = spi_action::getscreenreader, .value = 0},
                 {.action = spi_action::getfontsmoothing, .value = 1},
                 {.action = spi_action::getlowpowertimeout, .value = 0},
                 {.action = spi_action::getpowerofftimeout, .value = 0},
@@ -9716,7 +9704,6 @@ namespace sogen
                 {.action = spi_action::getflatmenu, .value = 1},
                 {.action = spi_action::getdropshadow, .value = 0},
                 {.action = spi_action::getblocksendinputresets, .value = 0},
-                {.action = spi_action::getshowsounds, .value = 0},
                 {.action = spi_action::getmousetrails, .value = 0},
                 {.action = spi_action::getscreensavesecure, .value = 0},
                 {.action = spi_action::gethungapptimeout, .value = 5000},
@@ -9770,7 +9757,6 @@ namespace sogen
 
             constexpr std::array<uint32_t, 3> k_mouse_acceleration{6, 10, 1};
             constexpr std::array<uint32_t, 5> k_minimized_metrics{20, 154, 0, 0, 0};
-            constexpr DWORD k_high_contrast_flags = 0x7E;
             constexpr uint32_t k_default_dpi = 96;
             constexpr DWORD k_error_success = 0;
             constexpr DWORD k_error_invalid_parameter = 87;
@@ -9782,7 +9768,12 @@ namespace sogen
             constexpr std::array<uint32_t, 3> k_touch_prediction_parameters{8, 8, 1};
             constexpr uint32_t k_max_wallpaper_chars = 260;
             constexpr uint32_t k_update_ini_file = 0x1;
-            constexpr uint32_t k_output_alignment = 4;
+
+            using system_parameters::fail_with;
+            using system_parameters::is_misaligned_output;
+            using system_parameters::probe_output_struct_size;
+            using system_parameters::write_output;
+            using system_parameters::write_zeroed_output;
 
             constexpr bool rejects_non_zero_param(const uint32_t action)
             {
@@ -9805,48 +9796,6 @@ namespace sogen
                 default:
                     return false;
                 }
-            }
-
-            BOOL fail_with(const syscall_context& c, const DWORD error)
-            {
-                set_guest_last_error(c, error);
-                return FALSE;
-            }
-
-            // win32kbase probes these outputs at 4 bytes (1 for a WOW64 caller), also the 8-byte HKL.
-            bool is_misaligned_output(const syscall_context& c, const emulator_pointer value)
-            {
-                return !c.proc.is_wow64_process && value % k_output_alignment != 0;
-            }
-
-            BOOL write_output(const syscall_context& c, const emulator_pointer value, const void* data, const size_t size)
-            {
-                if (!is_writable_range(c.win_emu, value, size) || !c.win_emu.memory.try_write_memory(value, data, size))
-                {
-                    return fail_with(c, k_error_noaccess);
-                }
-
-                return TRUE;
-            }
-
-            std::optional<uint32_t> probe_output_struct_size(const syscall_context& c, const emulator_pointer value, const size_t size)
-            {
-                uint32_t struct_size{};
-                if (!is_writable_range(c.win_emu, value, size) ||
-                    !c.win_emu.memory.try_read_memory(value, &struct_size, sizeof(struct_size)))
-                {
-                    return std::nullopt;
-                }
-
-                return struct_size;
-            }
-
-            // Windows copies its zeroed output buffer back even though the call fails.
-            bool write_zeroed_output(const syscall_context& c, const emulator_pointer value, const size_t size, const uint32_t struct_size)
-            {
-                std::vector<std::byte> zeroed(size);
-                std::memcpy(zeroed.data(), &struct_size, sizeof(struct_size));
-                return c.win_emu.memory.try_write_memory(value, zeroed.data(), zeroed.size());
             }
 
             DWORD check_for_dpi_output(const syscall_context& c, const emulator_pointer value, const uint32_t param, const size_t size,
@@ -9964,26 +9913,6 @@ namespace sogen
                 return size_matches ? TRUE : FALSE;
             }
 
-            BOOL get_high_contrast(const syscall_context& c, const emulator_pointer value)
-            {
-                return write_output(c, value + offsetof(EMU_HIGHCONTRAST, dwFlags), &k_high_contrast_flags, sizeof(k_high_contrast_flags));
-            }
-
-            const std::unordered_map<uint32_t, std::vector<uint32_t>>& sized_struct_gets()
-            {
-                static const std::unordered_map<uint32_t, std::vector<uint32_t>> structs{
-                    {spi_action::getfilterkeys, {24, 0x7E, 1000, 1000, 500, 0}},
-                    {spi_action::gettogglekeys, {8, 0x3E}},
-                    {spi_action::getmousekeys, {28, 0x1000003E, 80, 3000, 0, 0, 0}},
-                    {spi_action::getstickykeys, {8, 0x1FE}},
-                    {spi_action::getaccesstimeout, {12, 2, 300000}},
-                    {spi_action::getsoundsentry, {56, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}},
-                    {spi_action::getaudiodescription, {12, 0, 0}},
-                };
-
-                return structs;
-            }
-
             BOOL get_desk_wallpaper(const syscall_context& c, const uint32_t param, const emulator_pointer value)
             {
                 if (!is_writable_range(c.win_emu, value, uint64_t{param} * sizeof(char16_t)))
@@ -10033,24 +9962,6 @@ namespace sogen
                     }
                 }
 
-                const auto& structs = sized_struct_gets();
-                if (const auto entry = structs.find(action); entry != structs.end())
-                {
-                    const auto size = entry->second.size() * sizeof(uint32_t);
-                    const auto struct_size = probe_output_struct_size(c, value, size);
-                    if (!struct_size)
-                    {
-                        return fail_with(c, k_error_noaccess);
-                    }
-
-                    if (*struct_size == size && (param == 0 || param == size))
-                    {
-                        return write_output(c, value, entry->second.data(), size);
-                    }
-
-                    return write_zeroed_output(c, value, size, *struct_size) ? FALSE : fail_with(c, k_error_noaccess);
-                }
-
                 c.win_emu.log.error("Unimplemented NtUserSystemParametersInfo action: 0x%X\n", action);
                 return fail_with(c, k_error_invalid_parameter);
             }
@@ -10095,6 +10006,12 @@ namespace sogen
         BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
                                                const emulator_pointer value, const uint32_t win_ini)
         {
+            if (const auto handled =
+                    system_parameters::handle_accessibility_action(c, action, param, value, (win_ini & k_update_ini_file) != 0))
+            {
+                return *handled;
+            }
+
             switch (action)
             {
             case spi_action::getworkarea:
@@ -10110,8 +10027,6 @@ namespace sogen
             }
             case spi_action::getanimation:
                 return get_animation(c, param, value);
-            case spi_action::gethighcontrast:
-                return get_high_contrast(c, value);
             case spi_action::getminimizedmetrics:
                 return write_output(c, value, k_minimized_metrics.data(), sizeof(k_minimized_metrics));
             case spi_action::getmouse:
@@ -10133,13 +10048,6 @@ namespace sogen
 
                 return write_output(c, value, &input_language, sizeof(input_language));
             }
-            case spi_action::getaudiodescription:
-                if (is_misaligned_output(c, value))
-                {
-                    return fail_with(c, k_error_noaccess);
-                }
-
-                return get_setting(c, action, param, value, win_ini);
             case spi_action::gettouchpredictionparameters:
                 return get_touch_prediction_parameters(c, param, value);
             case spi_action::getserialkeys:

@@ -752,4 +752,599 @@ namespace sogen::test
         EXPECT_TRUE(this->query(0x59, 0, this->out + 1));
         EXPECT_EQ(0x04090409u, this->emu.memory.read_memory<uint64_t>(this->out + 1));
     }
+
+    namespace
+    {
+        constexpr uint32_t spi_set_filterkeys = 0x33;
+        constexpr uint32_t spi_set_togglekeys = 0x35;
+        constexpr uint32_t spi_set_mousekeys = 0x37;
+        constexpr uint32_t spi_get_showsounds = 0x38;
+        constexpr uint32_t spi_set_showsounds = 0x39;
+        constexpr uint32_t spi_set_stickykeys = 0x3B;
+        constexpr uint32_t spi_set_accesstimeout = 0x3D;
+        constexpr uint32_t spi_set_soundsentry = 0x41;
+        constexpr uint32_t spi_get_highcontrast = 0x42;
+        constexpr uint32_t spi_set_highcontrast = 0x43;
+        constexpr uint32_t spi_get_keyboardpref = 0x44;
+        constexpr uint32_t spi_set_keyboardpref = 0x45;
+        constexpr uint32_t spi_get_screenreader = 0x46;
+        constexpr uint32_t spi_set_screenreader = 0x47;
+        constexpr uint32_t spi_get_audiodescription = 0x74;
+        constexpr uint32_t spi_set_audiodescription = 0x75;
+        constexpr uint32_t spif_update_ini_file = 0x1;
+        constexpr size_t sm_showsounds = 70;
+        constexpr size_t high_contrast_scheme_size = 0x100;
+        constexpr DWORD mouse_keys_on = 0x1;
+        constexpr DWORD mouse_keys_replace_numbers = 0x80;
+        constexpr DWORD mouse_keys_left_button_selected = 0x10000000;
+        constexpr DWORD mouse_keys_mouse_mode = 0x80000000;
+        constexpr uint8_t key_toggled = 0x01;
+        constexpr uint64_t left_shift_scan_code = 0x2A;
+        constexpr uint64_t left_alt_scan_code = 0x38;
+        constexpr int scan_code_shift = 16;
+        constexpr int wh_keyboard_ll = 13;
+        constexpr uint64_t keyboard_hook_handle = 0x10001;
+        constexpr uint64_t keyboard_hook_proc = 0x140001000;
+
+        constexpr std::u16string_view sticky_keys_key = u"Control Panel\\Accessibility\\StickyKeys";
+        constexpr std::u16string_view keyboard_response_key = u"Control Panel\\Accessibility\\Keyboard Response";
+        constexpr std::u16string_view mouse_keys_key = u"Control Panel\\Accessibility\\MouseKeys";
+        constexpr std::u16string_view toggle_keys_key = u"Control Panel\\Accessibility\\ToggleKeys";
+        constexpr std::u16string_view time_out_key = u"Control Panel\\Accessibility\\TimeOut";
+        constexpr std::u16string_view sound_sentry_key = u"Control Panel\\Accessibility\\SoundSentry";
+        constexpr std::u16string_view audio_description_key = u"Control Panel\\Accessibility\\AudioDescription";
+
+        struct internal_set_high_contrast
+        {
+            UINT cbSize;
+            DWORD dwFlags;
+            USHORT Length;
+            USHORT MaximumLength;
+            uint32_t padding;
+            uint64_t Buffer;
+        };
+
+        std::optional<registry_key> user_key(windows_emulator& emu, const std::u16string_view key)
+        {
+            return emu.registry.get_key(utils::path_key{std::filesystem::path{u"\\Registry\\User"} / key});
+        }
+
+        void set_user_value(windows_emulator& emu, const std::u16string_view key, const std::string_view name,
+                            const std::u16string_view text)
+        {
+            const auto registry_key = user_key(emu, key);
+            ASSERT_TRUE(registry_key.has_value());
+
+            std::vector<std::byte> data((text.size() + 1) * sizeof(char16_t));
+            std::memcpy(data.data(), text.data(), text.size() * sizeof(char16_t));
+            emu.registry.set_value(*registry_key, std::string{name}, REG_SZ, data);
+        }
+
+        std::optional<std::u16string> user_string(windows_emulator& emu, const std::u16string_view key, const std::string_view name)
+        {
+            const auto registry_key = user_key(emu, key);
+            if (!registry_key)
+            {
+                return std::nullopt;
+            }
+
+            const auto value = emu.registry.get_value(*registry_key, name);
+            return value ? value->as_string() : std::nullopt;
+        }
+
+        EMU_FILTERKEYS make_filter_keys(const DWORD flags, const DWORD wait_ms = 0, const DWORD delay_ms = 0, const DWORD repeat_ms = 0,
+                                        const DWORD bounce_ms = 0)
+        {
+            return {.cbSize = sizeof(EMU_FILTERKEYS),
+                    .dwFlags = flags,
+                    .iWaitMSec = wait_ms,
+                    .iDelayMSec = delay_ms,
+                    .iRepeatMSec = repeat_ms,
+                    .iBounceMSec = bounce_ms};
+        }
+
+        EMU_MOUSEKEYS make_mouse_keys(const DWORD flags, const DWORD max_speed, const DWORD time_to_max_speed, const DWORD ctrl_speed = 0)
+        {
+            return {.cbSize = sizeof(EMU_MOUSEKEYS),
+                    .dwFlags = flags,
+                    .iMaxSpeed = max_speed,
+                    .iTimeToMaxSpeed = time_to_max_speed,
+                    .iCtrlSpeed = ctrl_speed,
+                    .dwReserved1 = 0,
+                    .dwReserved2 = 0};
+        }
+
+        EMU_SOUNDSENTRY make_sound_sentry(const DWORD flags, const DWORD windows_effect, const DWORD text_effect = 0,
+                                          const DWORD graphics_effect = 0)
+        {
+            return {.cbSize = sizeof(EMU_SOUNDSENTRY),
+                    .dwFlags = flags,
+                    .iFSTextEffect = text_effect,
+                    .iFSTextEffectMSec = 0,
+                    .iFSTextEffectColorBits = 0,
+                    .iFSGrafEffect = graphics_effect,
+                    .iFSGrafEffectMSec = 0,
+                    .iFSGrafEffectColor = 0,
+                    .iWindowsEffect = windows_effect,
+                    .iWindowsEffectMSec = 0,
+                    .lpszWindowsEffectDLL = 0,
+                    .iWindowsEffectOrdinal = 0};
+        }
+
+        class SystemParametersInfoAccessibilityTest : public SystemParametersInfoTest
+        {
+          protected:
+            template <typename T>
+            BOOL set(const uint32_t action, const T& settings, const uint32_t win_ini = 0)
+            {
+                this->emu.memory.write_memory(this->out, settings);
+                return this->query(action, sizeof(T), this->out, win_ini);
+            }
+
+            template <typename T>
+            T get(const uint32_t action)
+            {
+                this->emu.memory.set_memory(this->out, 0, sizeof(T));
+                this->emu.memory.write_memory(this->out, static_cast<uint32_t>(sizeof(T)));
+                EXPECT_TRUE(this->query(action, sizeof(T), this->out)) << action;
+                return this->emu.memory.read_memory<T>(this->out);
+            }
+
+            bool reports_mouse_mode()
+            {
+                return (this->get<EMU_MOUSEKEYS>(spi_get_mousekeys).dwFlags & mouse_keys_mouse_mode) != 0;
+            }
+
+            bool num_lock_toggled()
+            {
+                return (this->emu.process.key_state[VK_NUMLOCK] & key_toggled) != 0;
+            }
+
+            hwnd create_input_window()
+            {
+                auto [handle, win] = this->emu.process.windows.create(this->emu.memory);
+                win.handle = handle.bits;
+                win.thread_id = this->emu.vcpu(0).active_thread->id;
+                return handle.bits;
+            }
+        };
+    }
+
+    // win32kbase 10.0.19041 xxxUpdatePerUserAccessPackSettings reads these values when a user logs on, MouseKeys' speeds
+    // only within 10-360 and 1000-5000, and sets the mouse mode whether or not MouseKeys is on.
+    TEST(SystemParametersInfoLogonTest, AccessibilitySettingsAreTheUsersRegistryValuesAtLogon)
+    {
+        auto emu = create_sample_emulator();
+        set_user_value(emu, sticky_keys_key, "Flags", u"26");
+        set_user_value(emu, keyboard_response_key, "Flags", u"3");
+        set_user_value(emu, keyboard_response_key, "DelayBeforeAcceptance", u"500");
+        set_user_value(emu, keyboard_response_key, "AutoRepeatDelay", u"300");
+        set_user_value(emu, keyboard_response_key, "AutoRepeatRate", u"100");
+        set_user_value(emu, mouse_keys_key, "Flags", u"128");
+        set_user_value(emu, mouse_keys_key, "MaximumSpeed", u"5");
+        set_user_value(emu, mouse_keys_key, "TimeToMaximumSpeed", u" 2000");
+        set_user_value(emu, toggle_keys_key, "Flags", u"5");
+        set_user_value(emu, time_out_key, "Flags", u"3");
+        set_user_value(emu, time_out_key, "TimeToWait", u"600000");
+        emu.setup_process_if_necessary();
+
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        const auto out = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto get = [&]<typename T>(const uint32_t action, T result) {
+            emu.memory.write_memory(out, static_cast<uint32_t>(sizeof(T)));
+            EXPECT_TRUE(syscalls::handle_NtUserSystemParametersInfo(context, action, sizeof(T), out, 0)) << action;
+            emu.memory.read_memory(out, &result, sizeof(T));
+            return result;
+        };
+
+        const auto sticky_keys = get(spi_get_stickykeys, EMU_STICKYKEYS{});
+        EXPECT_EQ(26u, sticky_keys.dwFlags);
+
+        const auto filter_keys = get(spi_get_filterkeys, EMU_FILTERKEYS{});
+        EXPECT_EQ(3u, filter_keys.dwFlags);
+        EXPECT_EQ(500u, filter_keys.iWaitMSec);
+        EXPECT_EQ(300u, filter_keys.iDelayMSec);
+        EXPECT_EQ(100u, filter_keys.iRepeatMSec);
+
+        const auto mouse_keys = get(spi_get_mousekeys, EMU_MOUSEKEYS{});
+        EXPECT_EQ(mouse_keys_replace_numbers | mouse_keys_left_button_selected | mouse_keys_mouse_mode, mouse_keys.dwFlags);
+        EXPECT_EQ(40u, mouse_keys.iMaxSpeed);
+        EXPECT_EQ(2000u, mouse_keys.iTimeToMaxSpeed);
+
+        EXPECT_EQ(5u, get(spi_get_togglekeys, EMU_TOGGLEKEYS{}).dwFlags);
+
+        const auto timeout = get(spi_get_accesstimeout, EMU_ACCESSTIMEOUT{});
+        EXPECT_EQ(3u, timeout.dwFlags);
+        EXPECT_EQ(600000u, timeout.iTimeOutMSec);
+    }
+
+    // win32kbase 10.0.19041 SpiSetFilterKeys, SpiSetToggleKeys, SpiSetStickyKeys and SpiSetAccessTimeOut, and win32kfull's
+    // SPI_SETMOUSEKEYS, SPI_SETSOUNDSENTRY and SPI_SETAUDIODESCRIPTION: the *_AVAILABLE flag stays what it was, StickyKeys
+    // drops its state word and MouseKeys the flags only its GET reports.
+    TEST_F(SystemParametersInfoAccessibilityTest, SetsChangeWhatTheNextGetReports)
+    {
+        ASSERT_TRUE(this->set(spi_set_filterkeys, make_filter_keys(0x5C, 0, 700, 300, 200)));
+        const auto filter_keys = this->get<EMU_FILTERKEYS>(spi_get_filterkeys);
+        EXPECT_EQ(0x5Eu, filter_keys.dwFlags);
+        EXPECT_EQ(0u, filter_keys.iWaitMSec);
+        EXPECT_EQ(700u, filter_keys.iDelayMSec);
+        EXPECT_EQ(300u, filter_keys.iRepeatMSec);
+        EXPECT_EQ(200u, filter_keys.iBounceMSec);
+
+        ASSERT_TRUE(this->set(spi_set_togglekeys, EMU_TOGGLEKEYS{.cbSize = 8, .dwFlags = 0x38}));
+        EXPECT_EQ(0x3Au, this->get<EMU_TOGGLEKEYS>(spi_get_togglekeys).dwFlags);
+
+        ASSERT_TRUE(this->set(spi_set_stickykeys, EMU_STICKYKEYS{.cbSize = 8, .dwFlags = 0x101F8}));
+        EXPECT_EQ(0x1FAu, this->get<EMU_STICKYKEYS>(spi_get_stickykeys).dwFlags);
+
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(mouse_keys_left_button_selected | 0x3C, 200, 2000, 5)));
+        const auto mouse_keys = this->get<EMU_MOUSEKEYS>(spi_get_mousekeys);
+        EXPECT_EQ(mouse_keys_left_button_selected | 0x3E, mouse_keys.dwFlags);
+        EXPECT_EQ(200u, mouse_keys.iMaxSpeed);
+        EXPECT_EQ(2000u, mouse_keys.iTimeToMaxSpeed);
+        EXPECT_EQ(5u, mouse_keys.iCtrlSpeed);
+
+        ASSERT_TRUE(this->set(spi_set_accesstimeout, EMU_ACCESSTIMEOUT{.cbSize = 12, .dwFlags = 1, .iTimeOutMSec = 120000}));
+        const auto timeout = this->get<EMU_ACCESSTIMEOUT>(spi_get_accesstimeout);
+        EXPECT_EQ(1u, timeout.dwFlags);
+        EXPECT_EQ(120000u, timeout.iTimeOutMSec);
+
+        ASSERT_TRUE(this->set(spi_set_soundsentry, make_sound_sentry(1, 2)));
+        const auto sentry = this->get<EMU_SOUNDSENTRY>(spi_get_soundsentry);
+        EXPECT_EQ(3u, sentry.dwFlags);
+        EXPECT_EQ(2u, sentry.iWindowsEffect);
+
+        ASSERT_TRUE(this->set(spi_set_audiodescription, EMU_AUDIODESCRIPTION{.cbSize = 12, .Enabled = TRUE, .Locale = 0x409}));
+        const auto description = this->get<EMU_AUDIODESCRIPTION>(spi_get_audiodescription);
+        EXPECT_EQ(TRUE, description.Enabled);
+        EXPECT_EQ(0x409u, description.Locale);
+    }
+
+    TEST_F(SystemParametersInfoAccessibilityTest, SetsRejectWhatWin32kRejects)
+    {
+        const auto rejected = [&]<typename T>(const uint32_t action, const T& settings, const uint32_t param = sizeof(T)) {
+            this->clear_output(last_error_sentinel);
+            this->emu.memory.write_memory(this->out, settings);
+            return !this->query(action, param, this->out) && this->last_error() == last_error_sentinel;
+        };
+
+        const auto filter_keys = this->get<EMU_FILTERKEYS>(spi_get_filterkeys);
+        auto short_filter_keys = make_filter_keys(0x7E);
+        short_filter_keys.cbSize = 20;
+        EXPECT_TRUE(rejected(spi_set_filterkeys, short_filter_keys));
+        EXPECT_TRUE(rejected(spi_set_filterkeys, make_filter_keys(0x7E), 4));
+        EXPECT_TRUE(rejected(spi_set_filterkeys, make_filter_keys(0x7E, 100, 0, 0, 100)));
+        EXPECT_TRUE(rejected(spi_set_filterkeys, make_filter_keys(0x80)));
+        EXPECT_TRUE(rejected(spi_set_filterkeys, make_filter_keys(0x7E, 0, 20001)));
+        EXPECT_EQ(filter_keys.dwFlags, this->get<EMU_FILTERKEYS>(spi_get_filterkeys).dwFlags);
+
+        EXPECT_TRUE(rejected(spi_set_togglekeys, EMU_TOGGLEKEYS{.cbSize = 8, .dwFlags = 0x40}));
+        EXPECT_TRUE(rejected(spi_set_togglekeys, EMU_TOGGLEKEYS{.cbSize = 8, .dwFlags = 0x3E}, 16));
+        EXPECT_TRUE(rejected(spi_set_stickykeys, EMU_STICKYKEYS{.cbSize = 8, .dwFlags = 0x200}));
+
+        EXPECT_TRUE(rejected(spi_set_mousekeys, make_mouse_keys(0x100, 80, 3000)));
+        EXPECT_TRUE(rejected(spi_set_mousekeys, make_mouse_keys(0x3E, 9, 3000)));
+        EXPECT_TRUE(rejected(spi_set_mousekeys, make_mouse_keys(0x3E, 361, 3000)));
+        EXPECT_TRUE(rejected(spi_set_mousekeys, make_mouse_keys(0x3E, 80, 999)));
+        EXPECT_TRUE(rejected(spi_set_mousekeys, make_mouse_keys(0x3E, 80, 5001)));
+
+        EXPECT_TRUE(rejected(spi_set_accesstimeout, EMU_ACCESSTIMEOUT{.cbSize = 12, .dwFlags = 4, .iTimeOutMSec = 0}));
+        EXPECT_TRUE(rejected(spi_set_accesstimeout, EMU_ACCESSTIMEOUT{.cbSize = 12, .dwFlags = 1, .iTimeOutMSec = 3600001}));
+
+        EXPECT_TRUE(rejected(spi_set_soundsentry, make_sound_sentry(8, 0)));
+        EXPECT_TRUE(rejected(spi_set_soundsentry, make_sound_sentry(2, 4)));
+        EXPECT_TRUE(rejected(spi_set_soundsentry, make_sound_sentry(2, 0, 1)));
+        EXPECT_TRUE(rejected(spi_set_soundsentry, make_sound_sentry(2, 0, 0, 1)));
+
+        EXPECT_TRUE(rejected(spi_set_audiodescription, EMU_AUDIODESCRIPTION{.cbSize = 16, .Enabled = TRUE, .Locale = 0}));
+    }
+
+    // win32kfull 10.0.19041 SPI_SETMOUSEKEYS, which leaves the mouse mode alone while MouseKeys stays off.
+    TEST_F(SystemParametersInfoAccessibilityTest, MouseKeysSetsTakeTheMouseModeFromReplaceNumbersAndNumLock)
+    {
+        struct mouse_keys_set
+        {
+            bool num_lock_on;
+            DWORD flags;
+            bool mouse_mode;
+        };
+
+        for (const auto& [num_lock_on, flags, mouse_mode] :
+             {mouse_keys_set{false, mouse_keys_on | mouse_keys_replace_numbers, true}, mouse_keys_set{false, mouse_keys_on, false},
+              mouse_keys_set{true, mouse_keys_on | mouse_keys_replace_numbers, false}, mouse_keys_set{true, mouse_keys_on, true},
+              mouse_keys_set{false, 0, true}})
+        {
+            this->emu.process.key_state[VK_NUMLOCK] = num_lock_on ? key_toggled : uint8_t{0};
+            ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(flags, 80, 3000))) << flags;
+            EXPECT_EQ(mouse_mode, this->reports_mouse_mode()) << flags;
+        }
+    }
+
+    // win32kbase 10.0.19041 xxxMKToggleMouseKeys, which leaves the mouse mode alone for the MouseKeys hotkey, Left Alt + Left
+    // Shift + NumLock; it sees only the keyboard's own keys, never SendInput's.
+    TEST_F(SystemParametersInfoAccessibilityTest, KeyboardNumLockPressesSetTheMouseModeWhileMouseKeysIsOn)
+    {
+        const auto window = this->create_input_window();
+        const auto key = [&](const uint32_t message, const uint32_t virtual_key, const uint64_t scan_code, const bool injected) {
+            this->emu.handle_ui_event(ui_event{
+                .window = window, .message = message, .wParam = virtual_key, .lParam = scan_code << scan_code_shift, .injected = injected});
+        };
+        const auto press_num_lock = [&](const bool injected) {
+            key(WM_KEYDOWN, VK_NUMLOCK, 0, injected);
+            key(WM_KEYUP, VK_NUMLOCK, 0, injected);
+        };
+        const auto press_mouse_keys_hotkey = [&](const bool injected_modifiers) {
+            key(WM_KEYDOWN, VK_SHIFT, left_shift_scan_code, injected_modifiers);
+            key(WM_SYSKEYDOWN, VK_MENU, left_alt_scan_code, injected_modifiers);
+            press_num_lock(false);
+            key(WM_SYSKEYUP, VK_MENU, left_alt_scan_code, injected_modifiers);
+            key(WM_KEYUP, VK_SHIFT, left_shift_scan_code, injected_modifiers);
+        };
+
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(mouse_keys_on, 80, 3000)));
+        press_num_lock(false);
+        EXPECT_TRUE(this->reports_mouse_mode());
+        press_num_lock(false);
+        EXPECT_FALSE(this->reports_mouse_mode());
+
+        press_num_lock(true);
+        EXPECT_FALSE(this->reports_mouse_mode());
+
+        press_num_lock(false);
+        press_mouse_keys_hotkey(true);
+        EXPECT_TRUE(this->reports_mouse_mode());
+
+        press_num_lock(false);
+        press_mouse_keys_hotkey(false);
+        EXPECT_FALSE(this->reports_mouse_mode());
+
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(mouse_keys_replace_numbers, 80, 3000)));
+        press_num_lock(false);
+        EXPECT_FALSE(this->reports_mouse_mode());
+    }
+
+    // win32kbase 10.0.19041 ProcessKeyboardInputWorker runs the MouseKeys filter, one input at a time, before xxxKeyEventEx
+    // calls the WH_KEYBOARD_LL hooks and changes the key state for the input they pass on.
+    TEST_F(SystemParametersInfoAccessibilityTest, NumLockPressesSetTheMouseModeBeforeTheLowLevelHooksRun)
+    {
+        const auto window = this->create_input_window();
+        auto& thread = *this->emu.vcpu(0).active_thread;
+        thread.low_level_hooks.push_back(
+            user_low_level_hook{.handle = keyboard_hook_handle, .id = wh_keyboard_ll, .proc = keyboard_hook_proc});
+        const auto num_lock = [&](const uint32_t message) {
+            this->emu.handle_ui_event(ui_event{.window = window, .message = message, .wParam = VK_NUMLOCK});
+        };
+        const auto mouse_mode_in_hook = [&](const bool swallow) {
+            this->emu.synchronize([&] { EXPECT_TRUE(this->emu.begin_low_level_hook(thread).has_value()); });
+            const bool reported = this->reports_mouse_mode();
+            this->emu.synchronize([&] { this->emu.finish_low_level_hook(thread, swallow); });
+            return reported;
+        };
+
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(mouse_keys_on, 80, 3000)));
+        num_lock(WM_KEYDOWN);
+        EXPECT_TRUE(mouse_mode_in_hook(true));
+        EXPECT_TRUE(this->reports_mouse_mode());
+        EXPECT_FALSE(this->num_lock_toggled());
+
+        num_lock(WM_KEYUP);
+        EXPECT_TRUE(mouse_mode_in_hook(false));
+
+        num_lock(WM_KEYDOWN);
+        num_lock(WM_KEYUP);
+        num_lock(WM_KEYDOWN);
+        EXPECT_TRUE(mouse_mode_in_hook(false));
+        EXPECT_TRUE(this->num_lock_toggled());
+        EXPECT_TRUE(mouse_mode_in_hook(true));
+        EXPECT_FALSE(mouse_mode_in_hook(false));
+    }
+
+    // NtUserSystemParametersInfo copies these structures in with a 4-byte aligned probe; a fault sets ERROR_NOACCESS.
+    TEST_F(SystemParametersInfoAccessibilityTest, MisalignedOrUnreadableSettingsFailWithNoAccess)
+    {
+        const auto unmapped = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        ASSERT_TRUE(this->emu.memory.release_memory(unmapped, 0x1000));
+
+        for (const uint64_t pointer : {this->out + 2, unmapped, uint64_t{0}})
+        {
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->query(spi_set_stickykeys, sizeof(EMU_STICKYKEYS), pointer)) << pointer;
+            EXPECT_EQ(error_noaccess, this->last_error()) << pointer;
+        }
+    }
+
+    // SetFilterKeys, SpiSetStickyKeys, SetMouseKeys, SetSoundSentry and the other writers store each value as a decimal REG_SZ
+    // under HKCU\Control Panel\Accessibility; SetSoundSentry writes TextEffect, not the FSTextEffect logon reads.
+    TEST_F(SystemParametersInfoAccessibilityTest, UpdateIniFileWritesTheSettingsAsDecimalStrings)
+    {
+        ASSERT_TRUE(this->set(spi_set_stickykeys, EMU_STICKYKEYS{.cbSize = 8, .dwFlags = 0x1F8}, spif_update_ini_file));
+        EXPECT_EQ(u"506", user_string(this->emu, sticky_keys_key, "Flags"));
+
+        ASSERT_TRUE(this->set(spi_set_filterkeys, make_filter_keys(0x7E, 1500, 700, 300), spif_update_ini_file));
+        EXPECT_EQ(u"126", user_string(this->emu, keyboard_response_key, "Flags"));
+        EXPECT_EQ(u"1500", user_string(this->emu, keyboard_response_key, "DelayBeforeAcceptance"));
+        EXPECT_EQ(u"700", user_string(this->emu, keyboard_response_key, "AutoRepeatDelay"));
+        EXPECT_EQ(u"300", user_string(this->emu, keyboard_response_key, "AutoRepeatRate"));
+        EXPECT_EQ(u"0", user_string(this->emu, keyboard_response_key, "BounceTime"));
+
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(0x3E, 100, 2500), spif_update_ini_file));
+        EXPECT_EQ(u"62", user_string(this->emu, mouse_keys_key, "Flags"));
+        EXPECT_EQ(u"100", user_string(this->emu, mouse_keys_key, "MaximumSpeed"));
+        EXPECT_EQ(u"2500", user_string(this->emu, mouse_keys_key, "TimeToMaximumSpeed"));
+
+        ASSERT_TRUE(this->set(spi_set_togglekeys, EMU_TOGGLEKEYS{.cbSize = 8, .dwFlags = 0x3A}, spif_update_ini_file));
+        EXPECT_EQ(u"58", user_string(this->emu, toggle_keys_key, "Flags"));
+
+        ASSERT_TRUE(
+            this->set(spi_set_accesstimeout, EMU_ACCESSTIMEOUT{.cbSize = 12, .dwFlags = 3, .iTimeOutMSec = 60000}, spif_update_ini_file));
+        EXPECT_EQ(u"3", user_string(this->emu, time_out_key, "Flags"));
+        EXPECT_EQ(u"60000", user_string(this->emu, time_out_key, "TimeToWait"));
+
+        ASSERT_TRUE(this->set(spi_set_soundsentry, make_sound_sentry(3, 3), spif_update_ini_file));
+        EXPECT_EQ(u"3", user_string(this->emu, sound_sentry_key, "Flags"));
+        EXPECT_EQ(u"0", user_string(this->emu, sound_sentry_key, "TextEffect"));
+        EXPECT_EQ(u"3", user_string(this->emu, sound_sentry_key, "WindowsEffect"));
+
+        ASSERT_TRUE(
+            this->set(spi_set_audiodescription, EMU_AUDIODESCRIPTION{.cbSize = 12, .Enabled = TRUE, .Locale = 1033}, spif_update_ini_file));
+        EXPECT_EQ(u"1", user_string(this->emu, audio_description_key, "On"));
+        EXPECT_EQ(u"1033", user_string(this->emu, audio_description_key, "Locale"));
+
+        EXPECT_TRUE(this->query(spi_set_keyboardpref, 1, 0, spif_update_ini_file));
+        EXPECT_EQ(u"1", user_string(this->emu, u"Control Panel\\Accessibility\\Keyboard Preference", "On"));
+        EXPECT_TRUE(this->query(spi_set_screenreader, 1, 0, spif_update_ini_file));
+        EXPECT_EQ(u"1", user_string(this->emu, u"Control Panel\\Accessibility\\Blind Access", "On"));
+    }
+
+    // SPI_SETSHOWSOUNDS turns ShowSounds on only for 1 and keeps SM_SHOWSOUNDS, which user32 answers itself, in step.
+    TEST_F(SystemParametersInfoAccessibilityTest, ShowSoundsKeepsTheSystemMetricInStep)
+    {
+        const auto show_sounds_metric = [&] {
+            return this->emu.process.user_handles.get_server_info().read().systemMetrics[sm_showsounds];
+        };
+
+        for (const auto& [param, on] : {std::pair{1u, 1u}, std::pair{2u, 0u}, std::pair{1u, 1u}, std::pair{0u, 0u}})
+        {
+            EXPECT_TRUE(this->query(spi_set_showsounds, param, 0)) << param;
+            EXPECT_EQ(static_cast<int32_t>(on), show_sounds_metric()) << param;
+
+            this->clear_output();
+            EXPECT_TRUE(this->query(spi_get_showsounds, 0, this->out)) << param;
+            EXPECT_EQ(on, this->emu.memory.read_memory<uint32_t>(this->out)) << param;
+        }
+    }
+
+    // win32kfull 10.0.19041 SetHighContrastWorker keeps a scheme shorter than 0x100 bytes and drops HCF_OPTION_NOTHEMECHANGE from
+    // the flags; SPI_GETHIGHCONTRAST writes the 256-byte scheme buffer to the caller's lpszDefaultScheme. win32kbase fails a
+    // malformed scheme string with ERROR_NOACCESS.
+    TEST_F(SystemParametersInfoAccessibilityTest, HighContrastKeepsItsSchemeAndFlags)
+    {
+        constexpr std::u16string_view scheme = u"High Contrast Black";
+        const auto text = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        this->emu.memory.write_memory(text, scheme.data(), scheme.size() * sizeof(char16_t));
+
+        const internal_set_high_contrast request{.cbSize = 16,
+                                                 .dwFlags = 0x1001,
+                                                 .Length = static_cast<USHORT>(scheme.size() * sizeof(char16_t)),
+                                                 .MaximumLength = static_cast<USHORT>((scheme.size() + 1) * sizeof(char16_t)),
+                                                 .padding = 0,
+                                                 .Buffer = text};
+        ASSERT_TRUE(this->set(spi_set_highcontrast, request));
+
+        const auto scheme_buffer = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        this->emu.memory.set_memory(scheme_buffer, 0xCC, 0x1000);
+        this->emu.memory.write_memory(this->out, EMU_HIGHCONTRAST{.cbSize = 16, .dwFlags = 0, .lpszDefaultScheme = scheme_buffer});
+        ASSERT_TRUE(this->query(spi_get_highcontrast, 0, this->out));
+
+        EXPECT_EQ(0x1u, this->emu.memory.read_memory<EMU_HIGHCONTRAST>(this->out).dwFlags);
+        std::u16string reported(scheme.size(), u'\0');
+        this->emu.memory.read_memory(scheme_buffer, reported.data(), reported.size() * sizeof(char16_t));
+        EXPECT_EQ(scheme, reported);
+        EXPECT_EQ(0u, this->emu.memory.read_memory<uint16_t>(scheme_buffer + scheme.size() * sizeof(char16_t)));
+        EXPECT_EQ(0u, this->emu.memory.read_memory<uint16_t>(scheme_buffer + high_contrast_scheme_size - sizeof(char16_t)));
+        EXPECT_EQ(0xCCu, this->emu.memory.read_memory<uint8_t>(scheme_buffer + high_contrast_scheme_size));
+
+        auto too_long = request;
+        too_long.dwFlags = 0;
+        too_long.Length = static_cast<USHORT>(high_contrast_scheme_size);
+        too_long.MaximumLength = static_cast<USHORT>(high_contrast_scheme_size + sizeof(char16_t));
+        EXPECT_TRUE(this->set(spi_set_highcontrast, too_long));
+        EXPECT_FALSE(this->set(spi_set_highcontrast, too_long, spif_update_ini_file));
+        this->emu.memory.write_memory(this->out, EMU_HIGHCONTRAST{.cbSize = 16, .dwFlags = 0, .lpszDefaultScheme = scheme_buffer});
+        ASSERT_TRUE(this->query(spi_get_highcontrast, 0, this->out));
+        EXPECT_EQ(0x1u, this->emu.memory.read_memory<EMU_HIGHCONTRAST>(this->out).dwFlags);
+
+        struct malformed_scheme
+        {
+            uint64_t buffer;
+            USHORT length;
+            USHORT maximum_length;
+        };
+
+        for (const auto& [buffer, length, maximum_length] :
+             {malformed_scheme{text + 1, 2, 4}, malformed_scheme{text, 4, 2}, malformed_scheme{text, 3, 4},
+              malformed_scheme{this->emu.highest_user_address() - 1, 0, 0}})
+        {
+            auto malformed = request;
+            malformed.Buffer = buffer;
+            malformed.Length = length;
+            malformed.MaximumLength = maximum_length;
+            this->clear_output(last_error_sentinel);
+            EXPECT_FALSE(this->set(spi_set_highcontrast, malformed)) << buffer << " " << length;
+            EXPECT_EQ(error_noaccess, this->last_error()) << buffer << " " << length;
+        }
+    }
+
+    TEST_F(SystemParametersInfoAccessibilityTest, SnapshotsKeepTheSettings)
+    {
+        constexpr std::u16string_view scheme = u"High Contrast White";
+        const auto text = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        this->emu.memory.write_memory(text, scheme.data(), scheme.size() * sizeof(char16_t));
+
+        ASSERT_TRUE(this->set(spi_set_filterkeys, make_filter_keys(0x5C, 0, 700, 300, 200)));
+        ASSERT_TRUE(this->set(spi_set_togglekeys, EMU_TOGGLEKEYS{.cbSize = 8, .dwFlags = 0x39}));
+        ASSERT_TRUE(this->set(spi_set_stickykeys, EMU_STICKYKEYS{.cbSize = 8, .dwFlags = 0x1F9}));
+        ASSERT_TRUE(this->set(spi_set_mousekeys, make_mouse_keys(mouse_keys_replace_numbers | 0x3D, 200, 2000, 5)));
+        ASSERT_TRUE(this->set(spi_set_accesstimeout, EMU_ACCESSTIMEOUT{.cbSize = 12, .dwFlags = 1, .iTimeOutMSec = 120000}));
+        ASSERT_TRUE(this->set(spi_set_soundsentry, make_sound_sentry(1, 2)));
+        ASSERT_TRUE(this->set(spi_set_audiodescription, EMU_AUDIODESCRIPTION{.cbSize = 12, .Enabled = TRUE, .Locale = 0x409}));
+        ASSERT_TRUE(this->set(spi_set_highcontrast,
+                              internal_set_high_contrast{.cbSize = 16,
+                                                         .dwFlags = 0x1,
+                                                         .Length = static_cast<USHORT>(scheme.size() * sizeof(char16_t)),
+                                                         .MaximumLength = static_cast<USHORT>(scheme.size() * sizeof(char16_t)),
+                                                         .padding = 0,
+                                                         .Buffer = text}));
+        for (const uint32_t action : {spi_set_showsounds, spi_set_keyboardpref, spi_set_screenreader})
+        {
+            ASSERT_TRUE(this->query(action, 1, 0)) << action;
+        }
+
+        const auto scheme_buffer = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto reported = [&] {
+            struct reported_get
+            {
+                uint32_t action;
+                uint32_t param;
+                uint32_t size;
+            };
+
+            std::vector<std::byte> bytes{};
+            const auto append = [&](const uint64_t address, const size_t size) {
+                const auto offset = bytes.size();
+                bytes.resize(offset + size);
+                this->emu.memory.read_memory(address, bytes.data() + offset, size);
+            };
+
+            for (const auto& [action, param, size] :
+                 {reported_get{spi_get_filterkeys, 24, 24}, reported_get{spi_get_togglekeys, 8, 8}, reported_get{spi_get_mousekeys, 28, 28},
+                  reported_get{spi_get_stickykeys, 8, 8}, reported_get{spi_get_accesstimeout, 12, 12},
+                  reported_get{spi_get_soundsentry, 56, 56}, reported_get{spi_get_audiodescription, 12, 12},
+                  reported_get{spi_get_showsounds, 0, 4}, reported_get{spi_get_keyboardpref, 0, 4},
+                  reported_get{spi_get_screenreader, 0, 4}})
+            {
+                this->emu.memory.set_memory(this->out, 0, size);
+                this->emu.memory.write_memory(this->out, size);
+                EXPECT_TRUE(this->query(action, param, this->out)) << action;
+                append(this->out, size);
+            }
+
+            this->emu.memory.write_memory(this->out, EMU_HIGHCONTRAST{.cbSize = 16, .dwFlags = 0, .lpszDefaultScheme = scheme_buffer});
+            EXPECT_TRUE(this->query(spi_get_highcontrast, 0, this->out));
+            append(this->out, sizeof(EMU_HIGHCONTRAST));
+            append(scheme_buffer, high_contrast_scheme_size);
+            return bytes;
+        };
+
+        const auto before = reported();
+        utils::buffer_serializer serializer{};
+        this->emu.process.accessibility.serialize(serializer);
+
+        this->emu.process.accessibility = {};
+        ASSERT_NE(before, reported());
+
+        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        this->emu.process.accessibility.deserialize(deserializer);
+        EXPECT_EQ(before, reported());
+    }
 }

@@ -255,6 +255,83 @@ namespace sogen
 
     static_assert(sizeof(EMU_HIGHCONTRAST) == 16);
 
+    struct EMU_FILTERKEYS
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+        DWORD iWaitMSec;
+        DWORD iDelayMSec;
+        DWORD iRepeatMSec;
+        DWORD iBounceMSec;
+    };
+
+    static_assert(sizeof(EMU_FILTERKEYS) == 24);
+
+    struct EMU_TOGGLEKEYS
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+    };
+
+    static_assert(sizeof(EMU_TOGGLEKEYS) == 8);
+
+    struct EMU_STICKYKEYS
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+    };
+
+    static_assert(sizeof(EMU_STICKYKEYS) == 8);
+
+    struct EMU_MOUSEKEYS
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+        DWORD iMaxSpeed;
+        DWORD iTimeToMaxSpeed;
+        DWORD iCtrlSpeed;
+        DWORD dwReserved1;
+        DWORD dwReserved2;
+    };
+
+    static_assert(sizeof(EMU_MOUSEKEYS) == 28);
+
+    struct EMU_ACCESSTIMEOUT
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+        DWORD iTimeOutMSec;
+    };
+
+    static_assert(sizeof(EMU_ACCESSTIMEOUT) == 12);
+
+    struct EMU_SOUNDSENTRY
+    {
+        UINT cbSize;
+        DWORD dwFlags;
+        DWORD iFSTextEffect;
+        DWORD iFSTextEffectMSec;
+        DWORD iFSTextEffectColorBits;
+        DWORD iFSGrafEffect;
+        DWORD iFSGrafEffectMSec;
+        DWORD iFSGrafEffectColor;
+        DWORD iWindowsEffect;
+        DWORD iWindowsEffectMSec;
+        pointer lpszWindowsEffectDLL;
+        DWORD iWindowsEffectOrdinal;
+    };
+
+    static_assert(sizeof(EMU_SOUNDSENTRY) == 56);
+
+    struct EMU_AUDIODESCRIPTION
+    {
+        UINT cbSize;
+        BOOL Enabled;
+        DWORD Locale;
+    };
+
+    static_assert(sizeof(EMU_AUDIODESCRIPTION) == 12);
+
     struct EMU_MENUITEMINFO
     {
         UINT cbSize;

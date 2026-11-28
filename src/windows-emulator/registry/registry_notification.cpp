@@ -229,6 +229,23 @@ namespace sogen
             report_change(c, get_key_path(key), reg_notify_change_last_set);
         }
 
+        void set_value(const syscall_context& c, const registry_key& key, std::string name, const ULONG type,
+                       const std::span<const std::byte> data)
+        {
+            auto reports_change = has_watchers(c);
+            if (reports_change)
+            {
+                const auto previous = c.win_emu.registry.get_value(key, name);
+                reports_change = !previous || previous->type != type || !std::ranges::equal(previous->data, data);
+            }
+
+            c.win_emu.registry.set_value(key, std::move(name), type, data);
+            if (reports_change)
+            {
+                report_value_change(c, key);
+            }
+        }
+
         void report_sub_key_change(const syscall_context& c, const registry_key& sub_key)
         {
             report_change(c, get_key_path(sub_key).parent_path(), reg_notify_change_name);

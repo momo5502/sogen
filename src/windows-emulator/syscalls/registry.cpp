@@ -676,19 +676,7 @@ namespace sogen
                 name = u16_to_u8(read_unicode_string(c.emu, value_name));
             }
 
-            auto reports_change = registry_notification::has_watchers(c);
-            if (reports_change)
-            {
-                const auto previous = c.win_emu.registry.get_value(*key, name);
-                reports_change = !previous || previous->type != type || !std::ranges::equal(previous->data, data_buffer);
-            }
-
-            c.win_emu.registry.set_value(*key, std::move(name), type, std::span<const std::byte>{data_buffer});
-            if (reports_change)
-            {
-                registry_notification::report_value_change(c, *key);
-            }
-
+            registry_notification::set_value(c, *key, std::move(name), type, data_buffer);
             return STATUS_SUCCESS;
         }
 
