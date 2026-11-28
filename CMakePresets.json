@@ -105,6 +105,26 @@
             }
         },
         {
+            "name": "ios-arm64",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/ios.cmake",
+                "SOGEN_ENABLE_RUST_CODE": "OFF"
+            }
+        },
+        {
+            "name": "ios-simulator-arm64",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/ios-simulator.cmake",
+                "SOGEN_ENABLE_RUST_CODE": "OFF"
+            }
+        },
+        {
             "name": "vs2022",
             "generator": "Visual Studio 17 2022",
             "inherits": "build"
