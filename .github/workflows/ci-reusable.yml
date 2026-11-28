@@ -1427,8 +1427,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Flutter's Gradle tooling pulls kotlin-dsl from the Plugin Portal, which intermittently answers 404 for it. Main
-      # builds save the downloaded dependencies and other branches only read them; the pinned Flutter release keeps that
+      # Flutter's Gradle tooling resolves kotlin-dsl from the Plugin Portal, which intermittently fails. Main builds
+      # save the downloaded dependencies and other branches only read them; the pinned Flutter release keeps that
       # dependency set stable.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
