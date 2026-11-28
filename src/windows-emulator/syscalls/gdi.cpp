@@ -5755,6 +5755,68 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL erase_window_background(const syscall_context& c, const window& win, const hdc dc)
+        {
+            uint64_t background = 0;
+            uint32_t class_style = 0;
+            if (const auto it = c.proc.classes.find(win.class_key); it != c.proc.classes.end())
+            {
+                background = it->second.wnd_class.hbrBackground;
+                class_style = it->second.wnd_class.style;
+            }
+
+            if (background == 0)
+            {
+                return FALSE;
+            }
+
+            if (!c.proc.gdi_dc_states.contains(static_cast<uint32_t>(dc)))
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return TRUE;
+            }
+
+            std::optional<uint32_t> color{};
+            if (background <= USER_NUM_SYSCOLORS)
+            {
+                color = colorref_to_bgra(k_default_system_colors[static_cast<size_t>(background - 1)]);
+            }
+            else if (uint64_t brush_attr = 0; get_gdi_object_address(c, static_cast<uint32_t>(background), k_gdi_brush_type, brush_attr))
+            {
+                color = get_brush_color_in_dc(c, dc, static_cast<uint32_t>(background));
+            }
+            else
+            {
+                color = get_dc_brush_color(c, dc);
+            }
+
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            gdi::clip_region visible{};
+            uint32_t present_handle = 0;
+            if (color && get_dc_state_and_draw_target(c, dc, dc_state, surface, origin_x, origin_y, visible, &present_handle))
+            {
+                int64_t left = 0;
+                int64_t top = 0;
+                int64_t right = surface->width;
+                int64_t bottom = surface->height;
+                if ((class_style & CS_PARENTDC) != 0)
+                {
+                    left = origin_x;
+                    top = origin_y;
+                    right = left + win.client_width();
+                    bottom = top + win.client_height();
+                }
+
+                fill_rect(*surface, visible, left, top, right, bottom, *color);
+                present_win_surface(c, present_handle, surface);
+            }
+
+            return TRUE;
+        }
+
         BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD /*rop*/, const emulator_pointer poly,
                                     const DWORD count, const DWORD /*mode*/)
         {

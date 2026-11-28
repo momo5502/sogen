@@ -296,6 +296,8 @@ namespace sogen
 #ifndef OS_WINDOWS
 #define MAXINTATOM                  0xC000
 
+#define CS_PARENTDC                 0x0080
+
 #define WS_OVERLAPPED               0x00000000L
 #define WS_POPUP                    0x80000000L
 #define WS_CHILD                    0x40000000L
@@ -364,6 +366,7 @@ namespace sogen
 #define WM_ERASEBKGND               0x0014
 #define WM_NCHITTEST                0x0084
 #define WM_GETMINMAXINFO            0x0024
+#define WM_ICONERASEBKGND           0x0027
 #define WM_KEYDOWN                  0x0100
 #define WM_KEYUP                    0x0101
 #define WM_CHAR                     0x0102
