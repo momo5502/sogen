@@ -598,6 +598,7 @@ namespace sogen
                 ProcessProtocol::ThreadInformationResponseT response{};
                 response.error = encode_error(result.error);
                 response.teb = result.teb;
+                response.exited = result.exited;
                 if (!this->send(response))
                 {
                     return false;
@@ -1296,7 +1297,7 @@ namespace sogen
             return {.error = response.error};
         }
         const auto& result = *response->payload.AsThreadInformationResponse();
-        return {.teb = result.teb, .error = decode_error(result.error)};
+        return {.teb = result.teb, .exited = result.exited, .error = decode_error(result.error)};
     }
 
     process_suspend_result subprocess_process_manager::suspend_thread(const managed_process process, const uint32_t thread_id,

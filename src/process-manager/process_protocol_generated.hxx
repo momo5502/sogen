@@ -4319,6 +4319,7 @@ struct ThreadInformationResponseT : public ::flatbuffers::NativeTable {
   typedef ThreadInformationResponse TableType;
   ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
   uint64_t teb = 0;
+  bool exited = false;
 };
 
 struct ThreadInformationResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -4326,7 +4327,8 @@ struct ThreadInformationResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers
   typedef ThreadInformationResponseBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ERROR = 4,
-    VT_TEB = 6
+    VT_TEB = 6,
+    VT_EXITED = 8
   };
   ProcessProtocol::ProcessError error() const {
     return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
@@ -4334,11 +4336,15 @@ struct ThreadInformationResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers
   uint64_t teb() const {
     return GetField<uint64_t>(VT_TEB, 0);
   }
+  bool exited() const {
+    return GetField<uint8_t>(VT_EXITED, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
            VerifyField<uint64_t>(verifier, VT_TEB, 8) &&
+           VerifyField<uint8_t>(verifier, VT_EXITED, 1) &&
            verifier.EndTable();
   }
   ThreadInformationResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -4356,6 +4362,9 @@ struct ThreadInformationResponseBuilder {
   void add_teb(uint64_t teb) {
     fbb_.AddElement<uint64_t>(ThreadInformationResponse::VT_TEB, teb, 0);
   }
+  void add_exited(bool exited) {
+    fbb_.AddElement<uint8_t>(ThreadInformationResponse::VT_EXITED, static_cast<uint8_t>(exited), 0);
+  }
   explicit ThreadInformationResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -4370,9 +4379,11 @@ struct ThreadInformationResponseBuilder {
 inline ::flatbuffers::Offset<ThreadInformationResponse> CreateThreadInformationResponse(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
-    uint64_t teb = 0) {
+    uint64_t teb = 0,
+    bool exited = false) {
   ThreadInformationResponseBuilder builder_(_fbb);
   builder_.add_teb(teb);
+  builder_.add_exited(exited);
   builder_.add_error(error);
   return builder_.Finish();
 }
@@ -6722,6 +6733,7 @@ inline void ThreadInformationResponse::UnPackTo(ThreadInformationResponseT *_o, 
   (void)_resolver;
   { auto _e = error(); _o->error = _e; }
   { auto _e = teb(); _o->teb = _e; }
+  { auto _e = exited(); _o->exited = _e; }
 }
 
 inline ::flatbuffers::Offset<ThreadInformationResponse> CreateThreadInformationResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -6734,10 +6746,12 @@ inline ::flatbuffers::Offset<ThreadInformationResponse> ThreadInformationRespons
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadInformationResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _error = _o->error;
   auto _teb = _o->teb;
+  auto _exited = _o->exited;
   return ProcessProtocol::CreateThreadInformationResponse(
       _fbb,
       _error,
-      _teb);
+      _teb,
+      _exited);
 }
 
 inline SuspendThreadRequestT *SuspendThreadRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

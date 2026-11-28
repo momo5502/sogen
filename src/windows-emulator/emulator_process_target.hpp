@@ -205,7 +205,7 @@ namespace sogen
             this->on_thread(thread_id, [&](emulator_thread& thread) {
                 if (thread.teb64)
                 {
-                    result = {.teb = thread.teb64->value()};
+                    result = {.teb = thread.teb64->value(), .exited = thread.is_terminated()};
                 }
             });
             return result;

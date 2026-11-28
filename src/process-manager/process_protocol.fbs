@@ -276,6 +276,7 @@ table ThreadInformationRequest {
 table ThreadInformationResponse {
     error: ProcessError = None;
     teb: ulong;
+    exited: bool;
 }
 
 table SuspendThreadRequest {
