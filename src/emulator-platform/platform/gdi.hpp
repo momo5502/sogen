@@ -16,10 +16,18 @@ namespace sogen
 #define BALTIC_CHARSET     186
 #define RUSSIAN_CHARSET    204
 #define EASTEUROPE_CHARSET 238
+#define OEM_CHARSET        255
 
 #define DEFAULT_PITCH      0
+#define FIXED_PITCH        1
 #define VARIABLE_PITCH     2
+#define FF_DONTCARE        0
 #define FF_SWISS           0x20
+#define FF_MODERN          0x30
+#define OUT_DEFAULT_PRECIS 0
+#define OUT_STRING_PRECIS  1
+#define CLIP_STROKE_PRECIS 2
+#define PROOF_QUALITY      2
 #define FW_NORMAL          400
 #define FW_BOLD            700
 #define NTM_ITALIC         0x00000001

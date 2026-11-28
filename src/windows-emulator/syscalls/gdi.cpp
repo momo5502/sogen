@@ -87,11 +87,17 @@ namespace sogen
             constexpr uint32_t k_stock_white_pen_index = 0x06;
             constexpr uint32_t k_stock_black_pen_index = 0x07;
             constexpr uint32_t k_stock_null_pen_index = 0x08;
+            constexpr uint32_t k_stock_oem_fixed_font_index = 0x0A;
+            constexpr uint32_t k_stock_ansi_fixed_font_index = 0x0B;
+            constexpr uint32_t k_stock_ansi_var_font_index = 0x0C;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
+            constexpr uint32_t k_stock_device_default_font_index = 0x0E;
             constexpr uint32_t k_stock_default_palette = 0x0F;
+            constexpr uint32_t k_stock_system_fixed_font_index = 0x10;
             constexpr uint32_t k_stock_default_gui_font_index = 0x11;
             constexpr uint32_t k_stock_dc_brush_index = 0x12;
             constexpr uint32_t k_stock_dc_pen_index = 0x13;
+            constexpr uint32_t k_stock_bitmap_index = 0x15;
             constexpr uint32_t k_user_client_drawing_brush_index = USER_NUM_SYSCOLORS;
             static_assert(k_user_client_drawing_brush_index < USER_SERVERINFO_BRUSH_SLOT_COUNT,
                           "client drawing brush index must be inside server info brush table");
@@ -189,18 +195,93 @@ namespace sogen
                 0x00F0F0F0u, // COLOR_MENUBAR
             };
 
-            // The logfonts GetObject reports for the stock fonts on Windows.
             EMU_LOGFONTW stock_font_logfont(const uint32_t index)
             {
-                EMU_LOGFONTW font{};
-                font.lfCharSet = DEFAULT_CHARSET;
-                if (index == k_stock_system_font_index)
+                struct stock_font_spec
                 {
-                    font.lfHeight = 16;
-                    font.lfWidth = 7;
-                    font.lfWeight = FW_BOLD;
-                    font.lfPitchAndFamily = VARIABLE_PITCH | FF_SWISS;
-                    std::ranges::copy(u"System", font.lfFaceName);
+                    uint32_t index;
+                    LONG height;
+                    LONG width;
+                    LONG weight;
+                    BYTE charset;
+                    BYTE out_precision;
+                    BYTE pitch_and_family;
+                    std::u16string_view face_name;
+                };
+
+                static constexpr std::array<stock_font_spec, 6> raster_fonts = {
+                    stock_font_spec{.index = k_stock_oem_fixed_font_index,
+                                    .height = 12,
+                                    .width = 8,
+                                    .weight = FW_NORMAL,
+                                    .charset = OEM_CHARSET,
+                                    .out_precision = OUT_STRING_PRECIS,
+                                    .pitch_and_family = FIXED_PITCH | FF_MODERN,
+                                    .face_name = u"Terminal"},
+                    stock_font_spec{.index = k_stock_ansi_fixed_font_index,
+                                    .height = 12,
+                                    .width = 9,
+                                    .weight = FW_NORMAL,
+                                    .charset = ANSI_CHARSET,
+                                    .out_precision = OUT_DEFAULT_PRECIS,
+                                    .pitch_and_family = FIXED_PITCH | FF_DONTCARE,
+                                    .face_name = u"Courier"},
+                    stock_font_spec{.index = k_stock_ansi_var_font_index,
+                                    .height = 12,
+                                    .width = 9,
+                                    .weight = FW_NORMAL,
+                                    .charset = ANSI_CHARSET,
+                                    .out_precision = OUT_DEFAULT_PRECIS,
+                                    .pitch_and_family = VARIABLE_PITCH | FF_DONTCARE,
+                                    .face_name = u"MS Sans Serif"},
+                    stock_font_spec{.index = k_stock_system_font_index,
+                                    .height = 16,
+                                    .width = 7,
+                                    .weight = FW_BOLD,
+                                    .charset = ANSI_CHARSET,
+                                    .out_precision = OUT_STRING_PRECIS,
+                                    .pitch_and_family = VARIABLE_PITCH | FF_SWISS,
+                                    .face_name = u"System"},
+                    stock_font_spec{.index = k_stock_device_default_font_index,
+                                    .height = 16,
+                                    .width = 7,
+                                    .weight = FW_BOLD,
+                                    .charset = ANSI_CHARSET,
+                                    .out_precision = OUT_STRING_PRECIS,
+                                    .pitch_and_family = VARIABLE_PITCH | FF_SWISS,
+                                    .face_name = u"System"},
+                    stock_font_spec{.index = k_stock_system_fixed_font_index,
+                                    .height = 15,
+                                    .width = 8,
+                                    .weight = FW_NORMAL,
+                                    .charset = ANSI_CHARSET,
+                                    .out_precision = OUT_STRING_PRECIS,
+                                    .pitch_and_family = FIXED_PITCH | FF_MODERN,
+                                    .face_name = u"Fixedsys"},
+                };
+
+                EMU_LOGFONTW font{};
+                const stock_font_spec* spec = nullptr;
+                for (const auto& candidate : raster_fonts)
+                {
+                    if (candidate.index == index)
+                    {
+                        spec = &candidate;
+                        break;
+                    }
+                }
+
+                if (spec)
+                {
+                    font.lfHeight = spec->height;
+                    font.lfWidth = spec->width;
+                    font.lfWeight = spec->weight;
+                    font.lfCharSet = spec->charset;
+                    font.lfOutPrecision = spec->out_precision;
+                    font.lfClipPrecision = CLIP_STROKE_PRECIS;
+                    font.lfQuality = PROOF_QUALITY;
+                    font.lfPitchAndFamily = spec->pitch_and_family;
+                    std::ranges::copy(spec->face_name, font.lfFaceName);
                 }
                 else
                 {
@@ -612,6 +693,8 @@ namespace sogen
 
             bool read_gdi_entry_for_handle(const syscall_context& c, uint32_t handle_value, GDI_HANDLE_ENTRY64& entry,
                                            uint64_t& entry_addr);
+
+            uint32_t ensure_memory_dc_default_bitmap(const syscall_context& c);
 
             uint32_t allocate_gdi_object(const syscall_context& c, const uint8_t type, const uint32_t attr_size,
                                          const bool has_user_attribute)
@@ -2187,7 +2270,7 @@ namespace sogen
                     EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFF, .peBlue = 0xFF, .peFlags = 0x00},
                 };
 
-                constexpr std::array<stock_seed, 14> seeds = {
+                constexpr std::array<stock_seed, 19> seeds = {
                     stock_seed{
                         .index = k_stock_white_brush_index,
                         .type = k_gdi_brush_type,
@@ -2243,7 +2326,31 @@ namespace sogen
                         .mirror_to_default_gui_slot = false,
                     },
                     stock_seed{
+                        .index = k_stock_oem_fixed_font_index,
+                        .type = k_gdi_font_type,
+                        .attr_size = k_gdi_font_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_ansi_fixed_font_index,
+                        .type = k_gdi_font_type,
+                        .attr_size = k_gdi_font_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_ansi_var_font_index,
+                        .type = k_gdi_font_type,
+                        .attr_size = k_gdi_font_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
                         .index = k_stock_system_font_index,
+                        .type = k_gdi_font_type,
+                        .attr_size = k_gdi_font_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_device_default_font_index,
                         .type = k_gdi_font_type,
                         .attr_size = k_gdi_font_attr_size,
                         .mirror_to_default_gui_slot = false,
@@ -2252,6 +2359,12 @@ namespace sogen
                         .index = k_stock_default_palette,
                         .type = k_gdi_palette_type,
                         .attr_size = k_gdi_palette_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_system_fixed_font_index,
+                        .type = k_gdi_font_type,
+                        .attr_size = k_gdi_font_attr_size,
                         .mirror_to_default_gui_slot = false,
                     },
                     stock_seed{
@@ -2326,6 +2439,11 @@ namespace sogen
                     {
                         write_gdi_object96_slot(c, k_stock_default_gui_font_index, handle64);
                     }
+                }
+
+                if (read_gdi_object_slot(c, k_stock_bitmap_index) == 0)
+                {
+                    write_gdi_object_slot(c, k_stock_bitmap_index, ensure_memory_dc_default_bitmap(c));
                 }
 
                 if (read_gdi_object96_slot(c, k_stock_default_gui_font_index) == 0)
