@@ -42,6 +42,7 @@ namespace sogen
             struct pending_connection
             {
                 address client_addr;
+                address server_addr;
                 std::shared_ptr<pipe_state> p;
             };
 
@@ -84,6 +85,24 @@ namespace sogen
                 }
 
                 return key;
+            }
+
+            bool is_unspecified(const address& a)
+            {
+                if (a.is_ipv4())
+                {
+                    return ntohl(a.get_in_addr().sin_addr.s_addr) == INADDR_ANY;
+                }
+
+                return a.is_ipv6() && std::ranges::all_of(a.get_in6_addr().sin6_addr.s6_addr, [](const auto b) { return b == 0; });
+            }
+
+            // Windows reports the address of the interface that a socket on the unspecified address uses as the local end
+            // of its connections and as the source of its datagrams; a socket that only sends datagrams keeps the
+            // unspecified address itself. Loopback is the in-process host's only interface.
+            address get_interface_address(const address& a)
+            {
+                return is_unspecified(a) ? get_queue_key(a) : a;
             }
 
             struct static_socket_factory_impl : socket_factory
@@ -225,9 +244,10 @@ namespace sogen
                             return false;
                         }
 
+                        this->a = get_interface_address(this->a);
                         this->pipe = std::make_shared<pipe_state>();
                         this->is_server_side = false;
-                        it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
+                        it->second.emplace_back(pending_connection{.client_addr = this->a, .server_addr = addr, .p = this->pipe});
                         this->error = 0;
                         this->connect_error = 0;
                         return true;
@@ -255,7 +275,7 @@ namespace sogen
                         it->second.pop_front();
 
                         auto sock = std::make_unique<static_socket>(*this->factory);
-                        sock->a = this->a;
+                        sock->a = pending.server_addr;
                         sock->peer_addr = pending.client_addr;
                         sock->pipe = pending.p;
                         sock->is_server_side = true;
@@ -282,7 +302,7 @@ namespace sogen
                     {
                         this->error = 0;
                         this->factory->state->packets[get_queue_key(destination)].emplace(
-                            this->a, shared_state::packet_data{data.begin(), data.end()});
+                            get_interface_address(this->a), shared_state::packet_data{data.begin(), data.end()});
                         return static_cast<sent_size>(data.size());
                     }
 
