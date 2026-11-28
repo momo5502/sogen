@@ -48,7 +48,7 @@ namespace sogen
             return false;
         }
 
-        stat->st_dev = 0;
+        stat->st_dev = file_info.dwVolumeSerialNumber;
         stat->st_rdev = 0;
         stat->st_uid = 0;
         stat->st_gid = 0;
@@ -116,7 +116,7 @@ namespace sogen
 
     static void set_stat(struct compat_stat* dst, const struct stat* src)
     {
-        dst->st_dev = 0;
+        dst->st_dev = static_cast<uint32_t>(src->st_dev);
         dst->st_rdev = 0;
         dst->st_uid = 0;
         dst->st_gid = 0;
