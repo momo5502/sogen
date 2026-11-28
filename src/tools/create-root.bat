@@ -298,6 +298,7 @@ CALL :collect wdmaud.drv
 CALL :collect winspool.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
+CALL :collect_file "%WINDIR%\Fonts", marlett.ttf, %EMU_FONTDIR%
 
 REM DirectWrite cannot reach the font cache service in the emulator and reads these files instead.
 FOR %%F IN ("%WINDIR%\Fonts\segoeui*.ttf" "%WINDIR%\Fonts\consola*.ttf" "%WINDIR%\Fonts\cour*.ttf") DO CALL :collect_file "%WINDIR%\Fonts", %%~nxF, %EMU_FONTDIR%
