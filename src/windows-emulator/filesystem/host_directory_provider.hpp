@@ -46,6 +46,7 @@ namespace sogen
         std::optional<struct compat_stat> stat(const windows_path& path) const override;
         std::vector<directory_entry> list(const windows_path& path) const override;
         std::vector<std::u16string> list_names(const windows_path& path) const override;
+        std::optional<windows_path> find_path_by_file_id(uint64_t file_id) const override;
         open_result open(const windows_path& path, const std::u16string& mode) override;
         NTSTATUS create_directory(const windows_path& path) override;
         NTSTATUS rename(const windows_path& from, const windows_path& to) override;

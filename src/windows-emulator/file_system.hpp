@@ -43,6 +43,7 @@ namespace sogen
         uint8_t drive_type(char drive) const;
 
         std::optional<struct compat_stat> stat(const windows_path& path) const;
+        std::optional<windows_path> find_by_file_id(char drive, uint64_t file_id) const;
         std::vector<directory_entry> list_directory(const windows_path& path) const;
         std::vector<std::u16string> list_directory_names(const windows_path& path) const;
         bool is_writable(const windows_path& path) const;

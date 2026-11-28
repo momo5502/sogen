@@ -47,6 +47,12 @@ namespace sogen
             return names;
         }
 
+        virtual std::optional<windows_path> find_path_by_file_id(const uint64_t file_id) const
+        {
+            (void)file_id;
+            return std::nullopt;
+        }
+
         virtual open_result open(const windows_path& path, const std::u16string& mode) = 0;
         virtual NTSTATUS create_directory(const windows_path& path) = 0;
         virtual NTSTATUS rename(const windows_path& from, const windows_path& to) = 0;

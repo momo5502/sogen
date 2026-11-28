@@ -226,6 +226,119 @@ namespace sogen
                 file_stat = *result;
                 return true;
             }
+
+            NTSTATUS parse_file_id(const std::u16string_view name, uint64_t& file_id)
+            {
+                constexpr size_t id_chars = sizeof(uint64_t) / sizeof(char16_t);
+
+                if (name.empty())
+                {
+                    return STATUS_OBJECT_NAME_INVALID;
+                }
+
+                const size_t leading_chars = name.size() % id_chars == 1 ? 1 : 0;
+                const auto id_part = name.substr(leading_chars);
+                if (id_part.size() != id_chars && id_part.size() != 2 * id_chars)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::array<uint64_t, 2> id{};
+                std::memcpy(id.data(), id_part.data(), id_part.size() * sizeof(char16_t));
+
+                if (id[1] != 0)
+                {
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
+                if (id[0] == 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                file_id = id[0];
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS validate_object_name_length(const syscall_context& c, const OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>& attributes)
+            {
+                constexpr USHORT rejected_name_length = 0xFFFE;
+
+                const auto name = emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName}.try_read();
+                if (name && (name->Length % sizeof(char16_t) != 0 || name->Length == rejected_name_length))
+                {
+                    return STATUS_OBJECT_NAME_INVALID;
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS resolve_file_id_name(const syscall_context& c, const OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>& attributes,
+                                          std::u16string& filename)
+            {
+                char drive{};
+                if (attributes.RootDirectory)
+                {
+                    const auto* volume = c.proc.files.get(attributes.RootDirectory);
+                    if (!volume)
+                    {
+                        handle hint{};
+                        hint.bits = attributes.RootDirectory;
+                        return c.proc.reference_of(hint) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
+                    }
+
+                    drive = static_cast<char>('a' + volume->drive_number - 1);
+                }
+
+                const auto name = emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName}.try_read();
+                if (!name)
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                std::u16string text(name->Length / sizeof(char16_t), u'\0');
+                if (!text.empty() && !c.emu.try_read_memory(name->Buffer, text.data(), text.size() * sizeof(char16_t)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                std::u16string_view ntfs_name = text;
+                if (!attributes.RootDirectory)
+                {
+                    constexpr std::u16string_view dos_device_prefix = u"\\??\\";
+                    constexpr size_t drive_prefix_chars = dos_device_prefix.size() + 2;
+
+                    if (!ntfs_name.starts_with(dos_device_prefix) || ntfs_name.size() <= drive_prefix_chars ||
+                        ntfs_name[drive_prefix_chars - 1] != u':' || ntfs_name[drive_prefix_chars] != u'\\')
+                    {
+                        return STATUS_OBJECT_PATH_SYNTAX_BAD;
+                    }
+
+                    const auto letter = ntfs_name[drive_prefix_chars - 2] | 0x20;
+                    if (letter < u'a' || letter > u'z')
+                    {
+                        return STATUS_OBJECT_PATH_SYNTAX_BAD;
+                    }
+
+                    drive = static_cast<char>(letter);
+                    ntfs_name.remove_prefix(drive_prefix_chars);
+                }
+
+                uint64_t file_id{};
+                if (const auto status = parse_file_id(ntfs_name, file_id); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                const auto path = c.win_emu.file_sys.find_by_file_id(drive, file_id);
+                if (!path)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                filename = path->to_spelled_unc_path();
+                return STATUS_SUCCESS;
+            }
         }
 
         NTSTATUS handle_NtGetCachedSigningLevel(const syscall_context&, handle, emulator_object<ULONG>, emulator_object<UCHAR>, uint64_t,
@@ -1010,11 +1123,6 @@ namespace sogen
 
             if (info_class == FileIdInformation)
             {
-                if (!f->handle)
-                {
-                    return ret(STATUS_NOT_SUPPORTED);
-                }
-
                 constexpr auto required_length = sizeof(FILE_ID_INFORMATION);
 
                 if (length < required_length)
@@ -1198,7 +1306,7 @@ namespace sogen
                 }
 
                 struct compat_stat file_stat{};
-                if (f->handle && !read_file_stat(f->handle, file_stat))
+                if (!read_file_stat(f->handle, file_stat) && f->handle)
                 {
                     return STATUS_INVALID_HANDLE;
                 }
@@ -2342,8 +2450,30 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto attributes = object_attributes.read();
-            auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+            auto attributes = object_attributes.read();
+            if (attributes.ObjectName)
+            {
+                if (const auto status = validate_object_name_length(c, attributes); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+            }
+
+            std::u16string filename{};
+
+            if (create_options & FILE_OPEN_BY_FILE_ID)
+            {
+                if (const auto status = resolve_file_id_name(c, attributes, filename); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                attributes.RootDirectory = 0;
+            }
+            else
+            {
+                filename = read_unicode_string(c.emu, attributes.ObjectName);
+            }
 
             // Check for console device paths
             // Convert to uppercase for case-insensitive comparison
