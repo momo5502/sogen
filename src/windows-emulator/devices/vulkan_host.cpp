@@ -3,6 +3,7 @@
 #include "spirv_clip_distance.hpp"
 #include "vulkan_format_block.hpp"
 #include "vulkan_bc_emulation.hpp"
+#include "vulkan_object_table.hpp"
 #include "snapshot_shaders.hpp"
 
 #include <address_utils.hpp>
@@ -256,39 +257,6 @@ namespace sogen
 
     namespace
     {
-        template <typename T>
-        class object_table : public std::unordered_map<uint64_t, T>
-        {
-          public:
-            explicit object_table(std::unordered_set<uint64_t>* const* references)
-                : references_(references)
-            {
-            }
-
-            auto find(const uint64_t id)
-            {
-                this->note(id);
-                return std::unordered_map<uint64_t, T>::find(id);
-            }
-
-            auto find(const uint64_t id) const
-            {
-                this->note(id);
-                return std::unordered_map<uint64_t, T>::find(id);
-            }
-
-          private:
-            std::unordered_set<uint64_t>* const* references_{};
-
-            void note(const uint64_t id) const
-            {
-                if (*this->references_)
-                {
-                    (*this->references_)->insert(id);
-                }
-            }
-        };
-
         // A vkWaitSemaphores resolved to the driver's handles, so it can run on any thread while they live.
         struct native_semaphore_wait
         {
@@ -529,9 +497,6 @@ namespace sogen
 
     struct vulkan_host::impl
     {
-        // The command buffer whose recorded command is running, which notes every object looked up.
-        std::unordered_set<uint64_t>* recording_references{};
-
         bool loaded{};
         library_handle loader{};
         PFN_vkGetInstanceProcAddr get_instance_proc_addr{};
@@ -1003,8 +968,8 @@ namespace sogen
             std::optional<swapchain_proxy> proxy{};
         };
 
-        object_table<instance_data> instances{&this->recording_references};
-        object_table<physical_device_data> physical_devices{&this->recording_references};
+        vulkan_object_table<instance_data> instances{};
+        vulkan_object_table<physical_device_data> physical_devices{};
         std::unordered_map<VkPhysicalDevice, uint64_t> physical_device_ids;
 
         struct queue_data
@@ -2233,8 +2198,8 @@ namespace sogen
             sampler_desc create{};
         };
 
-        object_table<device_data> devices{&this->recording_references};
-        object_table<queue_data> queues{&this->recording_references};
+        vulkan_object_table<device_data> devices{};
+        vulkan_object_table<queue_data> queues{};
         // Vulkan requires host access to a queue to be externally synchronized. Several queue ids can name the same
         // native queue, so the locks are keyed by it.
         std::unordered_map<VkQueue, std::shared_ptr<std::mutex>> queue_locks;
@@ -2249,11 +2214,11 @@ namespace sogen
             return lock;
         }
 
-        object_table<command_pool_data> command_pools{&this->recording_references};
-        object_table<command_buffer_data> command_buffers{&this->recording_references};
-        object_table<fence_data> fences{&this->recording_references};
-        object_table<event_data> events{&this->recording_references};
-        object_table<semaphore_data> semaphores{&this->recording_references};
+        vulkan_object_table<command_pool_data> command_pools{};
+        vulkan_object_table<command_buffer_data> command_buffers{};
+        vulkan_object_table<fence_data> fences{};
+        vulkan_object_table<event_data> events{};
+        vulkan_object_table<semaphore_data> semaphores{};
 
         // ponytail: one thread per wait in flight at once, kept for later waits; a pool cap if guests ever park many.
         std::vector<std::unique_ptr<semaphore_waiter>> semaphore_waiters{};
@@ -2305,9 +2270,9 @@ namespace sogen
             }
         }
 
-        object_table<memory_data> memories{&this->recording_references};
-        object_table<buffer_data> buffers{&this->recording_references};
-        object_table<image_data> images{&this->recording_references};
+        vulkan_object_table<memory_data> memories{};
+        vulkan_object_table<buffer_data> buffers{};
+        vulkan_object_table<image_data> images{};
 
         // Takes the semaphore the acquire signals and signals it again once the image is in its saved layout. An acquire
         // with only a fence is waited for first, since the image is only available to the device then.
@@ -2408,9 +2373,9 @@ namespace sogen
             return true;
         }
 
-        object_table<sampler_data> samplers{&this->recording_references};
-        object_table<surface_data> surfaces{&this->recording_references};
-        object_table<swapchain_data> swapchains{&this->recording_references};
+        vulkan_object_table<sampler_data> samplers{};
+        vulkan_object_table<surface_data> surfaces{};
+        vulkan_object_table<swapchain_data> swapchains{};
 
         // Graphics-pipeline objects. All non-dispatchable, device-owned, so one shape suffices.
         struct shader_module_data
@@ -2882,18 +2847,18 @@ namespace sogen
             std::unordered_map<uint32_t, std::vector<std::byte>> inline_blocks{};
         };
 
-        object_table<shader_module_data> shader_modules{&this->recording_references};
-        object_table<image_view_data> image_views{&this->recording_references};
-        object_table<buffer_view_data> buffer_views{&this->recording_references};
-        object_table<query_pool_data> query_pools{&this->recording_references};
-        object_table<render_pass_data> render_passes{&this->recording_references};
-        object_table<framebuffer_data> framebuffers{&this->recording_references};
-        object_table<pipeline_layout_data> pipeline_layouts{&this->recording_references};
-        object_table<pipeline_data> pipelines{&this->recording_references};
-        object_table<pipeline_cache_data> pipeline_caches{&this->recording_references};
-        object_table<descriptor_set_layout_data> descriptor_set_layouts{&this->recording_references};
-        object_table<descriptor_pool_data> descriptor_pools{&this->recording_references};
-        object_table<descriptor_set_data> descriptor_sets{&this->recording_references};
+        vulkan_object_table<shader_module_data> shader_modules{};
+        vulkan_object_table<image_view_data> image_views{};
+        vulkan_object_table<buffer_view_data> buffer_views{};
+        vulkan_object_table<query_pool_data> query_pools{};
+        vulkan_object_table<render_pass_data> render_passes{};
+        vulkan_object_table<framebuffer_data> framebuffers{};
+        vulkan_object_table<pipeline_layout_data> pipeline_layouts{};
+        vulkan_object_table<pipeline_data> pipelines{};
+        vulkan_object_table<pipeline_cache_data> pipeline_caches{};
+        vulkan_object_table<descriptor_set_layout_data> descriptor_set_layouts{};
+        vulkan_object_table<descriptor_pool_data> descriptor_pools{};
+        vulkan_object_table<descriptor_set_data> descriptor_sets{};
         uint64_t next_id{1};
         bool conserve_guest_address_space{};
 
@@ -6794,10 +6759,10 @@ namespace sogen
     void vulkan_host::capture_references(const uint64_t command_buffer)
     {
         // Looking the command buffer up would note it in the recording that ends here.
-        this->impl_->recording_references = nullptr;
+        vulkan_recording_references = nullptr;
         if (const auto cb = this->impl_->command_buffers.find(command_buffer); cb != this->impl_->command_buffers.end())
         {
-            this->impl_->recording_references = &cb->second.references;
+            vulkan_recording_references = &cb->second.references;
         }
     }
 
