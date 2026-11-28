@@ -24,9 +24,129 @@ namespace sogen
         return id;
     }
 
+    section_view_manager::file_id section_view_manager::get_file_id(const struct compat_stat& info)
+    {
+        return {.device = info.st_dev, .index = info.st_ino};
+    }
+
+    section_view_manager::file_stamp section_view_manager::get_file_stamp(const struct compat_stat& info)
+    {
+        const auto write_time = std::chrono::seconds{info.st_mtimespec.tv_sec} + std::chrono::nanoseconds{info.st_mtimespec.tv_nsec};
+        return {
+            .size = static_cast<uint64_t>(std::max<int64_t>(info.st_size, 0)),
+            .write_time = std::chrono::duration_cast<std::chrono::nanoseconds>(write_time).count(),
+        };
+    }
+
+    uint64_t section_view_manager::adopt_file_storage(utils::shared_host_buffer memory, const file_id file, std::u16string file_name,
+                                                      const file_stamp stamp)
+    {
+        const auto id = this->adopt_private_copy(std::move(memory), std::move(file_name));
+        auto& stored = this->storages_.at(id);
+        stored.file = file;
+        stored.stamp = stamp;
+
+        const auto previous = this->storages_.find(this->find_file_storage(file));
+        this->file_storages_[file] = id;
+        if (previous != this->storages_.end() && previous->second.references == 0)
+        {
+            this->erase_storage(previous);
+        }
+        return id;
+    }
+
+    uint64_t section_view_manager::adopt_private_copy(utils::shared_host_buffer memory, std::u16string file_name)
+    {
+        const auto id = this->adopt_storage(std::move(memory));
+        this->storages_.at(id).file_name = std::move(file_name);
+        return id;
+    }
+
+    uint64_t section_view_manager::find_file_storage(const file_id& file) const
+    {
+        const auto entry = this->file_storages_.find(file);
+        return entry == this->file_storages_.end() ? 0 : entry->second;
+    }
+
+    uint64_t section_view_manager::take_file_storage(const file_id& file, const file_stamp& stamp, const size_t minimum_size)
+    {
+        const auto entry = this->storages_.find(this->find_file_storage(file));
+        if (entry == this->storages_.end())
+        {
+            return 0;
+        }
+
+        if (entry->second.references == 0 && (stamp != entry->second.stamp || entry->second.memory.size() < minimum_size))
+        {
+            this->erase_storage(entry);
+            return 0;
+        }
+
+        this->add_reference(entry->first);
+        return entry->first;
+    }
+
+    void section_view_manager::grow_storage(memory_manager& memory, const uint64_t storage_id, utils::shared_host_buffer larger)
+    {
+        auto& stored = this->storages_.at(storage_id);
+        std::memcpy(larger.data(), stored.memory.data(), stored.memory.size());
+
+        for (const auto& [address, mapped] : this->views_)
+        {
+            if (mapped.storage_id != storage_id)
+            {
+                continue;
+            }
+
+            const auto regions = memory.get_committed_regions(address);
+            if (!memory.release_memory(address, 0) || !memory.allocate_host_memory_at(address, static_cast<size_t>(mapped.size),
+                                                                                      larger.data() + mapped.offset, mapped.permissions))
+            {
+                throw std::runtime_error("Failed to move a section view to its file's larger copy");
+            }
+
+            for (const auto& region : regions)
+            {
+                if (region.permissions != mapped.permissions &&
+                    !memory.protect_memory(region.start, region.length, region.permissions, nullptr))
+                {
+                    throw std::runtime_error("Failed to keep the protection of a section view on its file's larger copy");
+                }
+            }
+
+            if (!stored.file_name.empty())
+            {
+                memory.set_region_mapped_filename(address, stored.file_name);
+            }
+        }
+
+        stored.memory = std::move(larger);
+    }
+
+    void section_view_manager::write_file_storage(const file_id& file, const uint64_t offset, const std::span<const std::byte> data,
+                                                  const file_stamp& stamp)
+    {
+        const auto entry = this->storages_.find(this->find_file_storage(file));
+        if (entry == this->storages_.end())
+        {
+            return;
+        }
+
+        if (offset < entry->second.memory.size())
+        {
+            const auto size = std::min(static_cast<uint64_t>(data.size()), entry->second.memory.size() - offset);
+            std::memcpy(entry->second.memory.data() + offset, data.data(), static_cast<size_t>(size));
+        }
+        entry->second.stamp = stamp;
+    }
+
     void section_view_manager::add_reference(const uint64_t storage_id)
     {
-        ++this->storages_.at(storage_id).references;
+        auto& stored = this->storages_.at(storage_id);
+        if (stored.references++ == 0 && std::erase(this->kept_storages_, storage_id) != 0)
+        {
+            this->kept_bytes_ -= stored.memory.size();
+        }
     }
 
     void section_view_manager::release_storage(const uint64_t storage_id)
@@ -100,6 +220,11 @@ namespace sogen
             throw;
         }
         ++entry->second.references;
+
+        if (!entry->second.file_name.empty())
+        {
+            memory.set_region_mapped_filename(address, entry->second.file_name);
+        }
         return address;
     }
 
@@ -154,6 +279,10 @@ namespace sogen
         {
             buffer.write(id);
             buffer.write(stored.references);
+            buffer.write_optional(stored.file);
+            buffer.write(stored.file_name);
+            buffer.write(stored.stamp.size);
+            buffer.write(stored.stamp.write_time);
             buffer.write(stored.memory.size());
 
             std::vector<uint64_t> written_blocks{};
@@ -185,6 +314,9 @@ namespace sogen
     {
         this->views_.clear();
         this->storages_.clear();
+        this->file_storages_.clear();
+        this->kept_storages_.clear();
+        this->kept_bytes_ = 0;
 
         buffer.read(this->next_storage_id_);
         const auto storage_count = buffer.read<size_t>();
@@ -192,11 +324,24 @@ namespace sogen
         {
             const auto id = buffer.read<uint64_t>();
             const auto references = buffer.read<uint32_t>();
-            const auto size = buffer.read<size_t>();
 
             auto& stored = this->storages_[id];
+            buffer.read_optional(stored.file);
+            buffer.read(stored.file_name);
+            buffer.read(stored.stamp.size);
+            buffer.read(stored.stamp.write_time);
+            const auto size = buffer.read<size_t>();
             stored.memory = utils::shared_host_buffer{size};
             stored.references = references;
+            if (stored.file)
+            {
+                this->file_storages_[*stored.file] = id;
+            }
+            if (references == 0)
+            {
+                this->kept_storages_.push_back(id);
+                this->kept_bytes_ += size;
+            }
 
             for (const auto offset : buffer.read_vector<uint64_t>())
             {
@@ -245,6 +390,11 @@ namespace sogen
                 throw std::runtime_error("Cannot restore a section view at its saved address");
             }
 
+            if (!stored.file_name.empty())
+            {
+                memory.set_region_mapped_filename(address, stored.file_name);
+            }
+
             for (const auto& region : this->restored_protections_[address])
             {
                 if (region.permissions != mapped.permissions &&
@@ -260,9 +410,46 @@ namespace sogen
 
     void section_view_manager::drop_reference(const std::map<uint64_t, storage>::iterator entry)
     {
-        if (--entry->second.references == 0)
+        if (--entry->second.references != 0)
         {
-            this->storages_.erase(entry);
+            return;
+        }
+
+        const auto is_file_storage = entry->second.file && this->find_file_storage(*entry->second.file) == entry->first;
+        if (!is_file_storage || entry->second.memory.size() > unused_file_storage_limit)
+        {
+            this->erase_storage(entry);
+            return;
+        }
+
+        this->kept_storages_.push_back(entry->first);
+        this->kept_bytes_ += entry->second.memory.size();
+        this->trim_kept_storages();
+    }
+
+    void section_view_manager::erase_storage(const std::map<uint64_t, storage>::iterator entry)
+    {
+        if (std::erase(this->kept_storages_, entry->first) != 0)
+        {
+            this->kept_bytes_ -= entry->second.memory.size();
+        }
+
+        if (entry->second.file)
+        {
+            const auto file = this->file_storages_.find(*entry->second.file);
+            if (file != this->file_storages_.end() && file->second == entry->first)
+            {
+                this->file_storages_.erase(file);
+            }
+        }
+        this->storages_.erase(entry);
+    }
+
+    void section_view_manager::trim_kept_storages()
+    {
+        while (this->kept_bytes_ > unused_file_storage_limit && !this->kept_storages_.empty())
+        {
+            this->erase_storage(this->storages_.find(this->kept_storages_.front()));
         }
     }
 }

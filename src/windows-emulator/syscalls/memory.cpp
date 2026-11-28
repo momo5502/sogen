@@ -164,7 +164,7 @@ namespace sogen
                     return STATUS_NOT_MAPPED_VIEW;
                 }
 
-                if (view.kind != memory_region_kind::file_section_view)
+                if (view.kind != memory_region_kind::file_section_view && !c.win_emu.memory.get_region_mapped_filename(aligned_start))
                 {
                     return STATUS_NOT_MAPPED_DATA;
                 }
@@ -204,6 +204,12 @@ namespace sogen
                 }
             }
 
+            NTSTATUS get_free_denied_status(const syscall_context& c, const uint64_t address, const memory_region_kind kind)
+            {
+                return c.proc.section_views.contains(address, 1) ? STATUS_UNABLE_TO_DELETE_SECTION
+                                                                 : memory_region_policy::nt_free_virtual_memory_denied_status(kind);
+            }
+
             NTSTATUS release_page_range(const syscall_context& c, const emulator_object<uint64_t> base_address,
                                         const emulator_object<uint64_t> region_size)
             {
@@ -217,7 +223,7 @@ namespace sogen
                     return STATUS_MEMORY_NOT_ALLOCATED;
                 }
 
-                const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_info.kind);
+                const auto denied_status = get_free_denied_status(c, release_base, region_info.kind);
                 if (denied_status != STATUS_SUCCESS)
                 {
                     return denied_status;
@@ -479,7 +485,9 @@ namespace sogen
 
                     image_info.AllocationBase = region_info.allocation_base;
                     image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
-                    image_info.RegionType = memory_region_policy::to_memory_region_information_type(region_info.kind);
+                    const auto is_file_view = c.win_emu.memory.get_region_mapped_filename(base_address).has_value();
+                    image_info.RegionType = memory_region_policy::to_memory_region_information_type(
+                        is_file_view ? memory_region_kind::file_section_view : region_info.kind);
                     image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
 
                     const auto& reserved_regions = c.win_emu.memory.get_reserved_regions();
@@ -662,7 +670,8 @@ namespace sogen
                 const auto reset_size = requested_allocation_bytes;
 
                 const auto region_info = c.win_emu.memory.get_region_info(reset_base);
-                const auto is_valid_kind = region_info.kind == memory_region_kind::private_allocation ||
+                const auto is_file_view = c.win_emu.memory.get_region_mapped_filename(reset_base).has_value();
+                const auto is_valid_kind = is_file_view || region_info.kind == memory_region_kind::private_allocation ||
                                            region_info.kind == memory_region_kind::pagefile_section_view ||
                                            c.proc.section_views.contains(reset_base, reset_size);
                 if (!region_info.is_reserved || !is_valid_kind || region_info.allocation_base > reset_base)
@@ -674,6 +683,11 @@ namespace sogen
                 if (!allocation_end.has_value() || *allocation_end < *reset_end)
                 {
                     return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                if (is_file_view)
+                {
+                    return STATUS_USER_MAPPED_FILE;
                 }
 
                 base_address.write(reset_base);
@@ -907,7 +921,7 @@ namespace sogen
                 }
 
                 const auto region_kind = c.win_emu.memory.get_region_kind(release_base);
-                const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_kind);
+                const auto denied_status = get_free_denied_status(c, release_base, region_kind);
                 if (denied_status != STATUS_SUCCESS)
                 {
                     return denied_status;
@@ -934,7 +948,7 @@ namespace sogen
             if (free_type & MEM_DECOMMIT)
             {
                 const auto region_kind = c.win_emu.memory.get_region_kind(allocation_base);
-                const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_kind);
+                const auto denied_status = get_free_denied_status(c, allocation_base, region_kind);
                 if (denied_status != STATUS_SUCCESS)
                 {
                     return denied_status;

@@ -2011,9 +2011,21 @@ namespace sogen
                 }
             }
 
+            const auto position = f->handle.tell();
             const auto bytes_written = f->handle.write(std::as_bytes(std::span(temp_buffer)));
             const auto flushed = f->handle.flush();
             const auto status = flushed && bytes_written == temp_buffer.size() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+
+            // On Windows the file cache and the file's mapped views share pages, so the write shows in its views.
+            if (bytes_written != 0 && position >= 0 && c.proc.section_views.has_file_storages())
+            {
+                if (const auto info = f->handle.stat())
+                {
+                    c.proc.section_views.write_file_storage(section_view_manager::get_file_id(*info), static_cast<uint64_t>(position),
+                                                            std::as_bytes(std::span(temp_buffer)).first(bytes_written),
+                                                            section_view_manager::get_file_stamp(*info));
+                }
+            }
 
             if (io_status_block)
             {

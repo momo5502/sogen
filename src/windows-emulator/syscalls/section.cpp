@@ -4,6 +4,7 @@
 #include "../memory_manager.hpp"
 #include "../module/module_mapping.hpp"
 
+#include <utils/finally.hpp>
 #include <utils/io.hpp>
 
 namespace sogen
@@ -263,6 +264,268 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            struct data_view_range
+            {
+                uint64_t offset{};
+                uint64_t size{};
+            };
+
+            // MiMapViewOfSection.
+            std::optional<data_view_range> get_data_view_range(const uint64_t section_size, const uint64_t offset,
+                                                               const uint64_t requested_size)
+            {
+                if (offset > section_size || requested_size > section_size - offset)
+                {
+                    return std::nullopt;
+                }
+
+                const auto aligned_offset = align_down(offset, ALLOCATION_GRANULARITY);
+                const auto size = (requested_size != 0 ? requested_size : section_size - offset) + (offset - aligned_offset);
+                if (size == 0)
+                {
+                    return std::nullopt;
+                }
+
+                return data_view_range{.offset = aligned_offset, .size = page_align_up(size)};
+            }
+
+            constexpr ULONG page_protection_modifiers = PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE;
+
+            // MmCompatibleProtectionMask: the views a section's protection allows.
+            ULONG get_compatible_view_protections(const ULONG section_protection)
+            {
+                switch (section_protection & ~page_protection_modifiers)
+                {
+                case PAGE_NOACCESS:
+                    return PAGE_NOACCESS;
+                case PAGE_READONLY:
+                case PAGE_WRITECOPY:
+                    return PAGE_NOACCESS | PAGE_READONLY | PAGE_WRITECOPY;
+                case PAGE_READWRITE:
+                    return PAGE_NOACCESS | PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY;
+                case PAGE_EXECUTE:
+                    return PAGE_NOACCESS | PAGE_EXECUTE;
+                case PAGE_EXECUTE_READ:
+                case PAGE_EXECUTE_WRITECOPY:
+                    return PAGE_NOACCESS | PAGE_READONLY | PAGE_WRITECOPY | PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_WRITECOPY;
+                case PAGE_EXECUTE_READWRITE:
+                    return PAGE_NOACCESS | PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE | PAGE_EXECUTE_READ |
+                           PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+                default:
+                    return 0;
+                }
+            }
+
+            bool is_copy_on_write(const ULONG view_protection)
+            {
+                const auto base_protection = view_protection & ~page_protection_modifiers;
+                return base_protection == PAGE_WRITECOPY || base_protection == PAGE_EXECUTE_WRITECOPY;
+            }
+
+            bool read_file_range(const guest_file& file, const uint64_t offset, const std::span<std::byte> buffer)
+            {
+                const auto position = file.tell();
+                const auto restore_position = utils::finally([&] { file.seek_to(position); });
+                if (!file.seek_to(static_cast<int64_t>(offset)))
+                {
+                    return false;
+                }
+
+                for (size_t read = 0; read < buffer.size();)
+                {
+                    const auto chunk = file.read(buffer.subspan(read));
+                    if (chunk == 0)
+                    {
+                        return false;
+                    }
+                    read += chunk;
+                }
+
+                return true;
+            }
+
+            std::span<std::byte> storage_bytes(utils::shared_host_buffer& memory, const uint64_t offset, const uint64_t end)
+            {
+                return {reinterpret_cast<std::byte*>(memory.data()) + offset, static_cast<size_t>(end - offset)};
+            }
+
+            // The section keeps the copy of the file object it was created for, as Windows ties a section to the file's
+            // control area: a later rename or replacement of the file at that name does not change what it maps.
+            NTSTATUS attach_file_storage(const syscall_context& c, section& section_entry, const guest_file& file)
+            {
+                const auto info = file.stat();
+                if (!info)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto id = section_view_manager::get_file_id(*info);
+                const auto stamp = section_view_manager::get_file_stamp(*info);
+                const auto storage_size = static_cast<size_t>(page_align_up(std::max(stamp.size, section_entry.maximum_size)));
+
+                auto& views = c.proc.section_views;
+                auto storage = views.take_file_storage(id, stamp, storage_size);
+                if (storage == 0)
+                {
+                    utils::shared_host_buffer memory{storage_size};
+                    if (!read_file_range(file, 0, storage_bytes(memory, 0, stamp.size)))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    storage = views.adopt_file_storage(std::move(memory), id, section_entry.file_name, stamp);
+                }
+                else if (const auto current_size = views.storage_size(storage); current_size < storage_size)
+                {
+                    utils::shared_host_buffer larger{storage_size};
+                    if (stamp.size > current_size && !read_file_range(file, current_size, storage_bytes(larger, current_size, stamp.size)))
+                    {
+                        views.release_storage(storage);
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    views.grow_storage(c.win_emu.memory, storage, std::move(larger));
+                }
+
+                section_entry.view_storage_id = storage;
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS map_file_view_copy(const syscall_context& c, const section& section_entry, const data_view_range& range,
+                                        const nt_memory_permission protection, const uint64_t highest_address, uint64_t& address)
+            {
+                const auto reserve_only = section_entry.allocation_attributes == SEC_RESERVE;
+                std::span<const std::byte> data{};
+                if (const auto* memory = c.proc.section_views.storage_memory(section_entry.view_storage_id);
+                    memory && !reserve_only && range.offset < memory->size())
+                {
+                    data = {reinterpret_cast<const std::byte*>(memory->data()) + range.offset,
+                            static_cast<size_t>(std::min(range.size, memory->size() - range.offset))};
+                }
+
+                const auto requested_address = address;
+                if (requested_address != 0)
+                {
+                    address = c.win_emu.memory.allocate_memory(requested_address, static_cast<size_t>(range.size), protection, reserve_only,
+                                                               memory_region_kind::file_section_view)
+                                  ? requested_address
+                                  : 0;
+                }
+                else
+                {
+                    address = c.win_emu.memory.allocate_memory(static_cast<size_t>(range.size), protection, reserve_only, 0,
+                                                               memory_region_kind::file_section_view, highest_address);
+                }
+
+                if (address == 0)
+                {
+                    return requested_address != 0 ? STATUS_CONFLICTING_ADDRESSES : STATUS_NO_MEMORY;
+                }
+                c.win_emu.memory.set_region_mapped_filename(address, section_entry.file_name);
+
+                if (!data.empty())
+                {
+                    c.emu.write_memory(address, data.data(), data.size());
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            uint64_t map_file_storage_view(const syscall_context& c, const section& section_entry, const data_view_range& range,
+                                           const ULONG view_protection, const nt_memory_permission protection,
+                                           const uint64_t highest_address, const uint64_t requested_address)
+            {
+                auto& views = c.proc.section_views;
+                if (!is_copy_on_write(view_protection))
+                {
+                    return views.map_view(c.win_emu.memory, section_entry.view_storage_id, range.offset, static_cast<size_t>(range.size),
+                                          protection, highest_address, requested_address);
+                }
+
+                const auto& shared = *views.storage_memory(section_entry.view_storage_id);
+                utils::shared_host_buffer copy{static_cast<size_t>(range.size)};
+                std::memcpy(copy.data(), shared.data() + range.offset, static_cast<size_t>(range.size));
+
+                const auto private_storage = views.adopt_private_copy(std::move(copy), section_entry.file_name);
+                const auto address = views.map_view(c.win_emu.memory, private_storage, 0, static_cast<size_t>(range.size), protection,
+                                                    highest_address, requested_address);
+                views.release_storage(private_storage);
+                return address;
+            }
+
+            NTSTATUS map_file_section_view(const syscall_context& c, const section& section_entry, const uint64_t offset,
+                                           const ULONG view_protection, const ULONG allocation_type, const uint64_t highest_address,
+                                           const emulator_object<uint64_t> base_address,
+                                           const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                           const emulator_object<LARGE_INTEGER> section_offset)
+            {
+                const auto allowed_protections =
+                    get_compatible_view_protections(section_entry.section_page_protection) | page_protection_modifiers;
+                if ((view_protection & ~allowed_protections) != 0)
+                {
+                    return STATUS_SECTION_PROTECTION;
+                }
+
+                const auto requested_size = view_size ? static_cast<uint64_t>(view_size.read()) : 0;
+                const auto range = get_data_view_range(section_entry.maximum_size, offset, requested_size);
+                if (!range)
+                {
+                    return STATUS_INVALID_VIEW_SIZE;
+                }
+
+                const auto protection = try_map_nt_to_emulator_protection(view_protection);
+                if (!protection)
+                {
+                    return STATUS_INVALID_PAGE_PROTECTION;
+                }
+
+                auto address = align_down(base_address.read(), ALLOCATION_GRANULARITY);
+                const auto requested_address = address;
+                const auto replaces_placeholder = (allocation_type & MEM_REPLACE_PLACEHOLDER) != 0;
+                const auto at_placeholder =
+                    requested_address != 0 && c.win_emu.memory.get_region_kind(requested_address) == memory_region_kind::placeholder;
+                if (replaces_placeholder != at_placeholder)
+                {
+                    return replaces_placeholder ? STATUS_INVALID_PARAMETER : STATUS_CONFLICTING_ADDRESSES;
+                }
+
+                if (c.win_emu.memory.can_alias_host_memory_anywhere() && section_entry.view_storage_id != 0)
+                {
+                    try
+                    {
+                        address = map_file_storage_view(c, section_entry, *range, view_protection, *protection, highest_address,
+                                                        requested_address);
+                    }
+                    catch (const std::bad_alloc&)
+                    {
+                        return STATUS_NO_MEMORY;
+                    }
+
+                    if (address == 0)
+                    {
+                        return requested_address != 0 ? STATUS_CONFLICTING_ADDRESSES : STATUS_NO_MEMORY;
+                    }
+                }
+                else if (replaces_placeholder)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+                else if (const auto status = map_file_view_copy(c, section_entry, *range, *protection, highest_address, address);
+                         status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (view_size)
+                {
+                    view_size.write(range->size);
+                }
+                if (section_offset)
+                {
+                    section_offset.write(LARGE_INTEGER{.QuadPart = static_cast<int64_t>(range->offset)});
+                }
+                base_address.write(address);
+                return STATUS_SUCCESS;
+            }
+
             void release_pagefile_view(const syscall_context& c, const uint64_t backing)
             {
                 for (auto& [_, section_entry] : c.proc.sections)
@@ -288,12 +551,9 @@ namespace sogen
             std::optional<std::filesystem::path> get_mapped_file_identity(const syscall_context& c, const region_info& region,
                                                                           const uint64_t address)
             {
-                if (region.kind == memory_region_kind::file_section_view)
+                if (const auto filename = c.win_emu.memory.get_region_mapped_filename(address))
                 {
-                    if (const auto filename = c.win_emu.memory.get_region_mapped_filename(address))
-                    {
-                        return module_manager::module_identity(windows_path{*filename});
-                    }
+                    return module_manager::module_identity(windows_path{*filename});
                 }
 
                 if (region.kind == memory_region_kind::section_image)
@@ -354,6 +614,27 @@ namespace sogen
             else if (!file)
             {
                 return STATUS_INVALID_PARAMETER;
+            }
+
+            if (file && file->is_file() && s.maximum_size == 0 && !(allocation_attributes & SEC_IMAGE))
+            {
+                s.maximum_size = static_cast<uint64_t>(std::max<int64_t>(file->handle.size(), 0));
+            }
+
+            if (file && file->is_file() && s.maximum_size != 0 && !(allocation_attributes & SEC_IMAGE) &&
+                allocation_attributes != SEC_RESERVE)
+            {
+                try
+                {
+                    if (const auto status = attach_file_storage(c, s, file->handle); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                }
+                catch (const std::bad_alloc&)
+                {
+                    return STATUS_NO_MEMORY;
+                }
             }
 
             // If this is an image section, parse PE headers
@@ -520,7 +801,7 @@ namespace sogen
                                            const emulator_object<LARGE_INTEGER> section_offset,
                                            const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
                                            const SECTION_INHERIT /*inherit_disposition*/, const ULONG allocation_type,
-                                           const ULONG /*win32_protect*/)
+                                           const ULONG win32_protect)
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
@@ -705,43 +986,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // File-backed section: map a fresh copy of the file contents.
-            std::vector<std::byte> file_data{};
-            if (!c.win_emu.file_sys.read_file(section_entry->file_name, &file_data))
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            // The guest fully controls the mapping offset. Reject anything past the file so the
-            // subtraction below cannot underflow into a huge copy that reads past file_data.
-            if (static_cast<uint64_t>(offset) > file_data.size())
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            const auto size = static_cast<size_t>(file_data.size() - offset);
-            const auto aligned_size = static_cast<size_t>(page_align_up(size));
-            const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
-            const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0,
-                                                                  memory_region_kind::file_section_view, highest_address);
-            if (!address)
-            {
-                return STATUS_NO_MEMORY;
-            }
-            c.win_emu.memory.set_region_mapped_filename(address, section_entry->file_name);
-
-            if (!reserve_only && !file_data.empty())
-            {
-                c.emu.write_memory(address, file_data.data() + offset, size);
-            }
-
-            if (view_size)
-            {
-                view_size.write(aligned_size);
-            }
-
-            base_address.write(address);
-            return STATUS_SUCCESS;
+            return map_file_section_view(c, *section_entry, static_cast<uint64_t>(offset), win32_protect, allocation_type, highest_address,
+                                         base_address, view_size, section_offset);
         }
 
         NTSTATUS handle_NtMapViewOfSectionEx(const syscall_context& c, const handle section_handle, const handle process_handle,
