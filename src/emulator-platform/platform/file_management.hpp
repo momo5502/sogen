@@ -91,6 +91,7 @@
 namespace sogen
 {
 
+#define FILE_ATTRIBUTE_ARCHIVE                     0x00000020
 #define FILE_ATTRIBUTE_NORMAL                      0x00000080
 #define FILE_ATTRIBUTE_DIRECTORY                   0x00000010
 
