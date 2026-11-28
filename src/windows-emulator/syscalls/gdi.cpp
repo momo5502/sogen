@@ -3635,6 +3635,64 @@ namespace sogen
             return handle_value;
         }
 
+        namespace
+        {
+            struct gdi_bitmap_dimension
+            {
+                int32_t width{};
+                int32_t height{};
+            };
+
+            std::optional<uint64_t> find_bitmap_dimension_address(const syscall_context& c, const handle bitmap)
+            {
+                if (bitmap.bits == 0)
+                {
+                    return std::nullopt;
+                }
+
+                uint64_t attr = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(bitmap.bits), k_gdi_bitmap_type, attr))
+                {
+                    set_engine_last_error(c, k_error_invalid_handle);
+                    return std::nullopt;
+                }
+
+                return attr;
+            }
+        }
+
+        BOOL handle_NtGdiGetBitmapDimension(const syscall_context& c, const handle bitmap, const emulator_pointer size)
+        {
+            const auto attr = find_bitmap_dimension_address(c, bitmap);
+            if (!attr)
+            {
+                return FALSE;
+            }
+
+            const auto dimension = c.win_emu.memory.read_memory<gdi_bitmap_dimension>(*attr);
+            return c.emu.try_write_memory(size, &dimension, sizeof(dimension)) ? TRUE : FALSE;
+        }
+
+        BOOL handle_NtGdiSetBitmapDimension(const syscall_context& c, const handle bitmap, const int32_t width, const int32_t height,
+                                            const emulator_pointer previous)
+        {
+            const auto attr = find_bitmap_dimension_address(c, bitmap);
+            if (!attr)
+            {
+                return FALSE;
+            }
+
+            const auto old_dimension = c.win_emu.memory.read_memory<gdi_bitmap_dimension>(*attr);
+            c.win_emu.memory.write_memory(*attr, gdi_bitmap_dimension{.width = width, .height = height});
+
+            if (previous == 0)
+            {
+                return TRUE;
+            }
+
+            return c.emu.try_write_memory(previous, &old_dimension, sizeof(old_dimension)) ? TRUE : FALSE;
+        }
+
         int32_t handle_NtGdiGetBitmapBits(const syscall_context& c, const handle bitmap, const int32_t count, const emulator_pointer bits)
         {
             const auto it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(bitmap.bits));
