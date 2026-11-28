@@ -1427,10 +1427,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Flutter's Gradle tooling pulls kotlin-dsl from the Plugin Portal, which intermittently answers 404 for it. Main
+      # builds save the downloaded dependencies and other branches only read them; the pinned Flutter release keeps that
+      # dependency set stable.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.50.1
 
       # dart format reads the page width from analysis_options.yaml, which includes a package.
       - name: Fetch App Dependencies
