@@ -167,6 +167,9 @@ namespace sogen
         // ShellExecute "runas" directly instead of going through the consent service, which is not emulated.
         bool elevated{false};
 
+        // When false, the process runs under Windows' child process policy (PROCESS_CREATION_CHILD_PROCESS_RESTRICTED).
+        bool allow_child_processes{true};
+
         // The largest display mode the guest sees, one of display_modes. The display starts in it and offers no larger
         // one, so games that size their rendering by the display draw fewer pixels.
         std::optional<display_mode> max_display_mode{};
@@ -683,6 +686,11 @@ namespace sogen
             return this->elevated_;
         }
 
+        bool child_processes_allowed() const
+        {
+            return this->allow_child_processes_;
+        }
+
         std::optional<uint64_t> native_timestamp_counter_frequency() const
         {
             if (!this->use_native_timestamp_counter_)
@@ -872,6 +880,7 @@ namespace sogen
         bool spoof_gpu_features_{false};
         bool steam_app_tickets_{false};
         bool elevated_{false};
+        bool allow_child_processes_{true};
         std::optional<display_mode> max_display_mode_{};
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};

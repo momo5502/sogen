@@ -84,9 +84,10 @@ namespace sogen::sandbox
             configuration += "registry=" + describe_path(settings.registry_directory) + "\n";
             configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
             configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
-            // Elevation is not part of the snapshot: the token queries and access checks read it from the current
-            // settings, so a snapshot has to refuse to resume under the other setting.
+            // Elevation and the child process policy are not part of the snapshot: the token queries, access checks and
+            // process creation read them from the current settings, so a snapshot has to refuse to resume under others.
             configuration += std::string{"elevated="} + (settings.elevated ? "on" : "off") + "\n";
+            configuration += std::string{"children="} + (settings.allow_child_processes ? "on" : "off") + "\n";
             configuration +=
                 "max-display-mode=" + (settings.max_display_mode ? to_string(*settings.max_display_mode) : std::string{}) + "\n";
 
@@ -144,7 +145,7 @@ namespace sogen::sandbox
                 const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
                 const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool steam_app_tickets, const bool spoof_gpu_features, const bool elevated,
+                const bool steam_app_tickets, const bool spoof_gpu_features, const bool elevated, const bool enable_children,
                 const std::optional<display_mode>& max_display_mode, const std::filesystem::path& snapshot_directory,
                 const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
         {
@@ -189,6 +190,7 @@ namespace sogen::sandbox
                 .steam_app_tickets = steam_app_tickets,
                 .spoof_gpu_features = spoof_gpu_features,
                 .elevated = elevated,
+                .allow_child_processes = enable_children,
                 .max_display_mode = max_display_mode,
             };
 
@@ -227,6 +229,10 @@ namespace sogen::sandbox
                     if (elevated)
                     {
                         arguments.emplace_back("--elevated");
+                    }
+                    if (enable_children)
+                    {
+                        arguments.emplace_back("--enable-children");
                     }
                     if (max_display_mode)
                     {
@@ -458,6 +464,10 @@ namespace sogen::sandbox
             bool elevated = false;
             app.add_flag("--elevated", elevated,
                          "Run the guest with an elevated administrator token, as an installer or a service expects");
+            bool enable_children = false;
+            app.add_flag("--enable-children", enable_children,
+                         "Let the guest start child processes; without it creating one fails with STATUS_CHILD_PROCESS_BLOCKED, as "
+                         "under Windows' child process policy");
 
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
@@ -551,8 +561,8 @@ namespace sogen::sandbox
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
                            emulation_root, registry_directory, registry_files, environment, network_mode, steam_app_tickets,
-                           spoof_gpu_features, elevated, parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
-                           managed_process ? &*managed_process : nullptr);
+                           spoof_gpu_features, elevated, enable_children, parse_display_mode(max_display_mode_name), snapshot_directory,
+                           resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

@@ -953,6 +953,7 @@ namespace sogen
           spoof_gpu_features_(settings.spoof_gpu_features),
           steam_app_tickets_(settings.steam_app_tickets),
           elevated_(settings.elevated),
+          allow_child_processes_(settings.allow_child_processes),
           max_display_mode_(settings.max_display_mode),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {

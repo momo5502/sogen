@@ -107,6 +107,25 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), section));
     }
 
+    TEST_F(CreateSectionExTest, ImageSectionsNeedAnImageFile)
+    {
+        const std::array<std::pair<std::u16string_view, NTSTATUS>, 2> cases{{
+            {u"C:\\Windows\\System32\\locale.nls", STATUS_INVALID_IMAGE_NOT_MZ},
+            {u"C:\\Windows\\System32\\kernel32.dll", STATUS_SUCCESS},
+        }};
+
+        for (const auto& [name, status] : cases)
+        {
+            file image_file{};
+            image_file.name = name;
+            const auto file_handle = this->emu->process.files.store(std::move(image_file));
+            const emulator_object<handle> output{this->emu->memory, this->storage};
+            EXPECT_EQ(status, syscalls::handle_NtCreateSectionEx(this->context(), output, 0, {this->emu->memory}, {this->emu->memory},
+                                                                 PAGE_EXECUTE, SEC_IMAGE, file_handle, {this->emu->memory}, 0))
+                << u16_to_u8(name);
+        }
+    }
+
     TEST_F(CreateSectionExTest, NumaNodeZeroIsAccepted)
     {
         this->set_parameter(0, MemSectionExtendedParameterNumaNode, 0);

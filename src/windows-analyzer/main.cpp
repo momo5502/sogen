@@ -102,6 +102,7 @@ namespace sogen
             std::optional<backend_type> backend{};
             network::network_mode network{network::network_mode::offline};
             bool steam_app_tickets{false};
+            bool enable_children{false};
             std::optional<bool> instruction_precision{};
             bool native_timing{false};
             bool keep_guest_time{false};
@@ -138,6 +139,10 @@ namespace sogen
             if (options.elevated)
             {
                 arguments.emplace_back("--elevated");
+            }
+            if (options.enable_children)
+            {
+                arguments.emplace_back("--enable-children");
             }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
@@ -756,6 +761,7 @@ namespace sogen
                 .steam_app_tickets = options.steam_app_tickets,
                 .spoof_gpu_features = options.spoof_gpu_features,
                 .elevated = options.elevated,
+                .allow_child_processes = options.enable_children,
             };
         }
 
@@ -1317,6 +1323,9 @@ namespace sogen
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
+            app.add_flag("--enable-children", options.enable_children,
+                         "Let the process start child processes; without it creating one fails with STATUS_CHILD_PROCESS_BLOCKED, as "
+                         "under Windows' child process policy");
             app.add_flag("--inst-precision,!--no-inst-precision", options.instruction_precision,
                          "Enable or disable per-instruction precision (default: on, off on HVF unless --reproducible)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");
