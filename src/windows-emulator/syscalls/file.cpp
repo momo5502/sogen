@@ -16,6 +16,7 @@
 
 #include "../devices/named_pipe.hpp"
 #include "../devices/console.hpp"
+#include "../devices/mountmgr.hpp"
 
 namespace sogen
 {
@@ -1075,7 +1076,7 @@ namespace sogen
 
             if (info_class == FileVolumeNameInformation)
             {
-                const auto volume_name = u8_to_u16("\\Device\\HarddiskVolume" + std::to_string(f->drive_number));
+                const auto volume_name = f->volume_device_name();
                 const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
 
                 const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
@@ -3053,6 +3054,12 @@ namespace sogen
 
         namespace
         {
+            bool is_bare_drive(const file& f)
+            {
+                constexpr std::u16string_view prefix = u"\\??\\";
+                return f.name.size() == prefix.size() + 2 && f.name.starts_with(prefix) && f.name.back() == u':';
+            }
+
             // The I/O manager copies the input of every transfer method except METHOD_NEITHER into a system buffer before the
             // driver runs, so an unreadable input fails there; a NULL input is not copied and reaches the driver.
             bool is_control_input_readable(const syscall_context& c, const ULONG control_code, const emulator_pointer input_buffer,
@@ -3062,6 +3069,107 @@ namespace sogen
                 return (control_code & method_neither) == method_neither || !input_buffer ||
                        is_memory_readable(c.emu, input_buffer, input_buffer_length);
             }
+        }
+
+        NTSTATUS handle_file_io_control(const syscall_context& c, const file& f, const handle event, const emulator_pointer apc_routine,
+                                        const emulator_pointer apc_context,
+                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                        const ULONG io_control_code, const emulator_pointer input_buffer, const ULONG input_buffer_length,
+                                        const emulator_pointer output_buffer, const ULONG output_buffer_length)
+        {
+            if (io_control_code != IOCTL_MOUNTDEV_QUERY_DEVICE_NAME)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            // IopXxxControlFile probes the status block, then every page of the declared output, before it looks at the handle.
+            if (const auto status = probe_range(c.win_emu, io_status_block.value(), sizeof(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>),
+                                                memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (output_buffer && output_buffer_length != 0)
+            {
+                if (const auto status = probe_range(c.win_emu, output_buffer, output_buffer_length, memory_permission::write);
+                    status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+            }
+
+            if (f.completion_association && (apc_routine & ~uint64_t{1}) != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (const auto status = check_completion_event(c, event); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            auto* completion_event = c.proc.events.get(event);
+            if (completion_event)
+            {
+                completion_event->set_signaled(false);
+            }
+
+            if (!is_control_input_readable(c, io_control_code, input_buffer, input_buffer_length))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            constexpr ULONG header_size = sizeof(USHORT) + sizeof(char16_t);
+            if (!is_bare_drive(f) || !output_buffer || output_buffer_length < header_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto device_name = f.volume_device_name();
+            const auto name_length = static_cast<USHORT>(device_name.size() * sizeof(char16_t));
+            c.emu.write_memory(output_buffer, &name_length, sizeof(name_length));
+
+            auto status = STATUS_BUFFER_OVERFLOW;
+            uint64_t information = sizeof(name_length);
+            if (output_buffer_length >= sizeof(name_length) + name_length)
+            {
+                c.emu.write_memory(output_buffer + sizeof(name_length), device_name.data(), name_length);
+                status = STATUS_SUCCESS;
+                information += name_length;
+            }
+
+            io_device_context context{c.emu};
+            context.io_status_block = io_status_block;
+            attach_wow64_io_status_block(c, context);
+
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Status = status;
+            block.Information = information;
+            io_status_block.write(block);
+
+            const auto user_apc_routine = f.completion_association ? 0 : apc_routine & ~uint64_t{1};
+            deliver_file_io_completion(c, event.bits, user_apc_routine, apc_context, io_status_block, context.wow64_io_status_block.value(),
+                                       status, information);
+
+            if (!f.completion_association)
+            {
+                return status;
+            }
+
+            context.event = c.proc.reference_of(event);
+            context.event_low_bit = (event.bits & 1) != 0;
+            context.apc_context = apc_context;
+            context.completion_port = f.completion_association->completion_port;
+            context.completion_key = f.completion_association->key;
+
+            constexpr ULONG skip_completion_port_on_success = 0x1;
+            if (status == STATUS_BUFFER_OVERFLOW || !(f.completion_notification_flags & skip_completion_port_on_success))
+            {
+                io_device::queue_io_completion(c.win_emu, context);
+            }
+
+            return status == STATUS_BUFFER_OVERFLOW ? STATUS_PENDING : status;
         }
 
         NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle file_handle, const handle event,
