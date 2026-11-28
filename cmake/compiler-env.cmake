@@ -202,6 +202,11 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     -sASYNCIFY
   )
 
+  # Asyncify's Binaryen pass makes each Wasm link memory-hungry; linking several executables at once can exhaust a CI
+  # runner's memory, which then drops the job.
+  set_property(GLOBAL APPEND PROPERTY JOB_POOLS emscripten_link=1)
+  set(CMAKE_JOB_POOL_LINK emscripten_link)
+
   if(SOGEN_EMSCRIPTEN_MEMORY64)
     sogen_add_c_and_cxx_compile_options(
       -sMEMORY64
