@@ -996,8 +996,12 @@ namespace sogen
 
         cb.on_stdout = make_callback(c, handle_stdout);
         cb.on_syscall = make_callback(c, handle_syscall);
-        cb.on_rdtsc = make_callback(c, handle_rdtsc);
-        cb.on_rdtscp = make_callback(c, handle_rdtscp);
+        if (c.settings->watch_rdtsc)
+        {
+            cb.on_rdtsc = make_callback(c, handle_rdtsc);
+            cb.on_rdtscp = make_callback(c, handle_rdtscp);
+        }
+        c.win_emu->update_timestamp_counter_hooks();
         cb.on_ioctrl = make_callback(c, handle_ioctrl);
 
         cb.on_memory_protect = make_callback(c, handle_memory_protect);

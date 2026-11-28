@@ -37,6 +37,7 @@ namespace sogen
         bool spoof_gpu_features{false};
         bool elevated{false};
         bool log_first_section_execution{false};
+        bool watch_rdtsc{false};
 
         string_set modules{};
         string_set ignored_functions{};
