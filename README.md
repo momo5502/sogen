@@ -105,6 +105,8 @@ See `examples/python/README.md` for setup details and a larger example.
 > [!TIP]  
 > Checkout the [Wiki](https://github.com/momo5502/sogen/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
 
+MinGW executables and shared libraries are fully stripped, including Debug and RelWithDebInfo builds. This prevents embedded DWARF from making large PE images unloadable; MinGW artifacts do not retain host debug symbols.
+
 1\. Checkout the code:
 
 ```bash
@@ -141,8 +143,6 @@ The guest file system is read-only by default, and guest writes fail with `STATU
 Windows ARM64 executables run the same way, from an emulation root created with [create-root.bat](https://github.com/momo5502/sogen/blob/main/src/tools/create-root.bat) on a Windows ARM64 machine. They run on WHP on Windows ARM64, on Hypervisor.framework on Apple Silicon and on Unicorn elsewhere.
 
 `--backend` overrides environment-based selection. Outside Windows ARM64, where Unicorn's ARM64 backend is not built, `EMULATOR_UNICORN=1` runs ARM64 guests on Unicorn instead of the hypervisor.
-
-MinGW executables and shared libraries are fully stripped, including Debug and RelWithDebInfo builds. This prevents embedded DWARF from making large PE images unloadable; MinGW artifacts do not retain host debug symbols.
 
 ## macOS Programs (Rudimentary)
 
