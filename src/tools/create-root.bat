@@ -28,6 +28,8 @@ SET EMU_WINSXSDIR=%EMU_WINDIR%\winsxs
 SET EMU_WINSXSMANIFESTDIR=%EMU_WINSXSDIR%\manifests
 SET EMU_WINSXSPOLICYDIR=%EMU_WINSXSDIR%\policies
 SET EMU_REGDIR=%EMU_ROOT%\registry
+SET EMU_SXSDIR=%EMU_ROOT%\sxs
+SET ROOT_TOOLS_DIR=%~dp0..\..\build\release\artifacts
 SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 
 MKDIR %EMU_SYSDIR%
@@ -42,6 +44,7 @@ MKDIR %EMU_WINSXSDIR%
 MKDIR %EMU_WINSXSMANIFESTDIR%
 MKDIR %EMU_WINSXSPOLICYDIR%
 MKDIR %EMU_REGDIR%
+MKDIR %EMU_SXSDIR%
 MKDIR %EMU_STEAMDIR%
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps1" "%EMU_FILESYS%"
@@ -49,6 +52,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps
 REM Capture this machine's registry hives and seed the Steam-bridge keys. Shared with grab-registry.bat
 REM (which writes SYSTEM/SECURITY/SOFTWARE/HARDWARE/SAM + NTUSER.DAT into the given dir) to avoid duplication.
 CALL "%~dp0grab-registry.bat" "%EMU_REGDIR%"
+
+REM Capture the system default activation context that this machine hands every process. The root-tools CI job
+REM names the tools activation-context-dump-x64.exe and -x86.exe; a local build produces activation-context-dump.exe
+REM for its own architecture. A missing tool is reported and leaves its blob out, so the emulator then runs processes
+REM without a system default activation context.
+IF /I "%SXS_NATIVE%"=="amd64" (
+	CALL :capture_activation_context system-default-amd64.bin, activation-context-dump-x64.exe, activation-context-dump.exe || EXIT /B 1
+)
+CALL :capture_activation_context system-default-x86.bin, activation-context-dump-x86.exe || EXIT /B 1
 
 CALL :collect advapi32.dll
 CALL :collect apisetschema.dll
@@ -338,6 +350,17 @@ EXIT /B 0
 :normpath
 SET %1=%~dpfn2
 EXIT /B
+
+:capture_activation_context
+SET ACTCTX_TOOL=
+FOR %%T IN (%~2 %~3) DO IF NOT DEFINED ACTCTX_TOOL IF EXIST "%ROOT_TOOLS_DIR%\%%T" SET ACTCTX_TOOL=%ROOT_TOOLS_DIR%\%%T
+IF NOT DEFINED ACTCTX_TOOL (
+	ECHO Warning: %~2 not found in %ROOT_TOOLS_DIR%, %EMU_SXSDIR%\%~1 is not captured 1>&2
+	EXIT /B 0
+)
+ECHO %ACTCTX_TOOL% -^> %EMU_SXSDIR%\%~1
+"%ACTCTX_TOOL%" "%EMU_SXSDIR%\%~1" || EXIT /B 1
+EXIT /B 0
 
 :collect_file
 CALL :normpath SRC, %~1\%~2

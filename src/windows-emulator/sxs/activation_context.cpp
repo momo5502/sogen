@@ -1580,14 +1580,14 @@ namespace sogen::sxs
             uint32_t entry_offset{};
         };
 
-        size_t append_hash_table(byte_buffer& section, const std::vector<hashed_entry>& entries)
+        size_t append_hash_table(byte_buffer& section, const std::vector<hashed_entry>& entries, const size_t bucket_count)
         {
             const auto hash_table_offset = section.append<string_section_hash_table>();
-            const auto buckets_offset = section.append_array<string_section_hash_bucket>(entries.size());
-            std::vector<std::vector<uint32_t>> chains(entries.size());
+            const auto buckets_offset = section.append_array<string_section_hash_bucket>(bucket_count);
+            std::vector<std::vector<uint32_t>> chains(bucket_count);
             for (const auto& entry : entries)
             {
-                chains[entry.pseudokey % entries.size()].push_back(entry.entry_offset);
+                chains[entry.pseudokey % bucket_count].push_back(entry.entry_offset);
             }
             for (size_t index = 0; index < chains.size(); ++index)
             {
@@ -1603,9 +1603,24 @@ namespace sogen::sxs
                 }
                 section.write(buckets_offset + index * sizeof(bucket), bucket);
             }
-            section.write(hash_table_offset, string_section_hash_table{.bucket_table_entry_count = checked_u32(entries.size()),
+            section.write(hash_table_offset, string_section_hash_table{.bucket_table_entry_count = checked_u32(bucket_count),
                                                                        .bucket_table_offset = checked_u32(buckets_offset)});
             return hash_table_offset;
+        }
+
+        // Window class sections captured from Windows for 1..40, 48, 50, 64, 80, 100 and 128 elements; counts between 81 and 99 are
+        // not captured.
+        size_t window_class_bucket_count(const size_t element_count)
+        {
+            if (element_count < 3)
+            {
+                return 0;
+            }
+            if (element_count < 15)
+            {
+                return 3;
+            }
+            return element_count < 100 ? 11 : 101;
         }
 
         struct dll_entry
@@ -1662,7 +1677,7 @@ namespace sogen::sxs
             {
                 hashed.push_back({.pseudokey = dll.hash, .entry_offset = dll.entry_offset});
             }
-            const auto hash_table_offset = append_hash_table(section, hashed);
+            const auto hash_table_offset = append_hash_table(section, hashed, hashed.size());
 
             string_section_header header{};
             header.magic = string_section_magic;
@@ -1714,11 +1729,10 @@ namespace sogen::sxs
             byte_buffer section{};
             const auto header_offset = section.append<string_section_header>();
             const auto entries_offset = section.append_array<string_section_entry>(classes.size());
-            std::vector<hashed_entry> hashed{};
-            hashed.reserve(classes.size());
-            for (size_t index = 0; index < classes.size(); ++index)
+            std::vector<string_section_entry> elements{};
+            elements.reserve(classes.size());
+            for (const auto& source : classes)
             {
-                const auto& source = classes[index];
                 const auto& window_class = *source.window_class;
                 string_section_entry entry{};
                 entry.pseudokey = hash_string(window_class.name, casing);
@@ -1739,10 +1753,22 @@ namespace sogen::sxs
                 section.write(entry.offset, redirection);
                 entry.length = checked_u32(section.size() - entry.offset);
                 section.align(4);
+                elements.push_back(entry);
+            }
 
-                const auto entry_offset = checked_u32(entries_offset + index * sizeof(entry));
-                section.write(entry_offset, entry);
-                hashed.push_back({.pseudokey = entry.pseudokey, .entry_offset = entry_offset});
+            const auto bucket_count = window_class_bucket_count(elements.size());
+            if (bucket_count == 0)
+            {
+                std::ranges::stable_sort(elements, {}, &string_section_entry::pseudokey);
+            }
+
+            std::vector<hashed_entry> hashed{};
+            hashed.reserve(elements.size());
+            for (size_t index = 0; index < elements.size(); ++index)
+            {
+                const auto entry_offset = checked_u32(entries_offset + index * sizeof(string_section_entry));
+                section.write(entry_offset, elements[index]);
+                hashed.push_back({.pseudokey = elements[index].pseudokey, .entry_offset = entry_offset});
             }
 
             string_section_header header{};
@@ -1754,7 +1780,14 @@ namespace sogen::sxs
             header.element_count = checked_u32(classes.size());
             header.element_list_offset = checked_u32(entries_offset);
             header.hash_algorithm = hash_string_algorithm_x65599;
-            header.search_structure_offset = checked_u32(append_hash_table(section, hashed));
+            if (bucket_count == 0)
+            {
+                header.flags |= string_section_entries_in_pseudokey_order;
+            }
+            else
+            {
+                header.search_structure_offset = checked_u32(append_hash_table(section, hashed, bucket_count));
+            }
             section.write(header_offset, header);
             return section.release();
         }
@@ -1927,6 +1960,36 @@ namespace sogen::sxs
             }
             return build_blob(assemblies, application_directory, casing);
         }
+    }
+
+    std::vector<std::byte> obtain_system_default_activation_context(const std::filesystem::path& emulation_root,
+                                                                    const system_default_architecture architecture)
+    {
+        if (emulation_root.empty())
+        {
+            return {};
+        }
+
+        const auto* const file_name =
+            architecture == system_default_architecture::amd64 ? "system-default-amd64.bin" : "system-default-x86.bin";
+        auto captured = utils::io::read_file(emulation_root / "sxs" / file_name);
+
+        constexpr size_t total_size_offset = 12;
+        if (captured.size() < total_size_offset + sizeof(uint32_t))
+        {
+            return {};
+        }
+
+        uint32_t magic{};
+        uint32_t total_size{};
+        std::memcpy(&magic, captured.data(), sizeof(magic));
+        std::memcpy(&total_size, captured.data() + total_size_offset, sizeof(total_size));
+        if (magic != activation_context_magic || total_size != captured.size())
+        {
+            return {};
+        }
+
+        return captured;
     }
 
     std::vector<std::byte> build_process_activation_context(const file_system& file_system, const mapped_module& executable,

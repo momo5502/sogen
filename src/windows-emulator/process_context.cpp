@@ -569,12 +569,25 @@ namespace sogen
         const auto preferred_language =
             registry_utils::read_registry_string(win_emu.registry, R"(\Registry\User\Control Panel\International)", "LocaleName")
                 .value_or(u"");
+        const auto write_activation_context = [&](const std::vector<std::byte>& activation_context) {
+            const auto address = allocator.reserve(activation_context.size(), alignof(uint32_t));
+            emu.write_memory(address, activation_context.data(), activation_context.size());
+            return address;
+        };
+
+        const auto system_default_activation_context = sxs::obtain_system_default_activation_context(
+            win_emu.emulation_root, this->peb32 ? sxs::system_default_architecture::x86 : sxs::system_default_architecture::amd64);
+        if (!system_default_activation_context.empty())
+        {
+            const auto system_default_address = write_activation_context(system_default_activation_context);
+            this->peb64.access([&](PEB64& peb) { peb.SystemDefaultActivationContextData = system_default_address; });
+        }
+
         const auto activation_context = sxs::build_process_activation_context(
             win_emu.file_sys, executable, windows_path(version.get_system_root()), u16_to_u8(preferred_language));
         if (!activation_context.empty())
         {
-            const auto activation_context_address = allocator.reserve(activation_context.size(), alignof(uint32_t));
-            emu.write_memory(activation_context_address, activation_context.data(), activation_context.size());
+            const auto activation_context_address = write_activation_context(activation_context);
             this->peb64.access([&](PEB64& peb) { peb.ActivationContextData = activation_context_address; });
             if (this->peb32)
             {

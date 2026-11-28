@@ -78,7 +78,7 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
   # exists for the current arch/config (steam-shim needs the Steam bridge enabled).
   if(WIN32)
     add_custom_target(emulation-root-tools)
-    foreach(_root_tool vulkan-shim steam-shim)
+    foreach(_root_tool vulkan-shim steam-shim activation-context-dump)
       if(TARGET ${_root_tool})
         add_dependencies(emulation-root-tools ${_root_tool})
       endif()

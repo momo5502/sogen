@@ -2,6 +2,7 @@ sogen_get_all_targets(EXISTING_TARGETS)
 
 ##########################################
 
+add_subdirectory(activation-context-dump)
 add_subdirectory(bad-sample)
 add_subdirectory(hook-sample)
 add_subdirectory(test-sample)
